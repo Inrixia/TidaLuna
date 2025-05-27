@@ -1,2 +1,10 @@
 node_modules/
 dist/
+
+# Devenv
+.devenv/
+.direnv/
+.devenv*
+
+# Jetbrains IDE
+.idea/
