@@ -1,4 +1,5 @@
 import electron from "electron";
+import os from "os";
 
 import { readFile, rm, writeFile } from "fs/promises";
 import mime from "mime";
@@ -209,11 +210,11 @@ require(startPath);
 const requirePrefix = `import { createRequire } from 'module';const require = createRequire(${JSON.stringify(pathToFileURL(process.resourcesPath + "/").href)});`;
 // Call to register native module
 ipcHandle("__Luna.registerNative", async (_, name: string, code: string) => {
-	const tempPath = path.join(bundleDir, Math.random().toString() + ".mjs");
+	const tempFile = path.join(os.tmpdir(), Math.random().toString() + ".mjs")
 	try {
-		await writeFile(tempPath, requirePrefix + code, "utf8");
+		await writeFile(tempFile, requirePrefix + code, "utf8");
 		// Load module
-		const exports = (globalThis.luna.modules[name] = await import(pathToFileURL(tempPath).href));
+		const exports = (globalThis.luna.modules[name] = await import(pathToFileURL(tempFile).href));
 		const channel = `__LunaNative.${name}`;
 		// Register handler for calling module exports
 		ipcHandle(channel, async (_, exportName, ...args) => {
@@ -227,7 +228,7 @@ ipcHandle("__Luna.registerNative", async (_, name: string, code: string) => {
 		});
 		return channel;
 	} finally {
-		await rm(tempPath, { force: true });
+		await rm(tempFile, { force: true });
 	}
 });
 // Literally just to log if preload fails
