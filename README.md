@@ -18,6 +18,11 @@ Use one of the following projects:
 - Ensure that Tidal is closed when installing or installation may fail.
 - You shouldnt need to run as Admin for installing.
 
+### Nix install
+1. Add this flake in your inputs: inputs.tidaLuna.url = github:Inrixia/TidaLuna
+2. then install the package from the input: inputs'.tidaLuna.packages.default (with flake-parts)
+
+
 ### Manual Install
 1. Download the **luna.zip** release you want to install from https://github.com/Inrixia/TidaLuna/releases
 2. Go to your Tidal install resources folder, typically found in:

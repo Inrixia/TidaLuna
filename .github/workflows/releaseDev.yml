@@ -37,3 +37,11 @@ jobs:
       prerelease: true
       title: Release ${{ env.VERSION }}
       files: ./dist/luna.zip
+
+   - uses: actions/checkout@v3
+   - uses: cachix/install-nix-action@v18
+   - uses: workflow/nix-shell-action@v3
+     with:
+      packages: nix-update
+      script: |
+       nix-update --flake --version=unstable --subpackage pnpmDeps injection
