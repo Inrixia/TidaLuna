@@ -44,4 +44,4 @@ jobs:
      with:
       packages: nix-update
       script: |
-       nix-update --flake --version=unstable --subpackage pnpmDeps injection
+       nix-update --flake injection --version=unstable
