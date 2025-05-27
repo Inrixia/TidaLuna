@@ -8,6 +8,7 @@ import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
 import { createRequire } from "module";
+import * as process from "node:process";
 
 // #region Bundle
 const bundleDir = process.env.TIDALUNA_DIST_PATH ?? path.dirname(fileURLToPath(import.meta.url));
@@ -214,7 +215,7 @@ require(startPath);
 
 // #region LunaNative
 // TODO: original.asar cant be found under linux
-const requirePrefix = `import { createRequire } from 'module';const require = createRequire(${JSON.stringify(pathToFileURL(process.resourcesPath + "/").href)});`;
+const requirePrefix = `import { createRequire } from 'module';const require = createRequire(${pathToFileURL(process.resourcesPath + "/").href});`;
 // Call to register native module
 ipcHandle("__Luna.registerNative", async (_, name: string, code: string) => {
 	const tempDir = os.tmpdir();

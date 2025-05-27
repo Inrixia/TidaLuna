@@ -3,12 +3,7 @@ stdenv.mkDerivation (finalAttrs: rec {
   name = "TidaLuna";
   pname = "${name}";
   version = "1.3.0-alpha";
-  src = fetchFromGitHub {
-    owner = "Inrixia";
-    repo = "${name}";
-    rev = "${version}";
-    hash = "sha256-T6J6mI3oxQ7tD8b76M15ajka1S8G9QW8Am3rqj0MaTo=";
-  };
+  src = ./..;
 
   nativeBuildInputs = [
     nodejs
