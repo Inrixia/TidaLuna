@@ -65,7 +65,6 @@ ipcHandle("__Luna.renderJs", () => lunaBundle);
 // Ensure app is ready
 electron.app.whenReady().then(async () => {
 	electron.protocol.handle("https", async (req) => {
-
 		if (req.url.startsWith("https://luna/")) {
 			try {
 				return new Response(...(await bundleFile(req.url)));
@@ -221,7 +220,7 @@ ipcHandle("__Luna.registerNative", async (_, name: string, code: string) => {
 	const tempDir = os.tmpdir();
 	const tempFile = path.join(tempDir, Math.random().toString() + ".mjs");
 	try {
-			await writeFile(tempFile, requirePrefix + code, "utf8");
+		await writeFile(tempFile, requirePrefix + code, "utf8");
 
 		// Load module
 		const exports = (globalThis.luna.modules[name] = await import(pathToFileURL(tempFile).href));
