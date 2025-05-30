@@ -37,4 +37,4 @@ stdenv.mkDerivation (finalAttrs: rec {
     runHook postInstall
   '';
 
-}
+})
