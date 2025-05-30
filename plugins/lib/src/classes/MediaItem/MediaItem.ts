@@ -1,7 +1,7 @@
-import { asyncDebounce, memoize, memoizeArgless, registerEmitter, Semaphore, type AddReceiver } from "@inrixia/helpers";
+import { asyncDebounce, memoize, memoizeArgless, registerEmitter, Semaphore, type AddReceiver, type Emit } from "@inrixia/helpers";
 import type { IRecording, ITrack } from "musicbrainz-api";
 
-import { ftch, ReactiveStore, type Tracer } from "@luna/core";
+import { ftch, ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
 import { getPlaybackInfo, parseDate, type PlaybackInfo } from "../../helpers";
 import { libTrace, unloads } from "../../index.safe";
@@ -16,7 +16,7 @@ import { download, downloadProgress } from "./MediaItem.download.native";
 import { availableTags, makeTags, MetaTags } from "./MediaItem.tags";
 import { getStreamBytes, parseStreamFormat } from "./parseStreamFormat.native";
 
-type MediaFormat = {
+export type MediaFormat = {
 	bitDepth?: number;
 	sampleRate?: number;
 	codec?: string;
@@ -362,12 +362,14 @@ export class MediaItem extends ContentBase {
 	public async playbackInfo(audioQuality?: redux.AudioQuality): Promise<PlaybackInfo> {
 		audioQuality ??= Quality.Max.audioQuality;
 		const playbackInfo = await getPlaybackInfo(this.id, audioQuality);
+		const [_, emitFormat] = this.formatEmitters[audioQuality] ?? [];
 		this.cache.format ??= {};
 		this.cache.format[audioQuality] = {
 			...this.cache.format[audioQuality],
 			bitDepth: playbackInfo.bitDepth,
 			sampleRate: playbackInfo.sampleRate,
 		};
+		emitFormat?.(this.cache.format[audioQuality]!, this.trace.err.withContext("playbackInfo.emitFormat"));
 		return playbackInfo;
 	}
 	// #endregion
@@ -392,10 +394,13 @@ export class MediaItem extends ContentBase {
 	// #endregion
 
 	// #region Format
-	public getFormat(audioQuality?: redux.AudioQuality): MediaFormat {
-		audioQuality ??= Quality.Max.audioQuality;
-		this.cache.format ??= {};
-		return (this.cache.format[this.bestQuality.audioQuality] ??= {});
+	private readonly formatEmitters: { [K in redux.AudioQuality]?: [onEvent: AddReceiver<MediaFormat>, emitEvent: Emit<MediaFormat>] } = {};
+	public withFormat(unloads: LunaUnloads, audioQuality: redux.AudioQuality, listener: (format: MediaFormat) => void): LunaUnload {
+		const [onFormat] = (this.formatEmitters[audioQuality] ??= registerEmitter<MediaFormat>());
+		const unload = onFormat(unloads, listener);
+		if (this.cache.format?.[audioQuality] === undefined) this.updateFormat(audioQuality);
+		else listener(this.cache.format[audioQuality]);
+		return unload;
 	}
 	private static readonly formatSema = new Semaphore(1);
 	public updateFormat: (audioQuality?: redux.AudioQuality) => Promise<void> = asyncDebounce((audioQuality) =>
@@ -405,8 +410,6 @@ export class MediaItem extends ContentBase {
 			this.cache.format ??= {};
 			const format = (this.cache.format[playbackInfo.audioQuality] ??= {});
 
-			format.bitDepth = playbackInfo.bitDepth;
-			format.sampleRate = playbackInfo.sampleRate;
 			format.duration = this.duration;
 
 			if (format.bitDepth === undefined || format.sampleRate === undefined || format.duration === undefined) {
@@ -425,6 +428,9 @@ export class MediaItem extends ContentBase {
 			}
 
 			format.bitrate ??= !!format.bytes && !!format.duration ? (format.bytes / format.duration) * 8 : undefined;
+
+			const [_, emitFormat] = this.formatEmitters[playbackInfo.audioQuality] ?? [];
+			emitFormat?.(format, this.trace.err.withContext("updateFormat.emitFormat"));
 		}),
 	);
 	// #endregion
