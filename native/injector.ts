@@ -212,7 +212,6 @@ require(startPath);
 // #endregion
 
 // #region LunaNative
-// TODO: original.asar cant be found under linux
 const requirePrefix = `import { createRequire } from 'module';const require = createRequire(${JSON.stringify(pathToFileURL(process.resourcesPath + "/").href)});`;
 // Call to register native module
 ipcHandle("__Luna.registerNative", async (_, name: string, code: string) => {
