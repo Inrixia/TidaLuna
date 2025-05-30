@@ -61,6 +61,8 @@ unloads.add(observables.clear.bind(observables));
  */
 export const observePromise = <T extends Element>(unloads: LunaUnloads, selector: string, timeoutMs: number = 1000): Promise<T | null> =>
 	new Promise<T | null>((res) => {
+		const elem = document.querySelector(selector);
+		if (elem !== null) res(elem as T);
 		const unob = observe(unloads, selector, (elem) => {
 			unob();
 			clearTimeout(timeout);
