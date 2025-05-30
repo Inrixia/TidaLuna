@@ -37,3 +37,15 @@ Done! Start Tidal and you should see the Luna spashscreen.
 ## Developers
 Proper developer documentation etc is planned after the inital beta release of Luna.  
 If you are a developer or want to try making your own plugin, please hop in discord and ask we are more than happy to assist with getting started.
+
+### Client Dev
+To develop for the luna client follow these steps:
+1. Fork this repo and clone it locally
+2. Install packages `pnpm i`
+3. Run the watch command to build `pnpm run watch`
+4. Symlink your `dist` folder to your Tidal `app` folder mentioned in the *Manual Install* section above.  
+   Or if you dont care about live reloading of `/native/injector.ts` set the `TIDALUNA_DIST_PATH` env variable to your `dist` folder path.
+5. Launch Luna
+
+Core plugins under `/plugins` can be reloaded via Luna Settings.  
+Changes to `/render` or `/native` code require a client restart.
