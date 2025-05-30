@@ -1,4 +1,4 @@
-import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver } from "@inrixia/helpers";
+import { asyncDebounce, memoize, memoizeArgless, registerEmitter, Semaphore, type AddReceiver } from "@inrixia/helpers";
 import type { IRecording, ITrack } from "musicbrainz-api";
 
 import { ftch, ReactiveStore, type Tracer } from "@luna/core";
@@ -14,6 +14,7 @@ import { Quality } from "../Quality";
 import { TidalApi } from "../TidalApi";
 import { download, downloadProgress } from "./MediaItem.download.native";
 import { availableTags, makeTags, MetaTags } from "./MediaItem.tags";
+import { getStreamBytes, parseStreamFormat } from "./parseStreamFormat.native";
 
 type MediaFormat = {
 	bitDepth?: number;
@@ -377,7 +378,7 @@ export class MediaItem extends ContentBase {
 	}
 	public async download(path: string): Promise<void> {
 		const [playbackInfo, flagTags] = await Promise.all([this.playbackInfo(), this.flacTags()]);
-		await download(playbackInfo, path, flagTags);
+		return download(playbackInfo, path, flagTags);
 	}
 	public async fileExtension(): Promise<string> {
 		const playbackInfo = await this.playbackInfo();
@@ -391,35 +392,40 @@ export class MediaItem extends ContentBase {
 	// #endregion
 
 	// #region Format
-	// public getFormat: (audioQuality?: MediaItemAudioQuality) => Promise<void> = asyncDebounce((audioQuality) =>
-	// 	MediaItem.getFormatSemaphore.with(async () => {
-	// 		const playbackInfo = await this.playbackInfo(audioQuality);
+	public getFormat(audioQuality?: redux.AudioQuality): MediaFormat {
+		audioQuality ??= Quality.Max.audioQuality;
+		this.cache.format ??= {};
+		return (this.cache.format[this.bestQuality.audioQuality] ??= {});
+	}
+	private static readonly formatSema = new Semaphore(1);
+	public updateFormat: (audioQuality?: redux.AudioQuality) => Promise<void> = asyncDebounce((audioQuality) =>
+		MediaItem.formatSema.with(async () => {
+			const playbackInfo = await this.playbackInfo(audioQuality);
 
-	// 		this.cache.format ??= {};
-	// 		const format = (this.cache.format[playbackInfo.audioQuality] ??= {});
+			this.cache.format ??= {};
+			const format = (this.cache.format[playbackInfo.audioQuality] ??= {});
 
-	// 		if (format.bitDepth === undefined || format.sampleRate === undefined || format.duration === undefined) {
-	// 			const { format, bytes } = await parseStreamMeta(playbackInfo);
+			format.bitDepth = playbackInfo.bitDepth;
+			format.sampleRate = playbackInfo.sampleRate;
+			format.duration = this.duration;
 
-	// 			mediaFormat.bytes = bytes;
+			if (format.bitDepth === undefined || format.sampleRate === undefined || format.duration === undefined) {
+				const { format: streamFormat, bytes } = await parseStreamFormat(playbackInfo);
+				format.bytes = bytes;
+				format.bitDepth = streamFormat.bitsPerSample ?? format.bitDepth;
+				format.sampleRate = streamFormat.sampleRate ?? format.sampleRate;
+				format.duration = streamFormat.duration ?? format.duration;
+				format.codec = streamFormat.codec?.toLowerCase() ?? format.codec;
+				if (playbackInfo.manifestMimeType === "application/dash+xml") {
+					format.bitrate = playbackInfo.manifest.tracks.audios[0].bitrate.bps ?? format.bitrate;
+					format.bytes = playbackInfo.manifest.tracks.audios[0].size?.b ?? format.bytes;
+				}
+			} else {
+				format.bytes = (await getStreamBytes(playbackInfo)) ?? format.bytes;
+			}
 
-	// 			mediaFormat.bitDepth = format.bitsPerSample ?? this.bitDepth;
-	// 			mediaFormat.sampleRate = format.sampleRate ?? this.sampleRate;
-	// 			mediaFormat.duration = format.duration ?? this.duration;
-
-	// 			mediaFormat.codec = format.codec?.toLowerCase() ?? this.codec;
-
-	// 			if (playbackInfo.manifestMimeType === "application/dash+xml") {
-	// 				mediaFormat.bitrate = playbackInfo.manifest.tracks.audios[0].bitrate.bps ?? this.bitrate;
-	// 				mediaFormat.bytes = playbackInfo.manifest.tracks.audios[0].size?.b ?? this.bytes;
-	// 			}
-	// 		} else {
-	// 			mediaFormat.bytes = (await getStreamBytes(playbackInfo)) ?? this.bytes;
-	// 		}
-
-	// 		MediaItem.formatStore.put(mediaFormat).catch(trace.err.withContext("formatStore.put"));
-	// 		this.updateFormat(mediaFormat);
-	// 	}),
-	// );
+			format.bitrate ??= !!format.bytes && !!format.duration ? (format.bytes / format.duration) * 8 : undefined;
+		}),
+	);
 	// #endregion
 }

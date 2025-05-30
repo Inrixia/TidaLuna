@@ -8,7 +8,8 @@ export const parseStreamFormat = async (playbackInfo: PlaybackInfo): Promise<{ f
 	const progress: FetchProgress = {};
 	// note that you cannot trust bytes to be populated until the stream is finished. parseStream will read the entire stream ensuring this
 	const stream = await fetchMediaItemStream(playbackInfo, { bytesWanted: 8192, progress });
-	const { format }: IAudioMetadata = await parseStream(stream, { mimeType: playbackInfo.mimeType });
+	const mimeType = playbackInfo.manifestMimeType === "application/vnd.tidal.bts" ? playbackInfo.manifest.mimeType : "audio/mp4";
+	const { format } = await parseStream(stream, { mimeType });
 	return { format, bytes: progress.total };
 };
 export const getStreamBytes = async (playbackInfo: PlaybackInfo): Promise<any> => {

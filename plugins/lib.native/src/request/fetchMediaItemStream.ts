@@ -22,7 +22,7 @@ export const fetchMediaItemStream = ({ manifestMimeType, manifest }: PlaybackInf
 		switch (manifestMimeType) {
 			case "application/vnd.tidal.bts": {
 				options.decipher = makeDecipher(manifest);
-				const stream = Readable.from(fetchStream(manifest.urls, options));
+				const stream = Readable.from(fetchStream(manifest.urls, options), { objectMode: false });
 				if (options.tags === undefined || manifest.codecs !== "flac") return stream;
 
 				const { tags, coverUrl } = options.tags;
@@ -51,6 +51,7 @@ export const fetchMediaItemStream = ({ manifestMimeType, manifest }: PlaybackInf
 						trackManifest.segments.map((segment) => segment.url),
 						options,
 					),
+					{ objectMode: false },
 				);
 			}
 			default: {
