@@ -8,7 +8,6 @@ import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
 import { createRequire } from "module";
-import * as process from "node:process";
 
 // #region Bundle
 const bundleDir = process.env.TIDALUNA_DIST_PATH ?? path.dirname(fileURLToPath(import.meta.url));
