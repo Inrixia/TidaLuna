@@ -1,7 +1,7 @@
 import { ReactiveStore, Tracer, type LunaUnload } from "@luna/core";
 import { startReduxLog, stopReduxLog } from "./interceptActions";
 import { startNativeIPCLog, stopNativeIPCLog } from "./ipc";
-import { getNativeIPCEvents, startRenderIpcLog, stopRenderIpcLog } from "./ipc.native";
+import { startRenderIpcLog, stopRenderIpcLog } from "./ipc.native";
 
 export const { trace, errSignal } = Tracer("[DevTools]");
 
@@ -26,5 +26,4 @@ if (storage.logReduxEvents)
 
 export { Settings } from "./Settings";
 
-export const NativeIPCEvents = await getNativeIPCEvents();
-export const RenderIPCEvents = await getNativeIPCEvents();
+export { getNativeIPCEvents, getRenderIPCEvents } from "./ipc.native";
