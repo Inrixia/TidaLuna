@@ -9,11 +9,12 @@
 	"exports": "./src/index.ts",
 	"dependencies": {
 		"dasha": "3.1.6",
-		"music-metadata": "^11.2.1",
+		"music-metadata": "^11.2.3",
 		"sanitize-filename": "^1.6.3"
 	},
 	"devDependencies": {
 		"musicbrainz-api": "^0.25.0",
-		"neptune-types": "^1.0.1"
+		"neptune-types": "^1.0.1",
+		"oby": "^15.1.2"
 	}
 }
