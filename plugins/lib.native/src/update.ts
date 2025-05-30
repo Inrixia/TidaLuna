@@ -5,6 +5,7 @@ import { readdir, rm, unlink } from "fs/promises";
 import path from "path";
 
 import type { PackageJson } from "type-fest";
+import * as process from "node:process";
 
 export const getPackage = async (): Promise<PackageJson> => require("./app/package.json");
 export const relaunch = async () => {
@@ -12,7 +13,7 @@ export const relaunch = async () => {
 	app.exit(0);
 };
 
-const appFolder = "./resources/app";
+const appFolder = process.resourcesPath + "/app";
 
 export const updateLuna = async (zipUrl: string) => {
 	// Download the zip file using fetch
