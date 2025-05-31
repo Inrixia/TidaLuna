@@ -45,12 +45,22 @@ export const LunaClientUpdate = React.memo(() => {
 	return (
 		<LunaSettings
 			title="Client Updates"
-			desc={`Current Version: ${pkg.version}`}
 			titleChildren={<SpinningButton title="Fetch releases" loading={loading} onClick={updateReleases} />}
 			direction="row"
 			alignItems="center"
+			pb={4}
 		>
+			<Select
+				fullWidth
+				sx={{ flex: 1, height: 48 }}
+				value={selectedRelease}
+				onChange={(e) => setSelectedRelease(e.target.value)}
+				children={releases.map((release) => {
+					return <MenuItem value={release.tag_name}>{`${release.tag_name}${release.prerelease ? "-dev" : ""}`}</MenuItem>;
+				})}
+			/>
 			<LunaButton
+				sx={{ height: 48 }}
 				children={action}
 				title={desc}
 				onClick={async () => {
@@ -61,16 +71,8 @@ export const LunaClientUpdate = React.memo(() => {
 					await updateLuna(releaseUrl);
 				}}
 			/>
-			<Select
-				fullWidth
-				sx={{ flex: 1 }}
-				value={selectedRelease}
-				onChange={(e) => setSelectedRelease(e.target.value)}
-				children={releases.map((release) => {
-					return <MenuItem value={release.tag_name}>{`${release.tag_name}${release.prerelease ? "-dev" : ""}`}</MenuItem>;
-				})}
-			/>
 			<LunaButton
+				sx={{ height: 48, marginLeft: 2 }}
 				color="error"
 				children={"Factory Reset"}
 				title={"Warning! This will reset luna to a clean install with no plugins."}

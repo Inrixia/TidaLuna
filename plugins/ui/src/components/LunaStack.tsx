@@ -14,6 +14,7 @@ export const LunaStack = React.memo((props: LunaStackProps) => {
 	return (
 		<Box>
 			{title && <LunaTitle variant={variant} title={title} desc={desc} children={props.titleChildren} />}
+			<div style={{ height: 8 }} />
 			<Stack display="flex" spacing={1} {...props} />
 		</Box>
 	);
