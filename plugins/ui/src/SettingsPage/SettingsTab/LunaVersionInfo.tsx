@@ -12,8 +12,8 @@ export const LunaVersionInfo = React.memo(() => {
 
     return (
         <div style={{ display: "flex", flexDirection: "column"}}>
-            <LunaSettings title="Version Information">
-                <div style={{ display: "flex", alignItems: "center", gap: 24, marginBottom: 16 }}>
+            <LunaSettings>
+                <div style={{ display: "flex", alignItems: "center", gap: 24, marginBottom: 8 }}>
                     <img
                         src="https://desktop.tidal.com/assets/appIcon-C2Av_5S7.png"
                         alt="TIDAL Icon"
