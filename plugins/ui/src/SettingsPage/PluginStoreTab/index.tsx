@@ -19,6 +19,7 @@ export const addToStores = (url: string) => {
 
 // Devs! Add your stores here <3
 // TODO: Abstract this to a git repo
+addToStores("https://github.com/meowarex/TidalLuna-Plugins/releases/download/latest/store.json");
 addToStores("https://github.com/wont-stream/lunar/releases/download/dev/store.json");
 addToStores("https://github.com/jxnxsdev/luna-plugins/releases/download/latest/store.json");
 addToStores("https://github.com/espeon/luna-plugins/releases/download/latest/store.json");
