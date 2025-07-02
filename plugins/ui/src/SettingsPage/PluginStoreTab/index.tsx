@@ -28,6 +28,7 @@ addToStores("https://github.com/Inrixia/luna-plugins/releases/download/dev/store
 addToStores("https://github.com/Aztup/luna-plugins/releases/download/latest/store.json");
 addToStores("https://github.com/vMohammad24/luna-plugins/releases/download/latest/store.json");
 addToStores("https://github.com/MathDesigns/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/otomir23/luna-plugins/releases/download/latest/store.json");
 
 export const PluginStoreTab = React.memo(() => {
 	const [_storeUrls, setPluginStores] = useState<string[]>(obyStore.unwrap(storeUrls));
