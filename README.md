@@ -19,8 +19,17 @@ Use one of the following projects:
 - You shouldnt need to run as Admin for installing.
 
 ### Nix install
-1. Add this flake in your inputs: `inputs.tidaLuna.url = github:Inrixia/TidaLuna`
-2. then install the package from the input: `inputs'.tidaLuna.packages.default` (with flake-parts)
+1. Add the flake in your inputs:
+```nix
+inputs.tidaLuna.url = "github:Inrixia/TidaLuna"
+```
+2. Then install the package from the input:
+```diff
+environment.systemPackages = with pkgs; [
+-  tidal-hifi
++  inputs.tidaLuna.packages.${system}.default
+];
+```
 
 ### Manual Install
 1. Download the **luna.zip** release you want to install from https://github.com/Inrixia/TidaLuna/releases
