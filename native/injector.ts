@@ -73,7 +73,7 @@ electron.app.whenReady().then(async () => {
 		}
 
 		// Bypass CSP & Mark meta scripts for quartz injection
-		if (req.url === "https://desktop.tidal.com/" || req.url === "https://listen.tidal.com/") {
+		if (req.url === "https://desktop.tidal.com/" || req.url === "https://tidal.com/" || req.url === "https://listen.tidal.com/") {
 			const res = await electron.net.fetch(req, { bypassCustomProtocolHandlers: true });
 			let body = await res.text();
 			body = body.replace(
