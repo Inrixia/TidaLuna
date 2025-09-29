@@ -41,7 +41,7 @@ environment.systemPackages = with pkgs; [
 4. Unzip **luna.zip** into a folder named `app` in the `resources` directory alongside `original.asar`
 5. You should now have a folder `TIDAL\...\resources\app` next to `original.asar` with all the files from **luna.zip**
 
-Done! Start Tidal and you should see the Luna spashscreen.
+Done! Start Tidal and you should see the Luna splashscreen.
 
 ## Developers
 Proper developer documentation etc is planned after the inital beta release of Luna.  
