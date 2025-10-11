@@ -1,14 +1,9 @@
-{ stdenv, nodejs, pnpm, fetchFromGitHub, ... }:
+{ stdenv, nodejs, pnpm, ... }:
 stdenv.mkDerivation (finalAttrs: rec {
   name = "TidaLuna";
   pname = "${name}";
   version = "1.6.13-beta";
-  src = fetchFromGitHub {
-    owner = "Inrixia";
-    repo = "${name}";
-    rev = "${version}";
-    hash = "sha256-j5eZv53/bJ41oqtG6BrppvT0kV3AMkMbxWhpmm/sCss=";
-  };
+  src = ./..;
 
   nativeBuildInputs = [
     nodejs
