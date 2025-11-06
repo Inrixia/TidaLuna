@@ -7,20 +7,18 @@ export type LunaTitleValues = {
 	desc?: React.ReactNode;
 	variant?: TypographyProps["variant"];
 };
-export type LunaTitleProps = LunaTitleValues & TypographyProps;
+export type LunaTitleProps = Omit<TypographyProps, "title"> & LunaTitleValues;
 export const LunaTitle = React.memo((props: LunaTitleProps) => {
-	props.variant ??= "h6";
-	const title = props.title;
-	if (typeof title !== "string") delete props.title;
+	const { title, desc, variant = "h6", children, ...typographyProps } = props;
 	return (
 		<Box>
-			<Typography {...props}>
+			<Typography {...typographyProps} variant={variant}>
 				<Box component="span" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
 					{title}
-					{props.children}
+					{children}
 				</Box>
 			</Typography>
-			{props.desc && <Typography variant="subtitle2" gutterBottom children={props.desc} />}
+			{desc && <Typography variant="subtitle2" gutterBottom children={desc} />}
 		</Box>
 	);
 });

@@ -1,22 +1,28 @@
 {
-	"name": "@luna/ui",
-	"description": "Luna UI providing components and settings page",
-	"author": {
-		"name": "Inrixia",
-		"url": "https://github.com/Inrixia",
-		"avatarUrl": "https://2.gravatar.com/avatar/eeaffef9eb9b436dccc58c6c44c9fe8c3528e83e3bf64e1c736a68dbe8c097d3"
-	},
-	"exports": "./src/index.tsx",
-	"dependencies": {
-		"@emotion/react": "^11.14.0",
-		"@emotion/styled": "^11.14.1",
-		"@mui/icons-material": "^7.3.2",
-		"@mui/material": "^7.3.2",
-		"material-ui-confirm": "^4.0.0",
-		"semver": "^7.7.2"
-	},
-	"devDependencies": {
-		"@octokit/openapi-types": "^26.0.0",
-		"@types/semver": "^7.7.1"
-	}
+  "name": "@luna/ui",
+  "description": "Luna UI providing components and settings page",
+  "author": {
+    "name": "Inrixia",
+    "url": "https://github.com/Inrixia",
+    "avatarUrl": "https://2.gravatar.com/avatar/eeaffef9eb9b436dccc58c6c44c9fe8c3528e83e3bf64e1c736a68dbe8c097d3"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.tsx",
+      "default": "./src/index.tsx"
+    }
+  },
+  "types": "./src/index.tsx",
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^7.3.2",
+    "@mui/material": "^7.3.2",
+    "material-ui-confirm": "^4.0.0",
+    "semver": "^7.7.2"
+  },
+  "devDependencies": {
+    "@octokit/openapi-types": "^26.0.0",
+    "@types/semver": "^7.7.1"
+  }
 }

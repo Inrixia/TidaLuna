@@ -26,7 +26,11 @@ export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions
 	// Sanitize pluginPackage.name, remove @, replace / with .
 	const pkgName = pluginPackage.name;
 	const safeName = pkgName.replace(/@/g, "").replace(/\//g, ".");
-	const entryPoint = path.join(pluginPath, pluginPackage.main ?? pluginPackage.exports ?? "index.mjs");
+	// Handle exports being either a string or an object with "." or "default" entry
+	const exportsValue = typeof pluginPackage.exports === "string" 
+		? pluginPackage.exports 
+		: pluginPackage.exports?.["."]?.default ?? pluginPackage.exports?.["."];
+	const entryPoint = path.join(pluginPath, pluginPackage.main ?? exportsValue ?? "index.mjs");
 	return <BuildOptions>{
 		...defaultBuildOptions,
 		write: false,
