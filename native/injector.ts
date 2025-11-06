@@ -1,6 +1,7 @@
 import electron from "electron";
 import os from "os";
 
+import { existsSync } from "fs";
 import { readFile, rm, writeFile } from "fs/promises";
 import mime from "mime";
 
@@ -118,8 +119,13 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		// Set Luna icon for all windows
 		const iconPath = path.join(bundleDir, "assets", "icon.png");
-		options.icon = iconPath;
-		console.log(`[Luna] Setting window icon to: ${iconPath}`);
+		if (!existsSync(iconPath)) {
+			console.error(`[Luna] Icon file not found at: ${iconPath}`);
+			console.error(`[Luna] Build may be incomplete. Run 'pnpm build' to regenerate assets.`);
+		} else {
+			options.icon = iconPath;
+			console.log(`[Luna] Setting window icon to: ${iconPath}`);
+		}
 		console.log(`[Luna] Window title: ${options.title || "(no title)"}`);
 
 		// tidal-hifi does not set the title, rely on dev tools instead.

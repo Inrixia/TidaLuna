@@ -19,9 +19,10 @@ const copyAssetsPlugin = {
 		build.onEnd(async () => {
 			try {
 				await cp("./assets", "./dist/assets", { recursive: true });
-				console.log("Copied assets to dist/");
+				console.log("Copied assets from ./assets to ./dist/assets");
 			} catch (err) {
-				console.warn("Failed to copy assets:", err);
+				console.error("Failed to copy assets from ./assets to ./dist/assets:", err);
+				throw err; // Fail build if assets are missing
 			}
 		});
 	},
