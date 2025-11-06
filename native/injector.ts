@@ -66,7 +66,8 @@ electron.app.whenReady().then(async () => {
 	electron.protocol.handle("https", async (req) => {
 		if (req.url.startsWith("https://luna/")) {
 			try {
-				return new Response(...(await bundleFile(req.url)));
+				const [content, init] = await bundleFile(req.url);
+				return new Response(new Uint8Array(content), init);
 			} catch (err: any) {
 				return new Response(err.message, { status: err.message.startsWith("ENOENT") ? 404 : 500, statusText: err.message });
 			}
@@ -111,8 +112,15 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		// Improve memory limits
 		options.webPreferences.nodeOptions = "--max-old-space-size=8192";
+
 		// Ensure smoothScrolling is always enabled
 		options.webPreferences.smoothScrolling = true;
+
+		// Set Luna icon for all windows
+		const iconPath = path.join(bundleDir, "assets", "icon.png");
+		options.icon = iconPath;
+		console.log(`[Luna] Setting window icon to: ${iconPath}`);
+		console.log(`[Luna] Window title: ${options.title || "(no title)"}`);
 
 		// tidal-hifi does not set the title, rely on dev tools instead.
 		const isTidalWindow = options.title == "TIDAL" || options.webPreferences?.devTools;
@@ -122,7 +130,7 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			const origialPreload = options.webPreferences?.preload;
 			ipcHandle("__Luna.originalPreload", () => origialPreload);
 
-			// Replace the preload instead of using setPreloads because of some differences in internal behaviour.
+			// Replace the preload instead of using setPreloads because of some differences in internal behavior.
 			// Set preload script to Luna's
 			options.webPreferences.preload = path.join(bundleDir, "preload.mjs");
 
@@ -131,6 +139,18 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		}
 
 		const window = (luna.tidalWindow = new target(options));
+
+		// Force window class name to prevent KDE from overriding icon
+		if (process.platform === "linux" && isTidalWindow) {
+			window.webContents.once("did-finish-load", () => {
+				try {
+					window.setIcon(iconPath);
+					console.log(`[Luna] Re-set window icon after load: ${iconPath}`);
+				} catch (err) {
+					console.error("[Luna] Failed to set icon after load:", err);
+				}
+			});
+		}
 
 		// #region Open from link
 		// MacOS

@@ -1,7 +1,7 @@
 import { type BuildOptions, type PluginBuild } from "esbuild";
 import { defaultBuildOptions, listen, TidalNodeVersion } from "luna/build";
 
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile, cp } from "fs/promises";
 
 const packageJsonPlugin = {
 	name: "write-package-json",
@@ -9,6 +9,20 @@ const packageJsonPlugin = {
 		build.onEnd(async () => {
 			await mkdir("./dist", { recursive: true });
 			await writeFile("./dist/package.json", await readFile("./package.json", "utf-8"));
+		});
+	},
+};
+
+const copyAssetsPlugin = {
+	name: "copy-assets",
+	setup(build: PluginBuild) {
+		build.onEnd(async () => {
+			try {
+				await cp("/tmp/tidal-original/assets", "./dist/assets", { recursive: true });
+				console.log("Copied assets to dist/");
+			} catch (err) {
+				console.warn("Failed to copy assets:", err);
+			}
 		});
 	},
 };
@@ -22,7 +36,7 @@ const buildConfigs: BuildOptions[] = [
 		format: "esm",
 		platform: "node",
 		external: ["electron", "module"],
-		plugins: [packageJsonPlugin],
+		plugins: [packageJsonPlugin, copyAssetsPlugin],
 	},
 	{
 		...defaultBuildOptions,
