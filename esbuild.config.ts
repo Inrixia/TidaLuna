@@ -18,7 +18,7 @@ const copyAssetsPlugin = {
 	setup(build: PluginBuild) {
 		build.onEnd(async () => {
 			try {
-				await cp("/tmp/tidal-original/assets", "./dist/assets", { recursive: true });
+				await cp("./assets", "./dist/assets", { recursive: true });
 				console.log("Copied assets to dist/");
 			} catch (err) {
 				console.warn("Failed to copy assets:", err);
