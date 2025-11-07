@@ -1,6 +1,7 @@
 import electron from "electron";
 import os from "os";
 
+import { existsSync } from "fs";
 import { readFile, rm, writeFile } from "fs/promises";
 import mime from "mime";
 
@@ -66,7 +67,8 @@ electron.app.whenReady().then(async () => {
 	electron.protocol.handle("https", async (req) => {
 		if (req.url.startsWith("https://luna/")) {
 			try {
-				return new Response(...(await bundleFile(req.url)));
+				const [content, init] = await bundleFile(req.url);
+				return new Response(new Uint8Array(content), init);
 			} catch (err: any) {
 				return new Response(err.message, { status: err.message.startsWith("ENOENT") ? 404 : 500, statusText: err.message });
 			}
@@ -111,8 +113,20 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		// Improve memory limits
 		options.webPreferences.nodeOptions = "--max-old-space-size=8192";
+
 		// Ensure smoothScrolling is always enabled
 		options.webPreferences.smoothScrolling = true;
+
+		// Set Luna icon for all windows
+		const iconPath = path.join(bundleDir, "assets", "icon.png");
+		if (!existsSync(iconPath)) {
+			console.error(`[TidaLuna] Icon file not found at: ${iconPath}`);
+			console.error(`[TidaLuna] Build may be incomplete. Run 'pnpm build' to regenerate assets.`);
+		} else {
+			options.icon = iconPath;
+			console.log(`[TidaLuna] Setting window icon to: ${iconPath}`);
+		}
+		console.log(`[TidaLuna] Window title: ${options.title || "(no title)"}`);
 
 		// tidal-hifi does not set the title, rely on dev tools instead.
 		const isTidalWindow = options.title == "TIDAL" || options.webPreferences?.devTools;
@@ -131,6 +145,19 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		}
 
 		const window = (luna.tidalWindow = new target(options));
+
+		// Force window class name to prevent Wayland overriding of the icon
+		// could be just a KDE quirk, someone confirm?
+		if (process.platform === "linux" && isTidalWindow) {
+			window.webContents.once("did-finish-load", () => {
+				try {
+					window.setIcon(iconPath);
+					console.log(`[TidaLuna] Re-set window icon after load: ${iconPath}`);
+				} catch (err) {
+					console.error("[TidaLuna] Failed to set icon after load:", err);
+				}
+			});
+		}
 
 		// #region Open from link
 		// MacOS
