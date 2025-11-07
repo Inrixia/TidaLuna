@@ -120,13 +120,13 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		// Set Luna icon for all windows
 		const iconPath = path.join(bundleDir, "assets", "icon.png");
 		if (!existsSync(iconPath)) {
-			console.error(`[Luna] Icon file not found at: ${iconPath}`);
-			console.error(`[Luna] Build may be incomplete. Run 'pnpm build' to regenerate assets.`);
+			console.error(`[TidaLuna] Icon file not found at: ${iconPath}`);
+			console.error(`[TidaLuna] Build may be incomplete. Run 'pnpm build' to regenerate assets.`);
 		} else {
 			options.icon = iconPath;
-			console.log(`[Luna] Setting window icon to: ${iconPath}`);
+			console.log(`[TidaLuna] Setting window icon to: ${iconPath}`);
 		}
-		console.log(`[Luna] Window title: ${options.title || "(no title)"}`);
+		console.log(`[TidaLuna] Window title: ${options.title || "(no title)"}`);
 
 		// tidal-hifi does not set the title, rely on dev tools instead.
 		const isTidalWindow = options.title == "TIDAL" || options.webPreferences?.devTools;
@@ -136,7 +136,7 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			const origialPreload = options.webPreferences?.preload;
 			ipcHandle("__Luna.originalPreload", () => origialPreload);
 
-			// Replace the preload instead of using setPreloads because of some differences in internal behavior.
+			// Replace the preload instead of using setPreloads because of some differences in internal behaviour.
 			// Set preload script to Luna's
 			options.webPreferences.preload = path.join(bundleDir, "preload.mjs");
 
@@ -146,14 +146,15 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		const window = (luna.tidalWindow = new target(options));
 
-		// Force window class name to prevent KDE from overriding icon
+		// Force window class name to prevent Wayland overriding of the icon
+		// could be just a KDE quirk, someone confirm?
 		if (process.platform === "linux" && isTidalWindow) {
 			window.webContents.once("did-finish-load", () => {
 				try {
 					window.setIcon(iconPath);
-					console.log(`[Luna] Re-set window icon after load: ${iconPath}`);
+					console.log(`[TidaLuna] Re-set window icon after load: ${iconPath}`);
 				} catch (err) {
-					console.error("[Luna] Failed to set icon after load:", err);
+					console.error("[TidaLuna] Failed to set icon after load:", err);
 				}
 			});
 		}

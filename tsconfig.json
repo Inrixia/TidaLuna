@@ -8,9 +8,9 @@
 		"strict": true,
 		"forceConsistentCasingInFileNames": true,
 		"lib": ["DOM", "DOM.Iterable", "ESNext"],
-		"types": ["node"],
-		"ignoreDeprecations": "6.0",
-		"baseUrl": ".",
+		"types": ["node", "./luna"],
+		"baseUrl": ".", // will be deprecated in TypeScript 7.0
+		"ignoreDeprecations": "6.0", // added to silence error about baseUrl
 		"paths": {
 			"@luna/lib": ["./plugins/lib/src/index.ts"],
 			"@luna/lib.native": ["./plugins/lib.native/src/index.native.ts"],

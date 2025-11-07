@@ -30,7 +30,7 @@ export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions
 	const exportsValue = typeof pluginPackage.exports === "string" 
 		? pluginPackage.exports 
 		: pluginPackage.exports?.["."]?.default ?? pluginPackage.exports?.["."];
-	const entryPoint = path.join(pluginPath, pluginPackage.main ?? exportsValue ?? "index.mjs");
+	const entryPoint = path.join(pluginPath, pluginPackage.main ?? exportsValue ?? "index.mjs");	
 	return <BuildOptions>{
 		...defaultBuildOptions,
 		write: false,
