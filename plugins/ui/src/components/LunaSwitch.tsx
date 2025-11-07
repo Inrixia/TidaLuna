@@ -45,7 +45,7 @@ export const LunaSwitch = React.memo((props: LunaSwitchProps) => {
 			title={tooltip}
 		>
 			<Switch
-			disabled={loading}
+			  disabled={loading}
 				icon={<LoadingIcon loading={loading} />}
 				checkedIcon={<LoadingIcon checked loading={loading} />}
 				{...switchProps}
