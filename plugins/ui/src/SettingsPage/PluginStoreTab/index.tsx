@@ -34,7 +34,7 @@ addToStores("https://github.com/Akasiek/tidaluna-plugins/releases/download/lates
 addToStores("https://github.com/Foukapik/TidaLuna-Plugins/releases/download/latest/store.json");
 addToStores("https://github.com/Renskursa/tidaluna-plugins/releases/download/latest/store.json");
 addToStores("https://github.com/Henr1ES/TidalLunaPlugins/releases/download/latest/store.json");
-addToStores("https://github.com/DevonCasey/tidal-luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/DevonCasey/tidaluna-plugins/releases/download/latest/store.json");
 
 export const PluginStoreTab = React.memo(() => {
 	const [_storeUrls, setPluginStores] = useState<string[]>(obyStore.unwrap(storeUrls));
