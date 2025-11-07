@@ -1,9 +1,15 @@
 import React from "react";
+import type { SwitchProps } from "@mui/material/Switch";
 import { LunaSwitch, type LunaSwitchProps } from "../LunaSwitch";
 import type { LunaTitleValues } from "../LunaTitle";
 import { LunaSetting } from "./LunaSetting";
 
-export type LunaSwitchSettingProps = LunaSwitchProps & LunaTitleValues;
-export const LunaSwitchSetting = React.memo((props: LunaSwitchSettingProps) => (
-	<LunaSetting variant={props.variant} title={props.title} desc={props.desc} children={<LunaSwitch {...props} />} />
-));
+export interface LunaSwitchSettingProps extends Omit<SwitchProps, "title">, LunaTitleValues {
+    loading?: boolean;
+    tooltip?: string;
+}
+
+export const LunaSwitchSetting = React.memo((props: LunaSwitchSettingProps) => {
+    const { title, desc, variant, ...rest } = props;
+    return <LunaSetting variant={variant} title={title} desc={desc} children={<LunaSwitch {...(rest as LunaSwitchProps)} />} />;
+});

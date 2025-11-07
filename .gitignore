@@ -5,11 +5,11 @@ result-original
 
 # IDEs
 .idea/
+.vscode/
 
 # Devenv
 .devenv*
 devenv.local.nix
-
 
 # direnv
 .direnv
