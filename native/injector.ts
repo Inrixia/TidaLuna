@@ -1,5 +1,7 @@
 import electron from "electron";
+import os from "os";
 
+import { existsSync } from "fs";
 import { readFile, rm, writeFile } from "fs/promises";
 import mime from "mime";
 
@@ -25,6 +27,7 @@ declare global {
 		tidalWindow?: Electron.BrowserWindow;
 	};
 }
+
 globalThis.luna = {
 	modules: {},
 };
@@ -64,13 +67,15 @@ electron.app.whenReady().then(async () => {
 	electron.protocol.handle("https", async (req) => {
 		if (req.url.startsWith("https://luna/")) {
 			try {
-				return new Response(...(await bundleFile(req.url)));
+				const [content, init] = await bundleFile(req.url);
+				return new Response(new Uint8Array(content), init);
 			} catch (err: any) {
 				return new Response(err.message, { status: err.message.startsWith("ENOENT") ? 404 : 500, statusText: err.message });
 			}
 		}
+
 		// Bypass CSP & Mark meta scripts for quartz injection
-		if (req.url === "https://desktop.tidal.com/" || req.url === "https://listen.tidal.com/") {
+		if (req.url === "https://desktop.tidal.com/" || req.url === "https://tidal.com/" || req.url === "https://listen.tidal.com/") {
 			const res = await electron.net.fetch(req, { bypassCustomProtocolHandlers: true });
 			let body = await res.text();
 			body = body.replace(
@@ -83,6 +88,7 @@ electron.app.whenReady().then(async () => {
 						// Mark module scripts for quartz injection
 						return `<script type="luna/quartz" src="${src}">`;
 					}
+
 					// Should not happen if the regex is correct
 					return match;
 				},
@@ -107,11 +113,24 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		// Improve memory limits
 		options.webPreferences.nodeOptions = "--max-old-space-size=8192";
+
 		// Ensure smoothScrolling is always enabled
 		options.webPreferences.smoothScrolling = true;
 
+		// Set Luna icon for all windows
+		const iconPath = path.join(bundleDir, "assets", "icon.png");
+		if (!existsSync(iconPath)) {
+			console.error(`[TidaLuna] Icon file not found at: ${iconPath}`);
+			console.error(`[TidaLuna] Build may be incomplete. Run 'pnpm build' to regenerate assets.`);
+		} else {
+			options.icon = iconPath;
+			console.log(`[TidaLuna] Setting window icon to: ${iconPath}`);
+		}
+		console.log(`[TidaLuna] Window title: ${options.title || "(no title)"}`);
+
 		// tidal-hifi does not set the title, rely on dev tools instead.
 		const isTidalWindow = options.title == "TIDAL" || options.webPreferences?.devTools;
+
 		if (isTidalWindow) {
 			// Store original preload and add a handle to fetch it later (see ./preload.ts)
 			const origialPreload = options.webPreferences?.preload;
@@ -124,7 +143,21 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			// TODO: Find why sandboxing has to be disabled
 			options.webPreferences.sandbox = false;
 		}
+
 		const window = (luna.tidalWindow = new target(options));
+
+		// Force window class name to prevent Wayland overriding of the icon
+		// could be just a KDE quirk, someone confirm?
+		if (process.platform === "linux" && isTidalWindow) {
+			window.webContents.once("did-finish-load", () => {
+				try {
+					window.setIcon(iconPath);
+					console.log(`[TidaLuna] Re-set window icon after load: ${iconPath}`);
+				} catch (err) {
+					console.error("[TidaLuna] Failed to set icon after load:", err);
+				}
+			});
+		}
 
 		// #region Open from link
 		// MacOS
@@ -209,27 +242,32 @@ require(startPath);
 const requirePrefix = `import { createRequire } from 'module';const require = createRequire(${JSON.stringify(pathToFileURL(process.resourcesPath + "/").href)});`;
 // Call to register native module
 ipcHandle("__Luna.registerNative", async (_, name: string, code: string) => {
-	const tempPath = path.join(bundleDir, Math.random().toString() + ".mjs");
+	const tempDir = os.tmpdir();
+	const tempFile = path.join(tempDir, Math.random().toString() + ".mjs");
 	try {
-		await writeFile(tempPath, requirePrefix + code, "utf8");
+		await writeFile(tempFile, requirePrefix + code, "utf8");
+
 		// Load module
-		const exports = (globalThis.luna.modules[name] = await import(pathToFileURL(tempPath).href));
+		const exports = (globalThis.luna.modules[name] = await import(pathToFileURL(tempFile).href));
 		const channel = `__LunaNative.${name}`;
+
 		// Register handler for calling module exports
 		ipcHandle(channel, async (_, exportName, ...args) => {
 			try {
 				return await exports[exportName](...args);
 			} catch (err: any) {
-				// Set cause to identify native module
+				// Set cause to identify a native module
 				err.cause = `[Luna.native] (${name}).${exportName}`;
 				throw err;
 			}
 		});
+
 		return channel;
 	} finally {
-		await rm(tempPath, { force: true });
+		await rm(tempFile, { force: true });
 	}
 });
+
 // Literally just to log if preload fails
 ipcHandle("__Luna.preloadErr", async (_, err: Error) => {
 	console.error(err);

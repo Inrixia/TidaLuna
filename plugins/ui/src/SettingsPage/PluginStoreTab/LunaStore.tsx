@@ -82,7 +82,9 @@ export const LunaStore = React.memo(({ url, onRemove }: { url: string; onRemove:
 				}
 			/>
 			<Grid columns={2} spacing={2} container>
-				{pkg?.plugins.map((plugin) => <Grid size={1} children={<LunaStorePlugin url={`${url}/${plugin}`} key={plugin} />} />)}
+				{pkg?.plugins.map((plugin) => (
+					<Grid size={1} children={<LunaStorePlugin url={`${url}/${isLocalDevStore ? plugin : plugin.replace(" ", ".")}`} key={plugin} />} />
+				))}
 			</Grid>
 		</Stack>
 	);

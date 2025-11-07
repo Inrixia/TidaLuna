@@ -1,9 +1,9 @@
-import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver } from "@inrixia/helpers";
+import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver, type Emit } from "@inrixia/helpers";
 import type { IRecording, ITrack } from "musicbrainz-api";
 
-import { ftch, ReactiveStore, type Tracer } from "@luna/core";
+import { ftch, ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
-import { getPlaybackInfo, type PlaybackInfo } from "../../helpers";
+import { getPlaybackInfo, parseDate, type PlaybackInfo } from "../../helpers";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
 import { Album } from "../Album";
@@ -13,9 +13,10 @@ import { PlayState } from "../PlayState";
 import { Quality } from "../Quality";
 import { TidalApi } from "../TidalApi";
 import { download, downloadProgress } from "./MediaItem.download.native";
-import { makeTags, MetaTags } from "./MediaItem.tags";
+import { availableTags, makeTags, MetaTags } from "./MediaItem.tags";
+import { getStreamBytes, parseStreamFormat } from "./parseStreamFormat.native";
 
-type MediaFormat = {
+export type MediaFormat = {
 	bitDepth?: number;
 	sampleRate?: number;
 	codec?: string;
@@ -29,6 +30,7 @@ type MediaItemCache = {
 
 export class MediaItem extends ContentBase {
 	public static readonly trace: Tracer = libTrace.withSource(".MediaItem").trace;
+	public static readonly availableTags = availableTags;
 
 	private static cache = ReactiveStore.getStore("@luna/MediaItemCache");
 
@@ -55,7 +57,7 @@ export class MediaItem extends ContentBase {
 		return super.fromStore(itemId, "mediaItems", async (mediaItem) => {
 			mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
 			if (mediaItem === undefined) return;
-			return new MediaItem(itemId, mediaItem, await mediaItemCache);
+			return new MediaItem(itemId, mediaItem, contentType, await mediaItemCache);
 		});
 	}
 	public static fromIsrc: (isrc: string) => Promise<MediaItem | undefined> = memoize(async (isrc) => {
@@ -145,6 +147,7 @@ export class MediaItem extends ContentBase {
 	constructor(
 		public readonly id: redux.ItemId,
 		tidalMediaItem: redux.MediaItem,
+		public readonly contentType: redux.ContentType,
 		private readonly cache: MediaItemCache,
 	) {
 		super();
@@ -163,7 +166,8 @@ export class MediaItem extends ContentBase {
 	 * Is idempotent so can be called multiple times without causing re-fetch.
 	 */
 	public fetchTidalMediaItem: () => Promise<void> = memoizeArgless(async () => {
-		(this.tidalItem as any) = await TidalApi.track(this.id);
+		const tidalItem = await TidalApi.track(this.id);
+		if (tidalItem !== undefined) (<redux.Track>this.tidalItem) = tidalItem;
 	});
 
 	// #region MusicBrainz
@@ -230,7 +234,7 @@ export class MediaItem extends ContentBase {
 	});
 
 	public async *isrcs(): AsyncIterable<string> {
-		if (this.tidalItem.contentType !== "track") return;
+		if (this.contentType !== "track") return;
 		const seen = new Set<string>();
 		if (this.tidalItem.isrc) {
 			yield this.tidalItem.isrc;
@@ -259,17 +263,20 @@ export class MediaItem extends ContentBase {
 	});
 
 	public releaseDate: () => Promise<Date | undefined> = memoize(async () => {
-		let releaseDate = this.tidalItem.releaseDate ?? this.tidalItem.streamStartDate;
+		let releaseDate = parseDate(this.tidalItem.releaseDate);
 		if (releaseDate === undefined) {
 			const brainzItem = await this.brainzItem();
-			releaseDate = brainzItem?.recording?.["first-release-date"] ?? releaseDate;
+			releaseDate = parseDate(brainzItem?.recording?.["first-release-date"]);
 		}
 		if (releaseDate === undefined) {
 			const album = await this.album();
-			releaseDate = album?.releaseDate ?? releaseDate;
-			releaseDate ??= (await album?.brainzAlbum())?.date ?? releaseDate;
+			releaseDate = parseDate(album?.releaseDate);
+			if (releaseDate === undefined) {
+				const brainzAlbum = await album?.brainzAlbum();
+				releaseDate ??= parseDate(brainzAlbum?.date);
+			}
 		}
-		if (releaseDate) return new Date(releaseDate);
+		return releaseDate ?? parseDate(this.tidalItem.streamStartDate);
 	});
 
 	/**
@@ -298,9 +305,6 @@ export class MediaItem extends ContentBase {
 	// #endregion
 
 	// #region Properties
-	public get contentType() {
-		return this.tidalItem.contentType;
-	}
 	public get trackNumber() {
 		return this.tidalItem.trackNumber;
 	}
@@ -311,18 +315,18 @@ export class MediaItem extends ContentBase {
 		return this.tidalItem.peak;
 	}
 	public get replayGain(): number {
-		if (this.tidalItem.contentType !== "track") return 0;
+		if (this.contentType !== "track") return 0;
 		return this.tidalItem.replayGain;
 	}
 	public get url(): string {
 		return this.tidalItem.url;
 	}
 	public get qualityTags(): Quality[] {
-		if (this.tidalItem.contentType !== "track") return [];
+		if (this.contentType !== "track") return [];
 		return Quality.fromMetaTags(this.tidalItem.mediaMetadata?.tags);
 	}
 	public get bestQuality(): Quality {
-		if (this.tidalItem.contentType !== "track") {
+		if (this.contentType !== "track") {
 			this.trace.warn("MediaItem quality called on non-track!", this);
 			return Quality.High;
 		}
@@ -356,27 +360,31 @@ export class MediaItem extends ContentBase {
 	// #endregion
 
 	// #region PlaybackInfo
-	public async playbackInfo(audioQuality?: redux.AudioQuality): Promise<PlaybackInfo> {
+	public playbackInfo: (audioQuality?: redux.AudioQuality) => Promise<PlaybackInfo> = memoize(async (audioQuality?: redux.AudioQuality) => {
 		audioQuality ??= Quality.Max.audioQuality;
 		const playbackInfo = await getPlaybackInfo(this.id, audioQuality);
+		const [_, emitFormat] = this.formatEmitters[audioQuality] ?? [];
 		this.cache.format ??= {};
 		this.cache.format[audioQuality] = {
 			...this.cache.format[audioQuality],
 			bitDepth: playbackInfo.bitDepth,
 			sampleRate: playbackInfo.sampleRate,
 		};
+		emitFormat?.(this.cache.format[audioQuality]!, this.trace.err.withContext("playbackInfo.emitFormat"));
 		return playbackInfo;
-	}
+	});
 	// #endregion
 
 	// #region Download
 	public async downloadProgress() {
 		return downloadProgress(this.id);
 	}
-	public async download(path: string): Promise<void> {
-		const [playbackInfo, flagTags] = await Promise.all([this.playbackInfo(), this.flacTags()]);
-		await download(playbackInfo, path, flagTags);
-	}
+	public download: (path: string, audioQuality?: redux.AudioQuality) => Promise<void> = asyncDebounce(
+		async (path: string, audioQuality?: redux.AudioQuality) => {
+			const [playbackInfo, flagTags] = await Promise.all([this.playbackInfo(audioQuality), this.flacTags()]);
+			return download(playbackInfo, path, flagTags);
+		},
+	);
 	public async fileExtension(): Promise<string> {
 		const playbackInfo = await this.playbackInfo();
 		switch (playbackInfo.manifestMimeType) {
@@ -389,35 +397,42 @@ export class MediaItem extends ContentBase {
 	// #endregion
 
 	// #region Format
-	// public getFormat: (audioQuality?: MediaItemAudioQuality) => Promise<void> = asyncDebounce((audioQuality) =>
-	// 	MediaItem.getFormatSemaphore.with(async () => {
-	// 		const playbackInfo = await this.playbackInfo(audioQuality);
+	private readonly formatEmitters: { [K in redux.AudioQuality]?: [onEvent: AddReceiver<MediaFormat>, emitEvent: Emit<MediaFormat>] } = {};
+	public withFormat(unloads: LunaUnloads, audioQuality: redux.AudioQuality, listener: (format: MediaFormat) => void): LunaUnload {
+		const [onFormat] = (this.formatEmitters[audioQuality] ??= registerEmitter<MediaFormat>());
+		const unload = onFormat(unloads, listener);
+		if (this.cache.format?.[audioQuality] !== undefined) listener(this.cache.format[audioQuality]);
+		return unload;
+	}
+	public updateFormat: (audioQuality?: redux.AudioQuality, force?: true) => Promise<void> = asyncDebounce(async (audioQuality, force) => {
+		this.cache.format ??= {};
+		audioQuality ??= Quality.Max.audioQuality;
+		const format = (this.cache.format[audioQuality] ??= {});
 
-	// 		this.cache.format ??= {};
-	// 		const format = (this.cache.format[playbackInfo.audioQuality] ??= {});
+		if (format.bitrate !== undefined && force !== true) return;
 
-	// 		if (format.bitDepth === undefined || format.sampleRate === undefined || format.duration === undefined) {
-	// 			const { format, bytes } = await parseStreamMeta(playbackInfo);
+		const playbackInfo = await this.playbackInfo(audioQuality);
+		format.duration = this.duration;
 
-	// 			mediaFormat.bytes = bytes;
+		if (format.bitDepth === undefined || format.sampleRate === undefined || format.duration === undefined) {
+			const { format: streamFormat, bytes } = await parseStreamFormat(playbackInfo);
+			format.bytes = bytes;
+			format.bitDepth = streamFormat.bitsPerSample ?? format.bitDepth;
+			format.sampleRate = streamFormat.sampleRate ?? format.sampleRate;
+			format.duration = streamFormat.duration ?? format.duration;
+			format.codec = streamFormat.codec?.toLowerCase() ?? format.codec;
+			if (playbackInfo.manifestMimeType === "application/dash+xml") {
+				format.bitrate = playbackInfo.manifest.tracks.audios[0].bitrate.bps ?? format.bitrate;
+				format.bytes = playbackInfo.manifest.tracks.audios[0].size?.b ?? format.bytes;
+			}
+		} else {
+			format.bytes = (await getStreamBytes(playbackInfo)) ?? format.bytes;
+		}
 
-	// 			mediaFormat.bitDepth = format.bitsPerSample ?? this.bitDepth;
-	// 			mediaFormat.sampleRate = format.sampleRate ?? this.sampleRate;
-	// 			mediaFormat.duration = format.duration ?? this.duration;
+		format.bitrate ??= !!format.bytes && !!format.duration ? (format.bytes / format.duration) * 8 : undefined;
 
-	// 			mediaFormat.codec = format.codec?.toLowerCase() ?? this.codec;
-
-	// 			if (playbackInfo.manifestMimeType === "application/dash+xml") {
-	// 				mediaFormat.bitrate = playbackInfo.manifest.tracks.audios[0].bitrate.bps ?? this.bitrate;
-	// 				mediaFormat.bytes = playbackInfo.manifest.tracks.audios[0].size?.b ?? this.bytes;
-	// 			}
-	// 		} else {
-	// 			mediaFormat.bytes = (await getStreamBytes(playbackInfo)) ?? this.bytes;
-	// 		}
-
-	// 		MediaItem.formatStore.put(mediaFormat).catch(trace.err.withContext("formatStore.put"));
-	// 		this.updateFormat(mediaFormat);
-	// 	}),
-	// );
+		const [_, emitFormat] = this.formatEmitters[playbackInfo.audioQuality] ?? [];
+		emitFormat?.(format, this.trace.err.withContext("updateFormat.emitFormat"));
+	});
 	// #endregion
 }

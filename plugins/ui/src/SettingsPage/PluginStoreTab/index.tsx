@@ -18,8 +18,23 @@ export const addToStores = (url: string) => {
 };
 
 // Devs! Add your stores here <3
-// TODO: Abstract this to a git repo with versioned stores
-addToStores("https://github.com/Inrixia/neptune-plugins/releases/download/dev/store.json");
+// TODO: Abstract this to a git repo
+addToStores("https://github.com/SuperslowJelly/TIDAL-Clear-Coat/releases/download/latest/store.json");
+addToStores("https://github.com/meowarex/TidalLuna-Plugins/releases/download/latest/store.json");
+addToStores("https://github.com/wont-stream/lunar/releases/download/dev/store.json");
+addToStores("https://github.com/jxnxsdev/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/espeon/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json");
+addToStores("https://github.com/Aztup/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/vMohammad24/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/MathDesigns/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/otomir23/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/dantraynor/lunaplugins/releases/download/latest/store.json");
+addToStores("https://github.com/Akasiek/tidaluna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/Foukapik/TidaLuna-Plugins/releases/download/latest/store.json");
+addToStores("https://github.com/Renskursa/tidaluna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/Henr1ES/TidalLunaPlugins/releases/download/latest/store.json");
+addToStores("https://github.com/DevonCasey/tidaluna-plugins/releases/download/latest/store.json");
 
 export const PluginStoreTab = React.memo(() => {
 	const [_storeUrls, setPluginStores] = useState<string[]>(obyStore.unwrap(storeUrls));

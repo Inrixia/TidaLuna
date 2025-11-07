@@ -1,6 +1,6 @@
 import { type Tracer } from "@luna/core";
 
-import { memoize, memoizeArgless, Semaphore, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
+import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
 
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
 
@@ -8,6 +8,7 @@ import { getCredentials } from "../../helpers";
 import { libTrace } from "../../index.safe";
 import * as redux from "../../redux";
 
+import type { AlbumPage } from "./types/AlbumPage";
 import { PlaybackInfoResponse } from "./types/PlaybackInfo";
 
 export type * from "./types";
@@ -28,12 +29,18 @@ export class TidalApi {
 		return `countryCode=${store.session.countryCode}&deviceType=DESKTOP&locale=${store.settings.language}`;
 	});
 	public static fetch = memoize(async <T>(url: string): Promise<T | undefined> => {
-		const res = await fetch(url, {
-			headers: await this.getAuthHeaders(),
-		});
-		if (statusOK(res.status)) return res.json();
-		if (res.status === 404) return undefined;
-		this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+		// Retry a failed request once with a 1s delay
+		let retry = true;
+		while (true) {
+			const res = await fetch(url, {
+				headers: await this.getAuthHeaders(),
+			});
+			if (statusOK(res.status)) return res.json();
+			if (res.status === 404) return undefined;
+			if (!retry) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+			retry = false;
+			await sleep(1000);
+		}
 	});
 
 	public static async track(trackId: redux.ItemId) {
@@ -61,9 +68,16 @@ export class TidalApi {
 		return this.fetch<redux.Album>(`https://desktop.tidal.com/v1/albums/${albumId}?${this.queryArgs()}`);
 	}
 	public static async albumItems(albumId: redux.ItemId) {
-		return this.fetch<{ items: redux.MediaItem[]; totalNumberOfItems: number; offset: number; limit: -1 }>(
-			`https://desktop.tidal.com/v1/albums/${albumId}/items?${this.queryArgs()}&limit=-1`,
+		const albumPage = await this.fetch<AlbumPage>(
+			`https://desktop.tidal.com/v1/pages/album?albumId=${albumId}&countryCode=NZ&locale=en_US&deviceType=DESKTOP`,
 		);
+		for (const row of albumPage?.rows ?? []) {
+			for (const module of row.modules) {
+				if (module.type === "ALBUM_ITEMS" && module.pagedList) {
+					return module.pagedList.items;
+				}
+			}
+		}
 	}
 
 	public static playlist(playlistUUID: redux.ItemId) {

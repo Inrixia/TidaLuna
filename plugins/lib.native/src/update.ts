@@ -12,7 +12,7 @@ export const relaunch = async () => {
 	app.exit(0);
 };
 
-const appFolder = "./resources/app";
+const appFolder = process.resourcesPath + "/app";
 
 export const updateLuna = async (zipUrl: string) => {
 	// Download the zip file using fetch

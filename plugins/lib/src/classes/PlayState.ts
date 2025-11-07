@@ -179,7 +179,8 @@ export class PlayState {
 		this.currentMediaItem = await MediaItem.fromPlaybackContext();
 		MediaItem.onMediaTransition(unloads, (mediaItem) => {
 			// Dont use mediaItem as its the NEXT track not the one we just finished listening to
-			if (this.currentMediaItem !== undefined && this.currentMediaItem.id !== mediaItem.id) {
+			const isRepeating = this.repeatMode === this.RepeatMode.One;
+			if (this.currentMediaItem !== undefined && (!isRepeating && (this.currentMediaItem.id !== mediaItem.id))) {
 				if (this.currentMediaItem.duration === undefined) return;
 				if (this.lastPlayStart !== undefined) this.cumulativePlaytime += Date.now() - this.lastPlayStart;
 				const longerThan4min = this.cumulativePlaytime >= this.MIN_SCROBBLE_DURATION;

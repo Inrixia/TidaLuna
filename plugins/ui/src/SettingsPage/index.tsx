@@ -15,6 +15,7 @@ import { PluginsTab } from "./PluginsTab";
 import { PluginStoreTab } from "./PluginStoreTab";
 import { SettingsTab } from "./SettingsTab";
 import { SupportersTab } from "./SupportersTab";
+import { ThemesTab } from "./ThemesTab";
 
 type LunaSettingsTab = "Plugins" | "Plugin Store" | "Settings" | "Themes" | "Supporters";
 
@@ -44,7 +45,7 @@ export const LunaPage = React.memo(() => {
 			<LunaTabPage tab={"Plugins"} currentTab={currentTab} children={<PluginsTab />} />
 			<LunaTabPage tab={"Settings"} currentTab={currentTab} children={<SettingsTab />} />
 			<LunaTabPage tab={"Plugin Store"} currentTab={currentTab} children={<PluginStoreTab />} />
-			{/* <LunaTabPage tab={"Themes"} currentTab={currentTab} children={<div>Coming soon!</div>} /> */}
+			<LunaTabPage tab={"Themes"} currentTab={currentTab} children={<ThemesTab />} />
 			<LunaTabPage tab={"Supporters"} currentTab={currentTab} children={<SupportersTab />} />
 		</Container>
 	);

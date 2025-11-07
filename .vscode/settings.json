@@ -6,5 +6,6 @@
 		"/plugins/lib/src/helpers",
 		"/plugins/lib/src/classes",
 		"/plugins/lib/src/redux"
-	]
+	],
+	"discord.enabled": false
 }

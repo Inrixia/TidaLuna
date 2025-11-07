@@ -40,12 +40,13 @@ radial-gradient(ellipse at top right, rgba(139, 203, 235, 0.5), transparent 70%)
 radial-gradient(ellipse at center right, rgba(98, 103, 145, 0.5), transparent 70%),
 radial-gradient(ellipse at bottom right, rgba(47, 48, 78, 0.5), transparent 70%)`;
 
-ContextMenu.onOpen(unloads, ({ event, contextMenu }) => {
+const SettingsButton = ContextMenu.addButton(unloads);
+SettingsButton.text = "Luna Settings";
+SettingsButton.onClick(() => settingsPage.open());
+ContextMenu.onOpen(unloads, async ({ event, contextMenu }) => {
 	if (event.type === "USER_PROFILE") {
-		contextMenu.addButton("Luna Settings", (e) => {
-			e.preventDefault();
-			settingsPage.open();
-		}).style.color = "#31d8ff";
+		const elem = await SettingsButton.show(contextMenu);
+		if (elem) elem.style.color = "#31d8ff";
 	}
 });
 

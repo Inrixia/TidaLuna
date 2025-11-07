@@ -1,9 +1,10 @@
 import { rejectNotOk } from "@inrixia/helpers";
 import type { Decipher } from "crypto";
 
-export type FetchProgress = { readonly total: number; readonly downloaded: number };
+export type FetchProgress = { readonly total?: number; readonly downloaded?: number };
 export type TrackStreamOptions = {
 	progress?: FetchProgress;
+	reqInit?: RequestInit;
 	bytesWanted?: number;
 	decipher?: Decipher;
 };
@@ -22,25 +23,25 @@ const parseTotal = (headers: Response["headers"]) => {
 };
 
 export async function* fetchStream(urls: string[], options: TrackStreamOptions = {}) {
-	options.progress ??= {
-		total: 0,
-		downloaded: 0,
-	};
+	options.progress ??= {};
 	// Clear these just to be safe
 	(options.progress.total as number) = 0;
 	(options.progress.downloaded as number) = 0;
 
-	let { progress, bytesWanted, decipher } = options;
+	options.reqInit ??= {};
 
-	const headers = new Headers();
+	let { progress, bytesWanted, decipher, reqInit } = options;
+
+	reqInit.headers = new Headers(reqInit.headers);
 	const partialRequest = bytesWanted !== undefined;
-	if (urls.length === 1 && partialRequest) headers.set("Range", `bytes=0-${bytesWanted}`);
+	if (urls.length === 1 && partialRequest) reqInit.headers.set("Range", `bytes=0-${bytesWanted}`);
 
 	try {
 		for (const url of urls) {
-			const res = await fetch(url, { headers }).then(rejectNotOk);
+			const res = await fetch(url, reqInit).then(rejectNotOk);
 			(progress.total as number) += parseTotal(res.headers);
-			const reader = res.body!.getReader();
+			const reader = res.body?.getReader();
+			if (!reader) continue;
 			while (true) {
 				let { done, value } = await reader.read();
 				if (done) break;
@@ -50,7 +51,7 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 
 				yield value;
 
-				if (partialRequest && progress.downloaded >= bytesWanted) return reader.cancel();
+				if (partialRequest && progress.downloaded! >= bytesWanted) return reader.cancel();
 			}
 			if (partialRequest && progress.downloaded! >= bytesWanted) return;
 		}

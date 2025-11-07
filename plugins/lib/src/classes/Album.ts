@@ -82,8 +82,8 @@ export class Album extends ContentBase implements MediaCollection {
 		return this.tidalAlbum.numberOfTracks!;
 	}
 	public tMediaItems: () => Promise<redux.MediaItem[]> = memoize(async () => {
-		const playlistIitems = await TidalApi.albumItems(this.id);
-		return playlistIitems?.items ?? [];
+		const albumItems = await TidalApi.albumItems(this.id);
+		return albumItems ?? [];
 	});
 	public async mediaItems() {
 		return MediaItem.fromTMediaItems(await this.tMediaItems());

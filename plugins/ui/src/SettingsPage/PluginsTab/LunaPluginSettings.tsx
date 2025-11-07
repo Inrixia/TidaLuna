@@ -51,10 +51,13 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 
 	const disabled = !enabled || loading;
 
+	const isDev = plugin.store.url.startsWith("http://127.0.0.1");
+
 	const author = pkg.author;
 	const desc = pkg.description;
 	const name = pkg.name;
 	const link = pkg.homepage ?? pkg.repository?.url;
+	let version = isDev ? `${pkg.version ?? ""} [DEV]` : pkg.version;
 
 	// Dont allow disabling core plugins
 	const isCore = LunaPlugin.corePlugins.has(name);
@@ -76,6 +79,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 		>
 			<LunaPluginHeader
 				name={name}
+				version={version}
 				link={link}
 				loadError={loadError}
 				author={author}

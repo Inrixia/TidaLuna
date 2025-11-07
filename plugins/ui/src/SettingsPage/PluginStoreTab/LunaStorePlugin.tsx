@@ -18,6 +18,8 @@ export const LunaStorePlugin = React.memo(({ url }: { url: string }) => {
 
 	if (!plugin) return null;
 
+	const version = url.startsWith("http://127.0.0.1") ? `${plugin.package?.version ?? ""} [DEV]` : plugin.package?.version;
+
 	return (
 		<ButtonBase
 			onMouseEnter={() => setIsHovered(true)}
@@ -41,6 +43,7 @@ export const LunaStorePlugin = React.memo(({ url }: { url: string }) => {
 			<LunaPluginHeader
 				sx={{ transition: "opacity 0.3s ease-in-out", opacity: isHovered ? 0.2 : 1, width: "100%" }}
 				name={plugin.name}
+				version={version}
 				loadError={loadError}
 				author={plugin.package?.author}
 				desc={plugin.package?.description}

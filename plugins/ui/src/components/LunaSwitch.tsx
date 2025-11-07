@@ -31,24 +31,25 @@ const LoadingIcon = React.memo(({ checked, loading }: { checked?: boolean; loadi
 	);
 });
 
-export interface LunaSwitchProps extends SwitchProps {
+export interface LunaSwitchProps extends Omit<SwitchProps, "title"> {
 	loading?: boolean;
 	tooltip?: string;
 }
 export const LunaSwitch = React.memo((props: LunaSwitchProps) => {
+	const { tooltip, loading, ...switchProps } = props;
 	return (
 		<Tooltip
 			sx={{
 				marginRight: "auto",
 			}}
-			title={props.tooltip ?? props.title}
+			title={tooltip}
 		>
 			<Switch
-				disabled={props.loading}
-				icon={<LoadingIcon loading={props.loading} />}
-				checkedIcon={<LoadingIcon checked loading={props.loading} />}
-				{...props}
-				sx={{ marginLeft: "auto", ...props.sx }}
+			disabled={loading}
+				icon={<LoadingIcon loading={loading} />}
+				checkedIcon={<LoadingIcon checked loading={loading} />}
+				{...switchProps}
+				sx={{ marginLeft: "auto", ...switchProps.sx }}
 			/>
 		</Tooltip>
 	);

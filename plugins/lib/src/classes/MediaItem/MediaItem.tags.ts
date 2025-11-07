@@ -55,45 +55,64 @@ export type MetaTags = {
 export const makeTags = async (mediaItem: MediaItem): Promise<MetaTags> => {
 	const tags: FlacTags = {};
 
-	tags.title = await mediaItem.title();
+	const [title, releaseDate, releaseDateStr, copyright, bpm, artistNames, brainzId, isrc, album, lyrics, coverUrl] = await Promise.all([
+		mediaItem.title(),
+		mediaItem.releaseDate(),
+		mediaItem.releaseDateStr(),
+		mediaItem.copyright(),
+		mediaItem.bpm(),
+		MediaItem.artistNames(mediaItem.artists()),
+		mediaItem.brainzId(),
+		mediaItem.isrc(),
+		mediaItem.album(),
+		mediaItem.lyrics(),
+		mediaItem.coverUrl(),
+	]);
+
+	tags.title = title;
 
 	tags.trackNumber = mediaItem.trackNumber?.toString();
-	tags.date = await mediaItem.releaseDateStr();
+	tags.date = releaseDateStr;
+	tags.year = releaseDate?.getFullYear().toString();
 	tags.REPLAYGAIN_TRACK_PEAK = mediaItem.replayGainPeak?.toString();
 	tags.REPLAYGAIN_TRACK_GAIN = mediaItem.replayGain?.toString();
 	tags.comment = mediaItem.url;
-	tags.copyright = await mediaItem.copyright();
-	tags.bpm = (await mediaItem.bpm())?.toString();
+	tags.copyright = copyright;
+	tags.bpm = bpm?.toString();
 	tags.discNumber = mediaItem.volumeNumber?.toString();
 
-	tags.artist = await MediaItem.artistNames(mediaItem.artists());
+	tags.artist = artistNames;
 	if (tags.artist.length === 0) tags.artist = ["Unknown Artist"];
 
-	tags.musicbrainz_trackid = await mediaItem.brainzId();
+	tags.musicbrainz_trackid = brainzId;
 
-	tags.isrc = await mediaItem.isrc();
+	tags.isrc = isrc;
 
-	const album = await mediaItem.album();
 	if (album) {
-		tags.upc = await album.upc();
-		tags.musicbrainz_albumid = await album.brainzId();
-		tags.album = await album.title();
+		const [upc, brainzAlbumId, albumTitle, artistNames] = await Promise.all([
+			album.upc(),
+			album.brainzId(),
+			album.title(),
+			MediaItem.artistNames(album.artists()),
+		]);
+		tags.upc = upc;
+		tags.musicbrainz_albumid = brainzAlbumId;
+		tags.album = albumTitle;
 
-		tags.albumArtist = await MediaItem.artistNames(album.artists());
+		tags.albumArtist = artistNames;
 		if (tags.albumArtist.length === 0) tags.albumArtist = ["Unknown Artist"];
 
 		tags.genres = album.genre;
 		tags.organization = album.recordLabel;
 
 		tags.totalTracks = album.numberOfTracks?.toString();
-		tags.year = album.releaseYear;
+		tags.year = album.releaseYear ?? tags.year;
 	}
 
-	const lyrics = await mediaItem.lyrics();
-	tags.lyrics = lyrics?.lyrics;
+	tags.lyrics = lyrics?.subtitles ?? lyrics?.lyrics;
 
 	// Ensure core tags are set
 	tags.album ??= "Unknown Album";
 
-	return { tags, coverUrl: await mediaItem.coverUrl() };
+	return { tags, coverUrl };
 };

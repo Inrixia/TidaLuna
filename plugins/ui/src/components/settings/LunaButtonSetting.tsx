@@ -20,7 +20,7 @@ export const LunaButtonSetting = React.memo((props: LunaButtonSettingProps) => (
 					height: 40,
 					...props.sx,
 				}}
-				children={props.children}
+				children={props.children ?? props.title}
 			/>
 		}
 	/>

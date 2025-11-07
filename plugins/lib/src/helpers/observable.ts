@@ -1,6 +1,7 @@
 // based on: https://github.com/KaiHax/kaihax/blob/master/src/patcher.ts
 
 import type { VoidFn } from "@inrixia/helpers";
+import type { LunaUnloads } from "@luna/core";
 import { unloads } from "../index.safe";
 
 export type ObserveCallback<E extends Element = Element> = (elem: E) => unknown;
@@ -31,7 +32,7 @@ const observer = new MutationObserver((records) => {
  * @param cb The callback function to execute when a matching element is found cast to type T.
  * @returns An `Unload` function that, when called, will stop observing for this selector and callback pair.
  */
-export const observe = <T extends Element = Element>(selector: string, cb: ObserveCallback<T>): VoidFn => {
+export const observe = <T extends Element = Element>(unloads: LunaUnloads, selector: string, cb: ObserveCallback<T>): VoidFn => {
 	if (observables.size === 0)
 		observer.observe(document.body, {
 			subtree: true,
@@ -39,10 +40,12 @@ export const observe = <T extends Element = Element>(selector: string, cb: Obser
 		});
 	const entry: ObserveEntry = [selector, cb as ObserveCallback<Element>];
 	observables.add(entry);
-	return () => {
+	const unload = () => {
 		observables.delete(entry);
 		if (observables.size === 0) observer.disconnect();
 	};
+	unloads.add(unload);
+	return unload;
 };
 
 // Disconnect and remove observables on unload
@@ -56,9 +59,11 @@ unloads.add(observables.clear.bind(observables));
  * @param timeoutMs The maximum time (in milliseconds) to wait for the element to appear.
  * @returns A Promise that resolves with the found Element (cast to type T) or null if the timeout is reached.
  */
-export const observePromise = <T extends Element>(selector: string, timeoutMs: number = 1000): Promise<T | null> =>
+export const observePromise = <T extends Element>(unloads: LunaUnloads, selector: string, timeoutMs: number = 1000): Promise<T | null> =>
 	new Promise<T | null>((res) => {
-		const unob = observe(selector, (elem) => {
+		const elem = document.querySelector(selector);
+		if (elem !== null) res(elem as T);
+		const unob = observe(unloads, selector, (elem) => {
 			unob();
 			clearTimeout(timeout);
 			res(elem as T);

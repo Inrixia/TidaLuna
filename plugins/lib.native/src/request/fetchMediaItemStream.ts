@@ -17,12 +17,13 @@ interface FetchOptions extends Omit<TrackStreamOptions, "deciper"> {
 export { FetchProgress } from "./fetchStream";
 // Lock to 2 concurrent streams
 const fetchMediaItemStremaSemaphore = new Semaphore(2);
-export const fetchMediaItemStream = async ({ manifestMimeType, manifest }: PlaybackInfo, options: FetchOptions = {}): Promise<Readable> =>
+export const fetchMediaItemStream = ({ manifestMimeType, manifest }: PlaybackInfo, options: FetchOptions = {}): Promise<Readable> =>
 	fetchMediaItemStremaSemaphore.with(async () => {
 		switch (manifestMimeType) {
 			case "application/vnd.tidal.bts": {
-				const stream = Readable.from(fetchStream(manifest.urls, { ...options, decipher: makeDecipher(manifest) }));
-				if (options.tags === undefined || manifest.codecs !== "flac") return stream;
+				options.decipher = makeDecipher(manifest);
+				const stream = Readable.from(fetchStream(manifest.urls, options), { objectMode: false });
+				if (options.tags === undefined) return stream;
 
 				const { tags, coverUrl } = options.tags;
 				let picture;
@@ -50,6 +51,7 @@ export const fetchMediaItemStream = async ({ manifestMimeType, manifest }: Playb
 						trackManifest.segments.map((segment) => segment.url),
 						options,
 					),
+					{ objectMode: false },
 				);
 			}
 			default: {

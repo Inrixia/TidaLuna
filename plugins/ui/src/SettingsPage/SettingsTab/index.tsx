@@ -7,6 +7,7 @@ import { LunaPlugin } from "@luna/core";
 import { LunaPluginSettings } from "../PluginsTab/LunaPluginSettings";
 import { LunaClientUpdate } from "./LunaClientUpdate";
 import { LunaFeatureFlags } from "./LunaFeatureFlags";
+import { LunaVersionInfo } from "./LunaVersionInfo";
 
 export const SettingsTab = React.memo(() => {
 	const corePlugins = [];
@@ -16,7 +17,7 @@ export const SettingsTab = React.memo(() => {
 	}
 	return (
 		<Stack spacing={4}>
-			<LunaClientUpdate />
+			<LunaVersionInfo />
 			<LunaFeatureFlags />
 			<LunaSettings title="Luna core plugins" desc="Plugins providing core luna functionality">
 				{corePlugins}

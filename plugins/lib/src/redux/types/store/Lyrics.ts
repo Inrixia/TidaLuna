@@ -6,6 +6,6 @@ export interface Lyrics {
 	providerCommontrackId: ItemId;
 	providerLyricsId: ItemId;
 	lyrics: string;
-	subtitles: string;
+	subtitles?: string | null;
 	isRightToLeft: boolean;
 }

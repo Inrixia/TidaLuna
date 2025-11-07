@@ -108,7 +108,7 @@ export class LunaPlugin {
 		if (name in this.plugins) return this.plugins[name];
 
 		// Disable liveReload on load so people dont accidentally leave it on
-		storeInit.liveReload ??= false;
+		storeInit.liveReload = false;
 
 		const store = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(name);
 		Object.assign(store, storeInit);

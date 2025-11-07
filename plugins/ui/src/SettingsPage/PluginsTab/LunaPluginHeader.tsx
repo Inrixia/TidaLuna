@@ -10,16 +10,20 @@ import { LunaAuthorDisplay, LunaLink } from "../../components";
 
 export interface LunaPluginComponentProps extends PropsWithChildren {
 	name: string;
+	version?: string;
 	link?: string;
 	loadError?: string;
 	author?: LunaAuthor | string;
 	desc?: ReactNode;
 	sx?: BoxProps["sx"];
 }
-export const LunaPluginHeader = React.memo(({ name, loadError, author, desc, children, sx, link }: LunaPluginComponentProps) => (
+export const LunaPluginHeader = React.memo(({ name, version, loadError, author, desc, children, sx, link }: LunaPluginComponentProps) => (
 	<Box sx={sx}>
 		<Stack direction="row" alignItems="center" spacing={1}>
-			<LunaLink href={link} children={<Typography variant="h6" children={name} />} />
+			<Typography variant="h6">
+				<LunaLink href={link}>{name}</LunaLink>
+				{version && <Typography variant="caption" style={{ opacity: 0.7, marginLeft: 6 }} children={version} />}
+			</Typography>
 			{children}
 			{loadError && (
 				<Typography
