@@ -5,7 +5,6 @@ result-original
 
 # IDEs
 .idea/
-.vscode/
 
 # Devenv
 .devenv*

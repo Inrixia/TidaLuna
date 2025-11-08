@@ -1,7 +1,7 @@
 import electron from "electron";
 import os from "os";
 
-import { existsSync } from "fs";
+import fs from "fs";
 import { readFile, rm, writeFile } from "fs/promises";
 import mime from "mime";
 
@@ -67,8 +67,9 @@ electron.app.whenReady().then(async () => {
 	electron.protocol.handle("https", async (req) => {
 		if (req.url.startsWith("https://luna/")) {
 			try {
-				const [content, init] = await bundleFile(req.url);
-				return new Response(new Uint8Array(content), init);
+					const [content, init] = await bundleFile(req.url);
+					// @ts-expect-error: Buffer is valid for Response body
+					return new Response(content, init);
 			} catch (err: any) {
 				return new Response(err.message, { status: err.message.startsWith("ENOENT") ? 404 : 500, statusText: err.message });
 			}
@@ -117,19 +118,13 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		// Ensure smoothScrolling is always enabled
 		options.webPreferences.smoothScrolling = true;
 
-		// Set Luna icon for all windows
-		const iconPath = path.join(bundleDir, "assets", "icon.png");
-		if (!existsSync(iconPath)) {
-			console.error(`[TidaLuna] Icon file not found at: ${iconPath}`);
-			console.error(`[TidaLuna] Build may be incomplete. Run 'pnpm build' to regenerate assets.`);
-		} else {
-			options.icon = iconPath;
-			console.log(`[TidaLuna] Setting window icon to: ${iconPath}`);
-		}
-		console.log(`[TidaLuna] Window title: ${options.title || "(no title)"}`);
-
 		// tidal-hifi does not set the title, rely on dev tools instead.
 		const isTidalWindow = options.title == "TIDAL" || options.webPreferences?.devTools;
+
+		// explicitly set icon before load on linux
+		if (process.platform === "linux") {
+			options.icon = path.join(bundleDir, "assets", "icon.png");
+		}
 
 		if (isTidalWindow) {
 			// Store original preload and add a handle to fetch it later (see ./preload.ts)
@@ -146,16 +141,11 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		const window = (luna.tidalWindow = new target(options));
 
-		// Force window class name to prevent Wayland overriding of the icon
-		// could be just a KDE quirk, someone confirm?
+		// if we are on linux and this is the main tidal window, 
+		// set the icon again after load (potential KDE quirk)
 		if (process.platform === "linux" && isTidalWindow) {
 			window.webContents.once("did-finish-load", () => {
-				try {
-					window.setIcon(iconPath);
-					console.log(`[TidaLuna] Re-set window icon after load: ${iconPath}`);
-				} catch (err) {
-					console.error("[TidaLuna] Failed to set icon after load:", err);
-				}
+				window.setIcon(path.join(bundleDir, "assets", "icon.png"));
 			});
 		}
 
