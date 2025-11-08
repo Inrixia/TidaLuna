@@ -13,20 +13,20 @@ const packageJsonPlugin = {
 	},
 };
 
-const copyAssetsPlugin = {
-	name: "copy-assets",
-	setup(build: PluginBuild) {
-		build.onEnd(async () => {
-			try {
-				await cp("./assets", "./dist/assets", { recursive: true });
-				console.log("Copied assets from ./assets to ./dist/assets");
-			} catch (err) {
-				console.error("Failed to copy assets from ./assets to ./dist/assets:", err);
-				throw err; // Fail build if assets are missing
-			}
-		});
-	},
-};
+// const copyAssetsPlugin = {
+//     name: "copy-assets",
+//     setup(build: PluginBuild) {
+//         build.onEnd(async () => {
+//             try {
+//                 await cp("./assets", "./dist/assets", { recursive: true });
+//                 console.log("Copied assets from ./assets to ./dist/assets");
+//             } catch (err) {
+//                 console.error("Failed to copy assets from ./assets to ./dist/assets:", err);
+//                 throw err; // Fail build if assets are missing
+//             }
+//         });
+//     },
+// };
 
 const buildConfigs: BuildOptions[] = [
 	{
@@ -37,7 +37,7 @@ const buildConfigs: BuildOptions[] = [
 		format: "esm",
 		platform: "node",
 		external: ["electron", "module"],
-		plugins: [packageJsonPlugin, copyAssetsPlugin],
+		plugins: [packageJsonPlugin],
 	},
 	{
 		...defaultBuildOptions,
