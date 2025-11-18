@@ -2,7 +2,7 @@
 stdenv.mkDerivation (finalAttrs: rec {
   name = "TidaLuna";
   pname = "${name}";
-  version = "1.6.15-beta";
+  version = "1.6.19-beta";
   src = ./..;
 
   nativeBuildInputs = [
@@ -13,7 +13,7 @@ stdenv.mkDerivation (finalAttrs: rec {
   pnpmDeps = pnpm.fetchDeps {
     inherit (finalAttrs) pname src version;
     fetcherVersion = 1;
-    hash = "sha256-nfrAd+auDMqmFZdtuWyhaUJ3vrLcJHK9Ps1UNFjTDP4=";
+    hash = "sha256-0+n/TwIgTp8NH4MkQhSg4IrbYYX39bOAysfxlMRGkrc=";
   };
 
   buildPhase = ''
