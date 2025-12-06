@@ -87,3 +87,5 @@ setTimeout(async () => {
 		settingsPage.open();
 	}
 });
+
+import "./injectReact";
