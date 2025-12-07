@@ -19,6 +19,7 @@ import { unloads } from "./index.safe";
 export * from "./classes";
 export * from "./components";
 export * from "./helpers";
+export * from "./react";
 
 export { lunaMuiTheme, unloads };
 
@@ -87,5 +88,3 @@ setTimeout(async () => {
 		settingsPage.open();
 	}
 });
-
-import "./injectReact";
