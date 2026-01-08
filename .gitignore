@@ -15,3 +15,6 @@ devenv.local.nix
 
 # pre-commit
 .pre-commit-config.yaml
+
+# lockfiles (using pnpm by default)
+package-lock.json

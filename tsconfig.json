@@ -7,15 +7,28 @@
 		"noEmit": true,
 		"strict": true,
 		"forceConsistentCasingInFileNames": true,
-		"lib": ["DOM", "DOM.Iterable", "ESNext"],
-		"types": ["node", "luna"],
+		"lib": [
+			"DOM",
+			"DOM.Iterable",
+			"ESNext"
+		],
 		"baseUrl": ".", // will be deprecated in TypeScript 7.0
 		"paths": {
-			"@luna/lib": ["./plugins/lib/src/index.ts"],
-			"@luna/lib.native": ["./plugins/lib.native/src/index.native.ts"],
-			"@luna/core": ["./render/src/index.ts"],
-			"@luna/ui": ["./plugins/ui/src/index.tsx"],
-			"@luna/dev": ["./plugins/dev/src/index.ts"]
+			"@luna/lib": [
+				"./plugins/lib/src/index.ts"
+			],
+			"@luna/lib.native": [
+				"./plugins/lib.native/src/index.native.ts"
+			],
+			"@luna/core": [
+				"./render/src/index.ts"
+			],
+			"@luna/ui": [
+				"./plugins/ui/src/index.tsx"
+			],
+			"@luna/dev": [
+				"./plugins/dev/src/index.ts"
+			]
 		}
 	}
 }

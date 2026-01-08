@@ -15,6 +15,8 @@ export * from "./ReactiveStore";
 
 // Ensure this is loaded
 import "./window.core";
+import { initTrustDialog } from "./trustDialog";
+initTrustDialog();
 
 import { LunaPlugin } from "./LunaPlugin";
 

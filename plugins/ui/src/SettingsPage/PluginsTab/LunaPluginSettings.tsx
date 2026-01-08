@@ -9,6 +9,7 @@ import Tooltip from "@mui/material/Tooltip";
 import { LunaSwitch, LunaTrashButton, SpinningButton } from "../../components";
 import { LiveReloadToggle } from "./LiveReloadToggle";
 import { LunaPluginHeader } from "./LunaPluginHeader";
+import { ErrorActionButtons } from "./ErrorActionButtons";
 
 import SettingsIcon from "@mui/icons-material/Settings";
 import { grey } from "@mui/material/colors";
@@ -67,23 +68,30 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 
 	return (
 		<Stack
-			spacing={1}
+			spacing={1.5}
 			sx={{
-				borderRadius: 3,
-				backgroundColor: "rgba(0, 0, 0, 0.10)",
-				boxShadow: loadError ? "0 0 10px rgba(255, 0, 0, 0.70)" : "none",
-				padding: 2,
-				paddingTop: 1,
-				paddingBottom: hasSettings || hideSettings ? 2 : 1,
+				borderRadius: 2,
+				backgroundColor: "rgba(0, 0, 0, 0.15)",
+				border: "1px solid rgba(255, 255, 255, 0.08)",
+				padding: 2.5,
+				paddingTop: 2,
+				paddingBottom: hasSettings || hideSettings ? 2.5 : 2,
+				transition: "all 0.2s ease",
+				"&:hover": {
+					borderColor: "rgba(255, 255, 255, 0.12)",
+					backgroundColor: "rgba(0, 0, 0, 0.2)",
+					transform: "translateY(-1px)",
+				},
 			}}
 		>
 			<LunaPluginHeader
 				name={name}
 				version={version}
 				link={link}
-				loadError={loadError}
 				author={author}
 				desc={desc}
+				enabled={enabled}
+				loading={loading}
 				children={
 					<>
 						{!isCore && (
@@ -107,6 +115,13 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 					</>
 				}
 			/>
+			{loadError && (
+				<ErrorActionButtons
+					errorMessage={loadError}
+					pluginName={name}
+					onDisable={() => plugin.disable()}
+				/>
+			)}
 			{hasSettings && !hideSettings && <Settings />}
 		</Stack>
 	);

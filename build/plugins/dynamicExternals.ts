@@ -13,10 +13,13 @@ export const dynamicExternalsPlugin = ({
 		const externalsRegex = (externals ?? build.initialOptions.external)?.map(sanitizeRegex).join("|");
 		if (externalsRegex === undefined) return;
 		const filter = new RegExp(`^(?:${externalsRegex})$`);
-		build.onResolve({ filter }, (args) => ({
-			path: args.path,
-			namespace: "dynamicExternals",
-		}));
+		build.onResolve({ filter }, (args) => {
+			if (args.path.endsWith(".native")) return null;
+			return {
+				path: args.path,
+				namespace: "dynamicExternals",
+			};
+		});
 		build.onLoad({ filter: /.*/, namespace: "dynamicExternals" }, (args) => ({
 			contents: moduleContents(args.path),
 		}));

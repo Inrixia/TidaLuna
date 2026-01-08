@@ -28,6 +28,7 @@
   },
   "license": "MS-Pl",
   "devDependencies": {
+    "@types/node": "^25.0.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "prettier": "^3.7.4",
@@ -36,12 +37,31 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@inrixia/helpers": "^3.21.0",
+    "@mui/icons-material": "^7.3.7",
+    "@mui/material": "^7.3.7",
     "@types/clean-css": "^4.2.11",
     "@types/html-minifier-terser": "^7.0.2",
-    "@types/node": "^24.10.1",
+    "@uwu/quartz": "^1.5.3",
+    "adm-zip": "^0.5.16",
     "clean-css": "^5.3.3",
+    "crypto-js": "^4.2.0",
+    "dasha": "^3.0.5",
+    "discord-rpc": "^4.0.1",
     "esbuild": "^0.27.1",
-    "html-minifier-terser": "^7.2.0"
+    "flac-stream-tagger": "^1.0.10",
+    "html-minifier-terser": "^7.2.0",
+    "idb-keyval": "^6.2.2",
+    "material-ui-confirm": "^4.0.0",
+    "mime": "^4.1.0",
+    "music-metadata": "^11.10.5",
+    "oby": "^15.1.2",
+    "pnpm": "^10.27.0",
+    "redux": "^5.0.1",
+    "sanitize-filename": "^1.6.3",
+    "semver": "^7.7.3",
+    "spitroast": "^2.1.6"
   }
 }

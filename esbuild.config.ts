@@ -23,6 +23,9 @@ const buildConfigs: BuildOptions[] = [
 		platform: "node",
 		external: ["electron", "module"],
 		plugins: [packageJsonPlugin],
+		banner: {
+			js: `import { createRequire } from 'module'; import { pathToFileURL } from 'url'; const require = createRequire(import.meta.url);`,
+		},
 	},
 	{
 		...defaultBuildOptions,

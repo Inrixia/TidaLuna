@@ -20,8 +20,18 @@ import { ThemesTab } from "./ThemesTab";
 type LunaSettingsTab = "Plugins" | "Plugin Store" | "Settings" | "Themes" | "Supporters";
 
 const LunaTabPage = React.memo(({ tab, currentTab, children }: { tab: LunaSettingsTab; currentTab: LunaSettingsTab } & PropsWithChildren) => {
-	if (tab !== currentTab) return null;
-	return <Container sx={{ marginTop: 3, marginLeft: -3 }} children={children} />;
+	// Keep component mounted but hide with CSS for better performance
+	const isVisible = tab === currentTab;
+	return (
+		<Container
+			sx={{
+				marginTop: 3,
+				marginLeft: -3,
+				display: isVisible ? 'block' : 'none'
+			}}
+			children={children}
+		/>
+	);
 });
 
 export const currentSettingsTab = new Signal<LunaSettingsTab>("Plugins");

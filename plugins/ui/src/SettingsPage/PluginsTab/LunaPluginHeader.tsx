@@ -7,6 +7,7 @@ import Typography from "@mui/material/Typography";
 import React, { type PropsWithChildren, type ReactNode } from "react";
 
 import { LunaAuthorDisplay, LunaLink } from "../../components";
+import { PluginStatusBadge, type PluginStatus } from "./PluginStatusBadge";
 
 export interface LunaPluginComponentProps extends PropsWithChildren {
 	name: string;
@@ -16,32 +17,34 @@ export interface LunaPluginComponentProps extends PropsWithChildren {
 	author?: LunaAuthor | string;
 	desc?: ReactNode;
 	sx?: BoxProps["sx"];
+	enabled?: boolean;
+	loading?: boolean;
 }
-export const LunaPluginHeader = React.memo(({ name, version, loadError, author, desc, children, sx, link }: LunaPluginComponentProps) => (
-	<Box sx={sx}>
-		<Stack direction="row" alignItems="center" spacing={1}>
-			<Typography variant="h6">
-				<LunaLink href={link}>{name}</LunaLink>
-				{version && <Typography variant="caption" style={{ opacity: 0.7, marginLeft: 6 }} children={version} />}
-			</Typography>
-			{children}
-			{loadError && (
-				<Typography
-					variant="caption"
-					sx={{
-						color: "white",
-						fontWeight: 500,
-						backgroundColor: "rgba(256, 0, 0, 0.5)",
-						padding: 1,
-						borderRadius: 1,
-						paddingTop: 1.5,
-					}}
-					children={loadError}
-				/>
-			)}
-			<Box sx={{ flexGrow: 1 }} /> {/* This pushes the author section to the right */}
-			{author && <LunaAuthorDisplay author={author} />}
-		</Stack>
-		{desc && <Typography variant="subtitle2" gutterBottom dangerouslySetInnerHTML={{ __html: desc }} />}
-	</Box>
-));
+
+// Determine plugin status based on state
+const getPluginStatus = (enabled: boolean, loading: boolean, loadError?: string): PluginStatus => {
+	if (!enabled) return "disabled";
+	if (loadError) return "error";
+	if (loading) return "warning";
+	return "working";
+};
+
+export const LunaPluginHeader = React.memo(({ name, version, loadError, author, desc, children, sx, link, enabled = true, loading = false }: LunaPluginComponentProps) => {
+	const status = getPluginStatus(enabled, loading, loadError);
+
+	return (
+		<Box sx={sx}>
+			<Stack direction="row" alignItems="center" spacing={1}>
+				<PluginStatusBadge status={status} />
+				<Typography variant="h6">
+					<LunaLink href={link}>{name}</LunaLink>
+					{version && <Typography variant="caption" style={{ opacity: 0.7, marginLeft: 6 }} children={version} />}
+				</Typography>
+				{children}
+				<Box sx={{ flexGrow: 1 }} /> {/* This pushes the author section to the right */}
+				{author && <LunaAuthorDisplay author={author} />}
+			</Stack>
+			{desc && <Typography variant="subtitle2" gutterBottom dangerouslySetInnerHTML={{ __html: desc }} />}
+		</Box>
+	);
+});
