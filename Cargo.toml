@@ -1,0 +1,8 @@
+[package]
+name = "tidal-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tao = "0.34.5"
+wry = "0.54.1"
