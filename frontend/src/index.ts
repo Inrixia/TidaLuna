@@ -1,3 +1,4 @@
+// this is basically electron's preload script
 declare global {
     interface Window {
         ipc: {

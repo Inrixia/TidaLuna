@@ -32,4 +32,17 @@ fn main() {
 
     let bundle_path = frontend_dir.join("dist").join("bundle.js");
     std::fs::copy(&bundle_path, &dest_path).expect("Failed to copy bundle.js to OUT_DIR");
+
+    #[cfg(target_os = "windows")]
+    {
+        let path = if let Ok(mpv_source) = std::env::var("MPV_SOURCE") {
+            std::path::PathBuf::from(mpv_source)
+        } else {
+            let appdata_dir = std::env::var("APPDATA").unwrap();
+            std::path::Path::new(&appdata_dir).join("mpv").join("lib")
+        };
+
+        println!("cargo:rustc-link-search=native={}", path.display());
+        println!("cargo:rustc-link-lib=static=mpv");
+    }
 }
