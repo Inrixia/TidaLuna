@@ -73,22 +73,6 @@ const createAudioHack = () => {
 
 const createNavigationController = () => {
     let delegate: any = null;
-
-
-    window.__TIDAL_CALLBACKS__ = window.__TIDAL_CALLBACKS__ || {};
-    window.__TIDAL_CALLBACKS__.navigation = {
-        navigate: (command: string) => {
-            if (!delegate) return;
-            switch (command) {
-                case "refreshprofile":
-                    if (delegate.refreshprofile) delegate.refreshprofile();
-                    break;
-                default:
-                    if (delegate.gotoPage) delegate.gotoPage(command);
-            }
-        }
-    };
-
     return {
         registerDelegate: (d: any) => { delegate = d; },
         goBack: () => { if (delegate && delegate.goBack) delegate.goBack(); },
@@ -190,7 +174,7 @@ const createNativePlayerComponent = () => {
         window.__TIDAL_CALLBACKS__.player = (message: any) => {
             console.log("Native Player Callback:", message);
         };
-        return {
+        const player = {
             addEventListener: (event: string, cb: any) => {
                 if (!listeners[event]) listeners[event] = [];
                 listeners[event].push(cb);
@@ -210,7 +194,18 @@ const createNativePlayerComponent = () => {
             setVolume: (volume: number) => sendIpc("media.volume", volume),
             listDevices: () => [],
 
-        }
+        };
+        return new Proxy(player, {
+            get(target, prop) {
+                console.log("Player get:", prop);
+                return target[prop as keyof typeof target];
+            },
+            set(target, prop, value) {
+                console.log("Player set:", prop, value);
+                target[prop as keyof typeof target] = value;
+                return true;
+            }
+        });
     }
     return { Player };
 }
@@ -269,8 +264,4 @@ const init = async () => {
     console.log("Native Interface initialized.");
 };
 
-if (window.location.hostname !== 'login.tidal.com') {
-    init();
-} else {
-    console.log("Skipping Native Interface initialization on login.tidal.com");
-}
+setTimeout(init, 0);
