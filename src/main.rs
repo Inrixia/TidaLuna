@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use serde::Deserialize;
 use tao::{
     event::{Event, WindowEvent},
