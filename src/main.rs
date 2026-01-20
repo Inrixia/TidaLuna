@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use std::fs;
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -34,12 +33,11 @@ fn main() -> wry::Result<()> {
     let proxy_nav = proxy.clone();
     let proxy_new_window = proxy.clone();
 
-    let script = fs::read_to_string("frontend/dist/bundle.js")
-        .expect("failed to read frontend, run bun run build (use watchexec)");
+    let script = include_str!(concat!(env!("OUT_DIR"), "/bundle.js"));
 
     let builder = WebViewBuilder::new()
         .with_url("https://desktop.tidal.com/")
-        .with_initialization_script(&script)
+        .with_initialization_script(script)
         .with_user_agent("Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) TIDAL/9999.9999.9999 Chrome/126.0.6478.127 Electron/31.2.1 Safari/537.36")
         .with_ipc_handler(move |req| {
             let s = req.body();
