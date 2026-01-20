@@ -168,47 +168,82 @@ const generateCodeChallenge = async (verifier: string) => {
     return btoa(String.fromCharCode.apply(null, hashArray)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 const createNativePlayerComponent = () => {
-
+    let activeEmitter: any = null;
     const Player = () => {
-        const listeners: any = {};
-        window.__TIDAL_CALLBACKS__ = window.__TIDAL_CALLBACKS__ || {};
-        window.__TIDAL_CALLBACKS__.player = (message: any) => {
-            console.log("Native Player Callback:", message);
-        };
-        const player = {
-            addEventListener: (event: string, cb: any) => {
-                if (!listeners[event]) listeners[event] = [];
-                listeners[event].push(cb);
+        const eventEmitter = {
+            listeners: {} as Record<string, Function[]>,
+            addListener(event: string, cb: any) {
+                if (!this.listeners[event]) this.listeners[event] = [];
+                this.listeners[event].push(cb);
             },
-            removeEventListener: (event: string, cb: any) => {
-                if (listeners[event]) {
-                    listeners[event] = listeners[event].filter((x: any) => x !== cb);
+            removeListener(event: string, cb: any) {
+                if (this.listeners[event]) {
+                    this.listeners[event] = this.listeners[event].filter((x: any) => x !== cb);
                 }
             },
-            load: (url: string, streamFormat: string, encryptionKey: string) => {
-                sendIpc("media.load", { url, streamFormat, encryptionKey });
+            on(event: string, cb: any) {
+                this.addListener(event, cb);
             },
-            play: () => sendIpc("media.play"),
-            pause: () => sendIpc("media.pause"),
-            stop: () => sendIpc("media.stop"),
-            seek: (time: number) => sendIpc("media.seek", time),
-            setVolume: (volume: number) => sendIpc("media.volume", volume),
-            listDevices: () => [],
-
-        };
-        return new Proxy(player, {
-            get(target, prop) {
-                console.log("Player get:", prop);
-                return target[prop as keyof typeof target];
-            },
-            set(target, prop, value) {
-                console.log("Player set:", prop, value);
-                target[prop as keyof typeof target] = value;
-                return true;
+            emit(event: string, arg: any) {
+                if (this.listeners[event]) {
+                    this.listeners[event].forEach(cb => cb(arg));
+                }
             }
-        });
+        };
+
+        activeEmitter = eventEmitter;
+
+        const player = {
+            addEventListener: (event: string, cb: any) => {
+                eventEmitter.addListener(event, cb);
+            },
+            removeEventListener: (event: string, cb: any) => eventEmitter.removeListener(event, cb),
+            on: (event: string, cb: any) => eventEmitter.on(event, cb),
+            cancelPreload: () => { },
+            disableMQADecoder: () => {
+
+            },
+            enableMQADecoder: () => {
+
+            },
+            listDevices: () => {
+                return Promise.resolve([]);
+            },
+            load: (url: string, streamFormat: string, encryptionKey: string = "") => {
+                sendIpc("player.load", url, streamFormat, encryptionKey);
+            },
+            play: () => { sendIpc("player.play"); },
+            pause: () => { sendIpc("player.pause"); },
+            stop: () => { sendIpc("player.stop"); },
+            seek: (time: number) => {
+                sendIpc("player.seek", time);
+            },
+            setVolume: (volume: number) => {
+                sendIpc("player.volume", volume);
+            },
+            preload: (url: string, streamFormat: string, encryptionKey: string = "") => {
+
+            },
+            recover: (url: string, encryptionKey: string = "") => {
+
+            },
+            releaseDevice: () => {
+
+            },
+            selectDevice: (deviceId: string, mode: "exclusive" | "shared") => {
+            },
+            selectSystemDevice: () => {
+            }
+        };
+        return player;
     }
-    return { Player };
+
+    return {
+        Player,
+        trigger: (event: string, target: any) => {
+            activeEmitter?.emit?.(event, { target });
+        }
+    };
 }
 
 const init = async () => {

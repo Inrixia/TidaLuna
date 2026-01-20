@@ -1,5 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod decrypt;
+mod player;
+mod server;
+mod state;
+
+use player::{Player, PlayerEvent};
 use serde::Deserialize;
+use std::sync::Arc;
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -20,6 +27,7 @@ struct IpcMessage {
 enum UserEvent {
     Navigate(String),
     IpcMessage(IpcMessage),
+    Player(PlayerEvent),
 }
 
 fn main() -> wry::Result<()> {
@@ -33,6 +41,24 @@ fn main() -> wry::Result<()> {
     let proxy = event_loop.create_proxy();
     let proxy_nav = proxy.clone();
     let proxy_new_window = proxy.clone();
+
+    let _rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    _rt.spawn(async {
+        server::start_server().await;
+    });
+
+    let proxy_player = proxy.clone();
+    let player = Arc::new(
+        Player::new(move |event| {
+            let _ = proxy_player.send_event(UserEvent::Player(event));
+        })
+        .expect("Failed to initialize player"),
+    );
+    let player_clone = player.clone();
 
     let script = include_str!(concat!(env!("OUT_DIR"), "/bundle.js"));
 
@@ -113,6 +139,34 @@ fn main() -> wry::Result<()> {
                 update_window_state(&webview, &window);
             }
             Event::UserEvent(user_event) => match user_event {
+                UserEvent::Player(player_event) => {
+                     match player_event {
+                        PlayerEvent::TimeUpdate(time) => {
+                            let js = format!(
+                                 "if (window.NativePlayerComponent && window.NativePlayerComponent.trigger) {{ window.NativePlayerComponent.trigger('mediacurrenttime', {}); }}",
+                                 time
+                             );
+                             let _ = webview.evaluate_script(&js);
+                        },
+                         PlayerEvent::StateChange(state) => {
+                             let js = format!(
+                                 "if (window.NativePlayerComponent && window.NativePlayerComponent.trigger) {{ window.NativePlayerComponent.trigger('mediastate', '{}'); }}",
+                                 state.to_string()
+                             );
+                             let _ = webview.evaluate_script(&js);
+                         },
+                         PlayerEvent::Duration(duration) => {
+                                let js = format!(
+                                    "if (window.NativePlayerComponent && window.NativePlayerComponent.trigger) {{ window.NativePlayerComponent.trigger('mediaduration', {}); }}",
+                                    duration.round() as i64
+                                );
+                                let _ = webview.evaluate_script(&js);
+                            },
+                           
+                           
+                           
+                     }
+                }
                 UserEvent::Navigate(url) => {
                     println!("Navigating to: {}", url);
                     pending_navigation = Some(url);
@@ -121,6 +175,30 @@ fn main() -> wry::Result<()> {
                 UserEvent::IpcMessage(msg) => {
                     println!("IPC Message: {:?}", msg);
                     match msg.channel.as_str() {
+                        "player.load" => {
+                             if let (Some(url), Some(format), Some(key)) = (
+                                 msg.args.get(0).and_then(|v| v.as_str()),
+                                 msg.args.get(1).and_then(|v| v.as_str()),
+                                 msg.args.get(2).and_then(|v| v.as_str())
+                             ) {
+                                 if let Err(e) = player_clone.load(url.to_string(), format.to_string(), key.to_string()) {
+                                     eprintln!("Failed to load track: {}", e);
+                                 }
+                             }
+                        },
+                        "player.play" => { let _ = player_clone.play(); },
+                        "player.pause" => { let _ = player_clone.pause(); },
+                        "player.stop" => { let _ = player_clone.stop(); },
+                        "player.seek" => {
+                            if let Some(time) = msg.args.get(0).and_then(|v| v.as_f64()) {
+                                let _ = player_clone.seek(time);
+                            }
+                        },
+                        "player.volume" => {
+                            if let Some(vol) = msg.args.get(0).and_then(|v| v.as_f64()) {
+                                let _ = player_clone.set_volume(vol);
+                            }
+                        },
                         "window.close" => *control_flow = ControlFlow::Exit,
                         "window.maximize" => {
                             window.set_maximized(true);
