@@ -92,29 +92,30 @@ const createPlaybackController = () => {
     let delegate: any = null;
     return {
         registerDelegate: (d: any) => { delegate = d; },
-        sendPlayerCommand: (cmd: any) => sendIpc("player.message", cmd),
-        setCurrentMediaItem: (item: any) => sendIpc("playback.current.mediaitem", item),
-        setCurrentTime: (time: any) => sendIpc("playback.current.time", time),
-        setPlayQueueState: (state: any) => sendIpc("playback.queue.state", state),
-        setPlayingStatus: (status: any) => sendIpc("playback.status.playing", status),
-        setRepeatMode: (mode: any) => sendIpc("playback.status.repeat", mode),
-        setShuffle: (shuffle: any) => sendIpc("playback.status.shuffle", shuffle),
+        sendPlayerCommand: (cmd: any) => { },
+        setCurrentMediaItem: (item: any) => { },
+        setCurrentTime: (time: any) => { },
+        setPlayQueueState: (state: any) => { },
+        setPlayingStatus: (status: any) => { },
+        setRepeatMode: (mode: any) => { },
+        setShuffle: (shuffle: any) => { },
     }
 }
 
 const createUserSession = () => {
     let delegate: any = null;
     return {
-        clear: () => invokeIpc("user.session.clear"),
-        registerDelegate: (d: any) => { delegate = d; },
-        update: (s: any) => invokeIpc("user.session.update", s),
+        clear: () => { },
+        registerDelegate: (d: any) => { console.log(delegate = d); },
+        update: (s: any) => { },
     }
 }
 
 const createUserSettings = () => {
+    let settings = new Map<string, any>();
     return {
-        get: (key: string) => invokeIpc("user.settings.get", key),
-        set: (key: string, value: any) => invokeIpc("user.settings.set", key, value),
+        get: (key: string) => settings.get(key),
+        set: (key: string, value: any) => console.log(settings.set(key, value)),
     }
 }
 
@@ -205,12 +206,10 @@ const createNativePlayerComponent = () => {
             },
             removeEventListener: (event: string, cb: any) => eventEmitter.removeListener(event, cb),
             on: (event: string, cb: any) => eventEmitter.on(event, cb),
-            cancelPreload: () => { },
             disableMQADecoder: () => {
 
             },
             enableMQADecoder: () => {
-
             },
             listDevices: () => {
                 sendIpc("player.devices.get");
@@ -230,11 +229,12 @@ const createNativePlayerComponent = () => {
             preload: (url: string, streamFormat: string, encryptionKey: string = "") => {
 
             },
+            cancelPreload: () => { },
             recover: (url: string, encryptionKey: string = "") => {
 
             },
             releaseDevice: () => {
-
+                console.log("Releasing device");
             },
             selectDevice: (device: AudioDevice, mode: "shared" | "exclusive") => {
                 sendIpc("player.devices.set", device.id, mode);
@@ -255,6 +255,7 @@ const createNativePlayerComponent = () => {
 }
 
 const init = async () => {
+    const now = Date.now();
     console.log("Initializing Native Interface...");
 
     let codeVerifier = sessionStorage.getItem("pkce_verifier");
@@ -305,7 +306,7 @@ const init = async () => {
     window.nativeInterface = nativeInterface;
     window.NativePlayerComponent = createNativePlayerComponent();
 
-    console.log("Native Interface initialized.");
+    console.log("Native Interface initialized in", Date.now() - now, "ms");
 };
 
 setTimeout(init, 0);

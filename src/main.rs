@@ -111,9 +111,6 @@ fn main() -> wry::Result<()> {
     };
 
     let mut pending_navigation = std::env::args().find(|arg| arg.starts_with("tidal://"));
-
-    let mut user_settings = serde_json::Map::new();
-
     let update_window_state = |webview: &wry::WebView, window: &tao::window::Window| {
         let is_maximized = window.is_maximized();
         let is_fullscreen = window.fullscreen().is_some();
@@ -253,53 +250,14 @@ fn main() -> wry::Result<()> {
                         }
                         "web.loaded" => {
                             if let Some(url) = pending_navigation.take() {
-                                let command = url.replace("tidal://", "");
-                                let _ = webview.load_url(
-                                    &("https://desktop.tidal.com/".to_string() + &command),
-                                );
+                                if url.starts_with("tidal://") {
+                                    let command = url.replace("tidal://", "");
+                                    let _ = webview.load_url(
+                                        &("https://desktop.tidal.com/".to_string() + &command),
+                                    );
+                                }
                             }
-
                             update_window_state(&webview, &window);
-                        }
-                        "user.settings.get" => {
-                            if let Some(id) = msg.id {
-                                let key = msg.args.first().and_then(|v| v.as_str()).unwrap_or("");
-                                let value = user_settings
-                                    .get(key)
-                                    .cloned()
-                                    .unwrap_or(serde_json::Value::Null);
-                                let js = format!(
-                                    "window.__TIDAL_IPC_RESPONSE__('{}', null, {})",
-                                    id, value
-                                );
-                                let _ = webview.evaluate_script(&js);
-                            }
-                        }
-                        "user.settings.set" => {
-                            if let (Some(key), Some(value)) =
-                                (msg.args.first().and_then(|v| v.as_str()), msg.args.get(1))
-                            {
-                                user_settings.insert(key.to_string(), value.clone());
-                            }
-                            if let Some(id) = msg.id {
-                                let js =
-                                    format!("window.__TIDAL_IPC_RESPONSE__('{}', null, null)", id);
-                                let _ = webview.evaluate_script(&js);
-                            }
-                        }
-                        "user.session.update" => {
-                            if let Some(id) = msg.id {
-                                let js =
-                                    format!("window.__TIDAL_IPC_RESPONSE__('{}', null, null)", id);
-                                let _ = webview.evaluate_script(&js);
-                            }
-                        }
-                        "user.session.clear" => {
-                            if let Some(id) = msg.id {
-                                let js =
-                                    format!("window.__TIDAL_IPC_RESPONSE__('{}', null, null)", id);
-                                let _ = webview.evaluate_script(&js);
-                            }
                         }
                         _ => {}
                     }
