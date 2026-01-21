@@ -1,0 +1,18 @@
+{
+	"name": "@luna/lib.native",
+	"description": "Luna library exposing helpers in native space",
+	"author": {
+		"name": "Inrixia",
+		"url": "https://github.com/Inrixia",
+		"avatarUrl": "https://2.gravatar.com/avatar/eeaffef9eb9b436dccc58c6c44c9fe8c3528e83e3bf64e1c736a68dbe8c097d3"
+	},
+	"exports": "./src/index.native.ts",
+	"dependencies": {
+		"adm-zip": "^0.5.16",
+		"flac-stream-tagger": "^1.0.10",
+		"type-fest": "^5.0.1"
+	},
+	"devDependencies": {
+		"@types/adm-zip": "^0.5.7"
+	}
+}

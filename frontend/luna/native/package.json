@@ -1,0 +1,9 @@
+{
+	"type": "module",
+	"devDependencies": {
+		"electron": "^38.2.0"
+	},
+	"dependencies": {
+		"mime": "^4.1.0"
+	}
+}
