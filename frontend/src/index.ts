@@ -12,6 +12,12 @@ declare global {
     var window: Window & typeof globalThis;
 }
 
+export interface AudioDevice {
+    controllableVolume: boolean;
+    id: string;
+    name: string;
+}
+
 
 const sendIpc = (channel: string, ...args: any[]) => {
     window.ipc.postMessage(JSON.stringify({ channel, args }));
@@ -207,7 +213,7 @@ const createNativePlayerComponent = () => {
 
             },
             listDevices: () => {
-                return Promise.resolve([]);
+                sendIpc("player.devices.get");
             },
             load: (url: string, streamFormat: string, encryptionKey: string = "") => {
                 sendIpc("player.load", url, streamFormat, encryptionKey);
@@ -230,9 +236,11 @@ const createNativePlayerComponent = () => {
             releaseDevice: () => {
 
             },
-            selectDevice: (deviceId: string, mode: "exclusive" | "shared") => {
+            selectDevice: (device: AudioDevice, mode: "shared" | "exclusive") => {
+                sendIpc("player.devices.set", device.id, mode);
             },
             selectSystemDevice: () => {
+                sendIpc("player.devices.set", 'auto');
             }
         };
         return player;

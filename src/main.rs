@@ -162,9 +162,20 @@ fn main() -> wry::Result<()> {
                                 );
                                 let _ = webview.evaluate_script(&js);
                             },
-                           
-                           
-                           
+                        PlayerEvent::AudioDevices(devices, req_id) => {
+                             if let Ok(json_devices) = serde_json::to_string(&devices) {
+                                 if let Some(id) = req_id {
+                                     let js = format!("window.__TIDAL_IPC_RESPONSE__('{}', null, {})", id, json_devices);
+                                     let _ = webview.evaluate_script(&js);
+                                 } else {
+                                      let js = format!(
+                                          "if (window.NativePlayerComponent && window.NativePlayerComponent.trigger) {{ window.NativePlayerComponent.trigger('devices', {}); }}",
+                                          json_devices
+                                      );
+                                      let _ = webview.evaluate_script(&js);
+                                 }
+                             }
+                        }
                      }
                 }
                 UserEvent::Navigate(url) => {
@@ -197,6 +208,19 @@ fn main() -> wry::Result<()> {
                         "player.volume" => {
                             if let Some(vol) = msg.args.get(0).and_then(|v| v.as_f64()) {
                                 let _ = player_clone.set_volume(vol);
+                            }
+                        },
+                        "player.devices.get" => {
+                            let _ = player_clone.get_audio_devices(msg.id);
+                        },
+                        "player.devices.set" => {
+                            if let Some(id) = msg.args.get(0).and_then(|v| v.as_str()) {
+                                 let exclusive = msg
+                                     .args
+                                     .get(1)
+                                     .and_then(|v| v.as_str())
+                                     .is_some_and(|mode| mode == "exclusive");
+                                 let _ = player_clone.set_audio_device(id.to_string(), exclusive);
                             }
                         },
                         "window.close" => *control_flow = ControlFlow::Exit,
