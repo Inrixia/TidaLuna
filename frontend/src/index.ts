@@ -251,6 +251,7 @@ const createNativePlayerComponent = () => {
     return {
         Player,
         trigger: (event: string, target: any) => {
+            event != "mediacurrenttime" && console.debug("NativePlayer:", event, target);
             activeEmitter?.emit?.(event, { target });
         }
     };

@@ -260,6 +260,21 @@ pub async fn cancel_preload() {
     lock.data = None;
 }
 
+pub async fn next_preloaded_track() -> Option<TrackInfo> {
+    let current = {
+        let lock = CURRENT_TRACK.lock().unwrap();
+        lock.clone()
+    };
+
+    let lock = PRELOAD_STATE.lock().await;
+    let candidate = lock.data.as_ref().map(|d| d.track.clone());
+
+    match (current, candidate) {
+        (Some(curr), Some(next)) if curr == next => None,
+        (_, next) => next,
+    }
+}
+
 async fn take_preloaded_if_match(track: &TrackInfo) -> Option<PreloadedTrack> {
     let mut lock = PRELOAD_STATE.lock().await;
     if let Some(data) = lock.data.as_ref() {

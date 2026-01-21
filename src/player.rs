@@ -59,7 +59,8 @@ impl Player {
             .map_err(|e| anyhow::anyhow!("MPV Observe Error: {:?}", e))?;
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<PlayerCommand>();
-
+        let mut duration = 0.0;
+        let mut pending_active = false;
         thread::spawn(move || {
             loop {
                 match mpv.wait_event(0.25) {
@@ -67,12 +68,19 @@ impl Player {
                         Event::PropertyChange { name, change, .. } => match name {
                             "time-pos" => {
                                 if let PropertyData::Double(time) = change {
-                                    callback(PlayerEvent::TimeUpdate(time));
+                                    if time > 0.0 {
+                                        callback(PlayerEvent::TimeUpdate(time));
+                                    }
                                 }
                             }
                             "duration" => {
                                 if let PropertyData::Double(dur) = change {
                                     callback(PlayerEvent::Duration(dur));
+                                    duration = dur;
+                                    if pending_active {
+                                        callback(PlayerEvent::StateChange("active".to_string()));
+                                        pending_active = false;
+                                    }
                                 }
                             }
                             "pause" => {
@@ -83,11 +91,14 @@ impl Player {
                             }
                             _ => {}
                         },
-                        Event::EndFile(0) => {
-                            callback(PlayerEvent::StateChange("ended".to_string()));
+                        Event::EndFile(_) => {
+                            callback(PlayerEvent::TimeUpdate(duration));
+                            callback(PlayerEvent::StateChange("completed".to_string()));
+                            duration = 0.0;
+                            pending_active = false;
                         }
-                        Event::FileLoaded => {
-                            callback(PlayerEvent::StateChange("active".to_string()));
+                        Event::StartFile => {
+                            pending_active = true;
                         }
                         _ => {}
                     },

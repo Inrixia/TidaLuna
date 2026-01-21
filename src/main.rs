@@ -6,6 +6,7 @@ mod state;
 
 use player::{Player, PlayerEvent};
 use serde::Deserialize;
+use state::TrackInfo;
 use std::sync::Arc;
 use tao::{
     event::{Event, WindowEvent},
@@ -28,6 +29,7 @@ enum UserEvent {
     Navigate(String),
     IpcMessage(IpcMessage),
     Player(PlayerEvent),
+    AutoLoad(TrackInfo),
 }
 
 fn main() -> wry::Result<()> {
@@ -54,6 +56,7 @@ fn main() -> wry::Result<()> {
     });
 
     let proxy_player = proxy.clone();
+    let proxy_autoload = proxy.clone();
     let player = Arc::new(
         Player::new(move |event| {
             let _ = proxy_player.send_event(UserEvent::Player(event));
@@ -138,7 +141,7 @@ fn main() -> wry::Result<()> {
                 update_window_state(&webview, &window);
             }
             Event::UserEvent(user_event) => match user_event {
-                UserEvent::Player(player_event) => {
+                 UserEvent::Player(player_event) => {
                      match player_event {
                         PlayerEvent::TimeUpdate(time) => {
                             let js = format!(
@@ -153,11 +156,20 @@ fn main() -> wry::Result<()> {
                                  state.to_string()
                              );
                              let _ = webview.evaluate_script(&js);
+
+                             if state == "completed" {
+                                 let proxy_autoload = proxy_autoload.clone();
+                                 rt_handle.spawn(async move {
+                                     if let Some(track) = server::next_preloaded_track().await {
+                                         let _ = proxy_autoload.send_event(UserEvent::AutoLoad(track));
+                                     }
+                                 });
+                             }
                          },
                          PlayerEvent::Duration(duration) => {
                                 let js = format!(
                                     "if (window.NativePlayerComponent && window.NativePlayerComponent.trigger) {{ window.NativePlayerComponent.trigger('mediaduration', {}); }}",
-                                    duration.round() as i64
+                                    duration
                                 );
                                 let _ = webview.evaluate_script(&js);
                             },
@@ -176,6 +188,11 @@ fn main() -> wry::Result<()> {
                              }
                         }
                      }
+                }
+                UserEvent::AutoLoad(track) => {
+                    if let Err(e) = player_clone.load(track.url, "flac".to_string(), track.key) {
+                        eprintln!("Failed to auto-load preloaded track: {}", e);
+                    }
                 }
                 UserEvent::Navigate(url) => {
                     println!("Navigating to: {}", url);
