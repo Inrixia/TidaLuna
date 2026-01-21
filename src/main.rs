@@ -42,12 +42,14 @@ fn main() -> wry::Result<()> {
     let proxy_nav = proxy.clone();
     let proxy_new_window = proxy.clone();
 
-    let _rt = tokio::runtime::Builder::new_multi_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
 
-    _rt.spawn(async {
+    let rt_handle = rt.handle().clone();
+
+    rt_handle.spawn(async {
         server::start_server().await;
     });
 
@@ -194,6 +196,26 @@ fn main() -> wry::Result<()> {
                                  }
                              }
                         },
+                        "player.preload" => {
+                            if let (Some(url), Some(_format), Some(key)) = (
+                                msg.args.get(0).and_then(|v| v.as_str()),
+                                msg.args.get(1).and_then(|v| v.as_str()),
+                                msg.args.get(2).and_then(|v| v.as_str())
+                            ) {
+                                let track = crate::state::TrackInfo {
+                                    url: url.to_string(),
+                                    key: key.to_string(),
+                                };
+                                rt_handle.spawn(async move {
+                                    server::start_preload(track).await;
+                                });
+                            }
+                        }
+                        "player.preload.cancel" => {
+                            rt_handle.spawn(async {
+                                server::cancel_preload().await;
+                            });
+                        }
                         "player.play" => { let _ = player_clone.play(); },
                         "player.pause" => { let _ = player_clone.pause(); },
                         "player.stop" => { let _ = player_clone.stop(); },

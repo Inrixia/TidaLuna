@@ -106,7 +106,7 @@ const createUserSession = () => {
     let delegate: any = null;
     return {
         clear: () => { },
-        registerDelegate: (d: any) => { console.log(delegate = d); },
+        registerDelegate: (d: any) => { delegate = d; },
         update: (s: any) => { },
     }
 }
@@ -227,9 +227,11 @@ const createNativePlayerComponent = () => {
                 sendIpc("player.volume", volume);
             },
             preload: (url: string, streamFormat: string, encryptionKey: string = "") => {
-
+                sendIpc("player.preload", url, streamFormat, encryptionKey);
             },
-            cancelPreload: () => { },
+            cancelPreload: () => {
+                sendIpc("player.preload.cancel");
+            },
             recover: (url: string, encryptionKey: string = "") => {
 
             },
