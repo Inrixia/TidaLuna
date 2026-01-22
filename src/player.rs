@@ -1,4 +1,4 @@
-use crate::state::{CURRENT_TRACK, TrackInfo};
+use crate::state::{CURRENT_TRACK, SERVER_ADDR, TrackInfo};
 use libmpv2::{Format, Mpv, events::Event, events::PropertyData};
 use std::sync::mpsc;
 use std::thread;
@@ -270,10 +270,16 @@ impl Player {
             });
         }
 
+        let stream_url = {
+            let lock = SERVER_ADDR.lock().unwrap();
+            let addr = lock
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Streaming server not ready"))?;
+            format!("http://{}/stream", addr)
+        };
+
         self.cmd_tx
-            .send(PlayerCommand::Load(
-                "http://127.0.0.1:19384/stream".to_string(),
-            ))
+            .send(PlayerCommand::Load { url: stream_url })
             .map_err(|_| anyhow::anyhow!("Player thread is dead"))?;
 
         Ok(())

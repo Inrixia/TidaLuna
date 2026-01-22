@@ -1,4 +1,5 @@
 use once_cell::sync::Lazy;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 
@@ -9,6 +10,9 @@ pub struct TrackInfo {
 }
 
 pub static CURRENT_TRACK: Lazy<Arc<Mutex<Option<TrackInfo>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(None)));
+
+pub static SERVER_ADDR: Lazy<Arc<Mutex<Option<SocketAddr>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
 #[derive(Debug)]
