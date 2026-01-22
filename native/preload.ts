@@ -5,11 +5,8 @@ const ipcRendererUnloadable = unloadableEmitter(ipcRenderer, null, "ipcRenderer"
 
 // Support both contextIsolation: true (official Tidal) and false (tidal-hifi)
 const expose = (name: string, value: any) => {
-	if (process.contextIsolated) {
-		contextBridge.exposeInMainWorld(name, value);
-	} else {
-		(window as any)[name] = value;
-	}
+	if (process.contextIsolated) contextBridge.exposeInMainWorld(name, value);
+	else (window as any)[name] = value;
 };
 
 // Allow render side to execute invoke
@@ -65,7 +62,15 @@ ipcRenderer.on("__Luna.console", (_event, prop: ConsoleMethodName, args: any[]) 
 			true,
 		);
 		await sleep(0);
-		eval(await ipcRenderer.invoke("__Luna.originalPreload"));
+
+		// Load original preload - use tidal-hifi compat layer if needed
+		const isTidalHifi = await ipcRenderer.invoke("__Luna.isTidalHifi");
+		if (isTidalHifi) {
+			const { execTidalHifiPreload } = await import("./tidalHifiCompat");
+			await execTidalHifiPreload();
+		} else {
+			eval(await ipcRenderer.invoke("__Luna.originalPreload"));
+		}
 	} catch (err) {
 		ipcRenderer.invoke("__Luna.preloadErr", err);
 		throw err;

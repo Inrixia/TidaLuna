@@ -1,6 +1,7 @@
 import electron from "electron";
 
 import { readFile } from "fs/promises";
+import { readFileSync } from "fs";
 import mime from "mime";
 
 import path from "path";
@@ -16,6 +17,9 @@ const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 const bundleDir = process.env.TIDALUNA_DIST_PATH ?? path.dirname(fileURLToPath(import.meta.url));
 const tidalAppPath = path.join(process.resourcesPath, "original.asar");
 // #endregion
+
+// @electron/remote will be initialized later after require is set up
+let remoteMain: any;
 
 // Allow debugging from remote origins (e.g., Chrome DevTools over localhost)
 // Requires starting client with --remote-debugging-port=9222
@@ -124,6 +128,27 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			const origialPreload = options.webPreferences?.preload;
 			ipcHandle("__Luna.originalPreload", async () => (await readFile(origialPreload)).toString());
 
+			// Sync handler to read tidal-hifi module source code from original.asar
+			if (isTidalHifi) {
+				const tidalTsDistPath = path.join(tidalAppPath, "ts-dist");
+				electron.ipcMain.removeAllListeners("__Luna.readTidalModule");
+				electron.ipcMain.on("__Luna.readTidalModule", (event, relativePath: string) => {
+					try {
+						// Resolve the path relative to ts-dist
+						const modulePath = path.resolve(tidalTsDistPath, relativePath);
+						// Security: ensure path is within tidalAppPath
+						if (!modulePath.startsWith(tidalAppPath)) {
+							event.returnValue = { success: false, error: "Path traversal blocked" };
+							return;
+						}
+						const code = readFileSync(modulePath, "utf-8");
+						event.returnValue = { success: true, code };
+					} catch (err: any) {
+						event.returnValue = { success: false, error: err.message };
+					}
+				});
+			}
+
 			// Replace the preload instead of using setPreloads because of some differences in internal behaviour.
 			// Set preload script to Luna's
 			options.webPreferences.preload = path.join(bundleDir, "preload.mjs");
@@ -134,6 +159,11 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		const window = new target(options);
 		globalThis.luna.sendToRender = window.webContents.send;
+
+		// Enable @electron/remote for tidal-hifi compatibility
+		if (isTidalWindow && isTidalHifi) {
+			remoteMain.enable(window.webContents);
+		}
 
 		// if we are on linux and this is the main tidal window,
 		// set the icon again after load (potential KDE quirk)
@@ -195,6 +225,10 @@ const startPath = path.join(tidalAppPath, tidalPackage.main);
 electron.app.setAppPath?.(tidalAppPath);
 electron.app.name = tidalPackage.name;
 
+// Detect if running on tidal-hifi for preload compatibility
+const isTidalHifi = tidalPackage.name === "tidal-hifi";
+ipcHandle("__Luna.isTidalHifi", async () => isTidalHifi);
+
 const blockedModules = new Set(["jszip"]);
 const _require = Module.prototype.require;
 Module.prototype.require = function (id) {
@@ -205,6 +239,12 @@ Module.prototype.require = function (id) {
 	return _require.apply(this, [id]);
 };
 require = createRequire(tidalAppPath);
+
+// Initialize @electron/remote from original.asar for tidal-hifi compatibility
+if (isTidalHifi) {
+	remoteMain = require("@electron/remote/main");
+	remoteMain.initialize();
+}
 
 // Replace the default electron BrowserWindow with our proxied one
 const electronPath = require.resolve("electron");
