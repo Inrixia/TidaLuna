@@ -35,14 +35,20 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        let path = if let Ok(mpv_source) = std::env::var("MPV_SOURCE") {
-            std::path::PathBuf::from(mpv_source)
-        } else {
-            let appdata_dir = std::env::var("APPDATA").unwrap();
-            std::path::Path::new(&appdata_dir).join("mpv").join("lib")
-        };
+        // Get the project root directory
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
-        println!("cargo:rustc-link-search=native={}", path.display());
-        println!("cargo:rustc-link-lib=static=mpv");
+        // Point to the 'libs' folder we just created
+        let libs_dir = Path::new(&manifest_dir).join("libs");
+
+        // Verify the file exists so you get a clear error if it's missing
+        if !libs_dir.join("libmpv.dll.a").exists() {
+            panic!(
+                "Error: 'libs/libmpv.dll.a' is missing. Please download 'libmpv.dll.a' and place it in a 'libs' folder."
+            );
+        }
+
+        println!("cargo:rustc-link-search=native={}", libs_dir.display());
+        println!("cargo:rustc-link-lib=mpv");
     }
 }

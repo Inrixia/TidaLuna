@@ -28,7 +28,7 @@ pub enum PlayerEvent {
 }
 
 enum PlayerCommand {
-    Load { url: String },
+    Load(String),
     Play,
     Pause,
     Stop,
@@ -40,6 +40,59 @@ enum PlayerCommand {
 
 pub struct Player {
     cmd_tx: mpsc::Sender<PlayerCommand>,
+}
+
+// --- Helper Function for Logging ---
+fn log_audio_state(mpv: &Mpv) {
+    // 1. Fetch Audio State & Driver
+    let exclusive: bool = mpv.get_property("audio-exclusive").unwrap_or(false);
+    let filters: String = mpv.get_property("af").unwrap_or_else(|_| "".into());
+    let driver: String = mpv.get_property("ao").unwrap_or_else(|_| "auto".into());
+
+    // 2. Fetch Source Params (Decoder Output)
+    let src_rate: i64 = mpv.get_property("audio-params/samplerate").unwrap_or(0);
+    let src_fmt: String = mpv
+        .get_property("audio-params/format")
+        .unwrap_or_else(|_| "?".into());
+    let src_ch: String = mpv
+        .get_property("audio-params/hr-channels")
+        .unwrap_or_else(|_| "?".into());
+
+    // 3. Fetch Output Params (Hardware/DAC Input)
+    let out_rate: i64 = mpv.get_property("audio-out-params/samplerate").unwrap_or(0);
+    let out_fmt: String = mpv
+        .get_property("audio-out-params/format")
+        .unwrap_or_else(|_| "?".into());
+    let out_ch: String = mpv
+        .get_property("audio-out-params/hr-channels")
+        .unwrap_or_else(|_| "?".into());
+
+    // 4. Determine Bit Perfection
+    // True if Source matches Output exactly and no filters are active.
+    let is_bit_perfect =
+        src_rate == out_rate && src_fmt == out_fmt && src_ch == out_ch && filters.is_empty();
+
+    // 5. Log Status
+    eprintln!(
+        "[AUDIO] Driver: {} (Exclusive: {}) | Perfect: {} \n\
+         \t -> Source: {}Hz / {} / {}\n\
+         \t -> Output: {}Hz / {} / {}\n\
+         \t -> Filters: {}",
+        driver,
+        if exclusive { "ON" } else { "OFF" },
+        if is_bit_perfect {
+            "YES"
+        } else {
+            "NO (Resampled/Converted)"
+        },
+        src_rate,
+        src_fmt,
+        src_ch,
+        out_rate,
+        out_fmt,
+        out_ch,
+        if filters.is_empty() { "None" } else { &filters }
+    );
 }
 
 impl Player {
@@ -108,9 +161,22 @@ impl Player {
 
                 while let Ok(cmd) = cmd_rx.try_recv() {
                     let res = match cmd {
-                        PlayerCommand::Load { url } => mpv.command("loadfile", &[&url]),
-                        PlayerCommand::Play => mpv.set_property("pause", false),
-                        PlayerCommand::Pause => mpv.set_property("pause", true),
+                        PlayerCommand::Load(url) => {
+                            let r = mpv.command("loadfile", &[&url]);
+                            // Log AFTER loading so we see the new format
+                            log_audio_state(&mpv);
+                            r // Return the Result
+                        }
+                        PlayerCommand::Play => {
+                            let r = mpv.set_property("pause", false);
+                            log_audio_state(&mpv);
+                            r
+                        }
+                        PlayerCommand::Pause => {
+                            let r = mpv.set_property("pause", true);
+                            log_audio_state(&mpv);
+                            r
+                        }
                         PlayerCommand::Stop => mpv.command("stop", &[]),
                         PlayerCommand::Seek(time) => mpv.set_property("time-pos", time),
                         PlayerCommand::SetVolume(vol) => mpv.set_property("volume", vol),
@@ -154,9 +220,35 @@ impl Player {
                             callback(PlayerEvent::AudioDevices(devices, req_id));
                             Ok(())
                         }
-                        PlayerCommand::SetAudioDevice { id, exclusive } => mpv
-                            .set_property("audio-exclusive", exclusive)
-                            .and_then(|_| mpv.set_property("audio-device", id)),
+                        PlayerCommand::SetAudioDevice { id, exclusive } => {
+                            // 1. Set Exclusive Mode (Best Effort)
+                            if let Err(e) = mpv.set_property("audio-exclusive", exclusive) {
+                                eprintln!("[WARN] Failed to set audio-exclusive: {}", e);
+                            }
+
+                            if exclusive {
+                                // Force volume to 100% to bypass software mixing
+                                let _ = mpv.set_property("volume", 100);
+                                let _ = mpv.set_property("audio-channels", "auto");
+                            }
+
+                            // 2. Set the Device
+                            // We pass &id to ensure we don't consume the variable before printing it below
+                            let result = mpv.set_property("audio-device", id.clone());
+
+                            // 3. Verify and Log to Stderr
+                            match &result {
+                                Ok(_) => {
+                                    log_audio_state(&mpv);
+                                }
+                                Err(e) => eprintln!(
+                                    "[ERROR] Failed to switch audio device to '{}': {}",
+                                    id, e
+                                ),
+                            }
+
+                            result
+                        }
                     };
 
                     if let Err(e) = res {
@@ -179,9 +271,9 @@ impl Player {
         }
 
         self.cmd_tx
-            .send(PlayerCommand::Load {
-                url: "http://127.0.0.1:19384/stream".to_string(),
-            })
+            .send(PlayerCommand::Load(
+                "http://127.0.0.1:19384/stream".to_string(),
+            ))
             .map_err(|_| anyhow::anyhow!("Player thread is dead"))?;
 
         Ok(())
