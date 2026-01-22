@@ -14,12 +14,12 @@ strip = true
 
 [dependencies]
 tao = "0.34.5"
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "net", "sync"] }
 wry = "0.54.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 libmpv2 = "5.0.3"
-hyper = { version = "1.8.1", features = ["full"] }
+hyper = { version = "1.8.1", features = ["server", "http1"] }
 http-body-util = "0.1.3"
 bytes = "1.11.0"
 anyhow = "1.0.100"
@@ -32,4 +32,4 @@ reqwest = { version = "0.13.1", features = ["stream"] }
 once_cell = "1.21.3"
 futures-util = "0.3.31"
 tokio-stream = "0.1.18"
-hyper-util = { version = "0.1.19", features = ["full"] }
+hyper-util = { version = "0.1.19", features = ["tokio"] }
