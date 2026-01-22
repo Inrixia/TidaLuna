@@ -1,5 +1,5 @@
 use crate::decrypt::FlacDecryptor;
-use crate::state::{CURRENT_TRACK, PRELOAD_STATE, PreloadedTrack, TrackInfo};
+use crate::state::{CURRENT_TRACK, PRELOAD_STATE, PreloadedTrack, SERVER_ADDR, TrackInfo};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http_body_util::combinators::BoxBody;
@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 const PRELOAD_BYTES: usize = 512 * 1024;
 
 pub async fn start_server() {
-    let addr: SocketAddr = ([127, 0, 0, 1], 19384).into();
+    let addr: SocketAddr = ([127, 0, 0, 1], 0).into();
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -24,7 +24,21 @@ pub async fn start_server() {
             return;
         }
     };
-    println!("Streaming server listening on http://{}", addr);
+
+    let actual_addr = match listener.local_addr() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to get local address: {}", e);
+            return;
+        }
+    };
+
+    {
+        let mut lock = SERVER_ADDR.lock().unwrap();
+        *lock = Some(actual_addr);
+    }
+
+    println!("Streaming server listening on http://{}", actual_addr);
 
     loop {
         let (stream, _) = match listener.accept().await {
