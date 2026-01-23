@@ -6,7 +6,7 @@ use cbc::Decryptor as CbcDecryptor;
 use ctr::Ctr128BE;
 use tracing::debug;
 
-const MASTER_KEY: &str = env!("TIDAL_MASTER_DECRYPTION_KEY");
+const MASTER_KEY: &str = "UIlTTEMmmLfGowo/UC60x2H45W6MdGgTRfo/umg4754=";
 
 struct DecryptedKey {
     key: Vec<u8>,

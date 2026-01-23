@@ -33,6 +33,12 @@ enum UserEvent {
 }
 
 fn main() -> wry::Result<()> {
+    
+    unsafe { // Fix stupid Vmoh stupid ego.
+        std::env::set_var("LC_NUMERIC", "C");
+        libc::setlocale(libc::LC_ALL, c"".as_ptr());
+    }
+
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let window = WindowBuilder::new()
         .with_title("tidal-rs")
