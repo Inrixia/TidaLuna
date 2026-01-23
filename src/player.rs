@@ -279,7 +279,7 @@ impl Player {
         };
 
         self.cmd_tx
-            .send(PlayerCommand::Load { url: stream_url })
+            .send(PlayerCommand::Load(stream_url))
             .map_err(|_| anyhow::anyhow!("Player thread is dead"))?;
 
         Ok(())
