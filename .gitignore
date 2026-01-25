@@ -1,1 +1,7 @@
 /target
+
+# IDEs
+.idea/
+
+# direnv
+.direnv
