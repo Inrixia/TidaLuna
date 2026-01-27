@@ -102,11 +102,11 @@ impl Player {
     {
 // Set locale before MPV init
 unsafe {
-        // 1. Forzamos el locale de C para evitar el error "Non-C locale"
+        // 1. Prevent "Non-C locale" error
         let locale = std::ffi::CString::new("C").unwrap();
         libc::setlocale(libc::LC_ALL, locale.as_ptr());
 
-        // 2. Mantenemos las variables de entorno por seguridad
+        // 2. Keeping variables
         std::env::set_var("LC_ALL", "C");
         std::env::set_var("LC_NUMERIC", "C");
     }
