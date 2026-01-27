@@ -100,7 +100,22 @@ impl Player {
     where
         F: Fn(PlayerEvent) + Send + 'static,
     {
-        let mut mpv = Mpv::new().map_err(|e| anyhow::anyhow!("MPV Init Error: {:?}", e))?;
+// Set locale before MPV init
+unsafe {
+        // 1. Prevent "Non-C locale" error
+        let locale = std::ffi::CString::new("C").unwrap();
+        libc::setlocale(libc::LC_ALL, locale.as_ptr());
+
+        // 2. Keeping variables
+        std::env::set_var("LC_ALL", "C");
+        std::env::set_var("LC_NUMERIC", "C");
+    }
+let mut mpv = Mpv::with_initializer(|init| {
+    init.set_option("config", "no")?;
+    init.set_option("terminal", "no")?;
+    init.set_option("msg-level", "all=error")?;
+    Ok(())
+}).map_err(|e| anyhow::anyhow!("MPV Init Error: {:?}", e))?;
 
         mpv.observe_property("time-pos", Format::Double, 0)
             .map_err(|e| anyhow::anyhow!("MPV Observe Error: {:?}", e))?;
