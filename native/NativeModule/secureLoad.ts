@@ -90,6 +90,15 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 		},
 	});
 
+	const secureFetch = new Proxy(fetch, {
+		apply(target, thisArg, args) {
+			if (!isTrusted(moduleInfo, "fetch", target)) {
+				throw new Error(`[🛑Security🛑] Access Denied! User blocked 'fetch' in '${fileName}'`);
+			}
+			return Reflect.apply(target, thisArg, args);
+		},
+	});
+
 	const WebAssembly = new Proxy(globalThis.WebAssembly, {
 		get(target, prop, receiver) {
 			console.warn(`[🛑Security🛑] '${fileName}' is loading WebAssembly (${String(prop)})!`);
@@ -117,7 +126,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 		nextTick: (...args: Parameters<typeof process.nextTick>) => process.nextTick(...args),
 		hrtime: (time?: [number, number]) => process.hrtime(time),
 		...objectify({
-			env: process.env,
+			env: {},
 			version: process.version,
 			versions: process.versions,
 			platform: process.platform,
@@ -132,7 +141,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 		resourcesPath: process.resourcesPath,
 
 		cwd: () => process.cwd(),
-		argv: process.argv,
+		argv: Object.freeze([...process.argv]),
 
 		debugProcess: () => {
 			// @ts-expect-error This exists
@@ -186,7 +195,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 		URLSearchParams,
 		TextEncoder,
 		TextDecoder,
-		fetch,
+		fetch: secureFetch,
 		Headers,
 		Request,
 		Response,
