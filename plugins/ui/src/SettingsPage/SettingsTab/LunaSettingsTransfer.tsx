@@ -6,7 +6,8 @@ import Typography from "@mui/material/Typography";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import FileUploadIcon from "@mui/icons-material/FileUpload";
 
-import { Messager } from "@luna/core";
+import { LunaPlugin, Messager, ReactiveStore } from "@luna/core";
+import { redux, Tidal } from "@luna/lib";
 import { relaunch } from "plugins/lib.native/src/index.native";
 
 import { LunaButton, LunaSettings } from "../../components";
@@ -16,74 +17,31 @@ interface ExportData
 	version: 1; //future proofing -> if anything changes we want the ability to load old exports correctly
 	timestamp: string;
 	pluginSettings: Record<string, unknown>; //@luna/pluginStorage
-	installedPlugins: Record<string, unknown>; //@luna/plugins (only installed)
+	installedPlugins: Record<string, unknown>; //@luna/plugins
 	themes: unknown; //@luna/storage themes key
-	featureFlags: unknown; //_TIDAL_featureFlags from localforage
+	featureFlags: Record<string, boolean> | null; //Tidal.featureFlags (name -> value map)
 }
 
-const openDatabase = (name: string): Promise<IDBDatabase> =>
-	new Promise((resolve, reject) =>
-	{
-		const req = indexedDB.open(name);
-		req.onsuccess = () => resolve(req.result);
-		req.onerror = () => reject(req.error);
-	});
+const pluginSettingsStore = ReactiveStore.getStore("@luna/pluginStorage");
+const lunaStorage = ReactiveStore.getStore("@luna/storage");
 
-const readAllFromStore = (db: IDBDatabase, storeName: string): Promise<Record<string, unknown>> =>
-	new Promise((resolve, reject) =>
-	{
-		const tx = db.transaction(storeName, "readonly");
-		const store = tx.objectStore(storeName);
-		const req = store.getAll();
-		const keyReq = store.getAllKeys();
+const readAllFromStore = async (store: ReactiveStore): Promise<Record<string, unknown>> =>
+{
+	const keys = await store.keys();
+	const data: Record<string, unknown> = {};
+	for (const key of keys)
+		data[key] = await store.get(key);
 
-		const data: Record<string, unknown> = {};
-		tx.oncomplete = () =>
-		{
-			for (let i = 0; i < keyReq.result.length; i++)
-				data[String(keyReq.result[i])] = req.result[i];
-
-			resolve(data);
-		};
-		tx.onerror = () => reject(tx.error);
-	});
-
-const readKeyFromStore = (db: IDBDatabase, storeName: string, key: string): Promise<unknown> =>
-	new Promise((resolve, reject) =>
-	{
-		const tx = db.transaction(storeName, "readonly");
-		const store = tx.objectStore(storeName);
-
-		const req = store.get(key);
-
-		tx.oncomplete = () => resolve(req.result);
-		tx.onerror = () => reject(tx.error);
-	});
-
-const writeToStore = (db: IDBDatabase, storeName: string, key: string, value: unknown): Promise<void> =>
-	new Promise((resolve, reject) =>
-	{
-		const tx = db.transaction(storeName, "readwrite");
-		const store = tx.objectStore(storeName);
-
-		store.put(value, key);
-
-		tx.oncomplete = () => resolve();
-		tx.onerror = () => reject(tx.error);
-	});
+	return data;
+};
 
 const exportSettings = async (): Promise<ExportData> =>
 {
-	//plugins settings
-	const pluginStorageDb = await openDatabase("@luna/pluginStorage");
-	const pluginSettings = await readAllFromStore(pluginStorageDb, "_");
-	pluginStorageDb.close();
+	//plugin settings
+	const pluginSettings = await readAllFromStore(pluginSettingsStore);
 
 	//installed plugins
-	const pluginsDb = await openDatabase("@luna/plugins");
-	const allPlugins = await readAllFromStore(pluginsDb, "_");
-	pluginsDb.close();
-
+	const allPlugins = await readAllFromStore(LunaPlugin.pluginStorage);
 	const installedPlugins: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(allPlugins))
 		if (value && typeof value === "object" && (value as any).installed === true)
@@ -93,9 +51,7 @@ const exportSettings = async (): Promise<ExportData> =>
 	let themes: unknown = null;
 	try
 	{
-		const storageDb = await openDatabase("@luna/storage");
-		themes = await readKeyFromStore(storageDb, "_", "themes");
-		storageDb.close();
+		themes = await lunaStorage.get("themes");
 	}
 	catch (err)
 	{
@@ -103,17 +59,10 @@ const exportSettings = async (): Promise<ExportData> =>
 	}
 
 	//feature flags
-	let featureFlags: unknown = null;
-	try
-	{
-		const localforageDb = await openDatabase("localforage");
-		featureFlags = await readKeyFromStore(localforageDb, "keyvaluepairs", "_TIDAL_featureFlags");
-		localforageDb.close();
-	}
-	catch (err)
-	{
-		console.warn("[SettingsTransfer] Could not read feature flags from localforage: ", err);
-	}
+	const tidalFlags = Tidal.featureFlags;
+	const featureFlags: Record<string, boolean> = {};
+	for (const [name, flag] of Object.entries(tidalFlags))
+		featureFlags[name] = flag.value;
 
 	return {
 		version: 1,
@@ -145,32 +94,22 @@ const downloadJson = (data: ExportData) =>
 
 const importSettings = async (data: ExportData) =>
 {
-	//plugins settings
+	//plugin settings
 	if (data.pluginSettings)
-	{
-		const db = await openDatabase("@luna/pluginStorage");
 		for (const [key, value] of Object.entries(data.pluginSettings))
-			await writeToStore(db, "_", key, value);
-		db.close();
-	}
+			await pluginSettingsStore.set(key, value);
 
 	//installed plugins
 	if (data.installedPlugins)
-	{
-		const db = await openDatabase("@luna/plugins");
 		for (const [key, value] of Object.entries(data.installedPlugins))
-			await writeToStore(db, "_", key, value);
-		db.close();
-	}
+			await LunaPlugin.pluginStorage.set(key, value);
 
-	//import themes
+	//themes
 	if (data.themes != null)
 	{
 		try
 		{
-			const db = await openDatabase("@luna/storage");
-			await writeToStore(db, "_", "themes", data.themes);
-			db.close();
+			await lunaStorage.set("themes", data.themes);
 		}
 		catch (err)
 		{
@@ -181,16 +120,10 @@ const importSettings = async (data: ExportData) =>
 	//feature flags
 	if (data.featureFlags != null)
 	{
-		try
-		{
-			const db = await openDatabase("localforage");
-			await writeToStore(db, "keyvaluepairs", "_TIDAL_featureFlags", data.featureFlags);
-			db.close();
-		}
-		catch (err)
-		{
-			console.error("[SettingsTransfer] Failed to import feature flags: ", err);
-		}
+		const currentFlags = Tidal.featureFlags;
+		for (const [name, value] of Object.entries(data.featureFlags))
+			if (name in currentFlags && currentFlags[name].value !== value)
+				redux.actions["featureFlags/TOGGLE_USER_OVERRIDE"]({ ...currentFlags[name], value });
 	}
 };
 
@@ -283,9 +216,6 @@ export const LunaSettingsTransfer = React.memo(() =>
 		}
 		catch (err: any)
 		{
-			if (err === undefined) //confirm dialog cancelled
-				return;
-
 			Messager.Error("Failed to import settings: ", err.message);
 		}
 		finally
