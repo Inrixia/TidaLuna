@@ -48,8 +48,12 @@ if (process.platform === "linux") {
 	// tidal-hifi theme file reading
 	ipcHandle("__Luna.getTidalHifiThemeCSS", async (_, themeName: string) => {
 		if (!themeName || themeName === "none") return undefined;
-		const userPath = path.join(electron.app.getPath("userData"), "themes", themeName);
-		const resourcesPath = path.join(process.resourcesPath, themeName);
+		const themesDir = path.join(electron.app.getPath("userData"), "themes");
+		const userPath = path.join(themesDir, themeName);
+		if (!userPath.startsWith(themesDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
+		const resourcesDir = process.resourcesPath;
+		const resourcesPath = path.join(resourcesDir, themeName);
+		if (!resourcesPath.startsWith(resourcesDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
 		try {
 			return await readFile(userPath, "utf8");
 		} catch {
@@ -64,8 +68,8 @@ if (process.platform === "linux") {
 
 const bundleFile = async (url: string): Promise<[Buffer, ResponseInit]> => {
 	const fileName = url.slice(13);
-	// Eh, can already use native to touch fs dont stress escaping bundleDir
 	const filePath = path.join(bundleDir, fileName);
+	if (!filePath.startsWith(bundleDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${fileName}`);
 	let content = await readFile(filePath);
 
 	// If JS file, check for .map and append if exists
@@ -269,7 +273,7 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 					// Trigger SPA navigation without page reload
 					const authPath = navUrl.pathname + navUrl.search;
 					window.webContents.executeJavaScript(`
-						window.history.pushState({}, "", "${authPath}");
+						window.history.pushState({}, "", ${JSON.stringify(authPath)});
 						window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
 					`);
 					authCallbackPending = false;
