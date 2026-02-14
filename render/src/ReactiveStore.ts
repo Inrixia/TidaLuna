@@ -79,4 +79,21 @@ export class ReactiveStore {
 	public keys(): Promise<string[]> {
 		return idbKeys(this.idbStore);
 	}
+
+	public async dump(): Promise<Record<string, unknown>>
+	{
+		const allKeys = await this.keys();
+		const data: Record<string, unknown> = {};
+		for (const key of allKeys)
+			data[key] = await this.get(key);
+
+		return data;
+	}
+
+	public async clear()
+	{
+		const allKeys = await this.keys();
+		for (const key of allKeys)
+			await this.del(key);
+	}
 }
