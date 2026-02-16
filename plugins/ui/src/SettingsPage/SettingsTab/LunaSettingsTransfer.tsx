@@ -27,8 +27,7 @@ export const LunaSettingsTransfer = React.memo(() =>
 			const tidalFlags = Tidal.featureFlags;
 			const featureFlags: Record<string, boolean> = {};
 			for (const [name, flag] of Object.entries(tidalFlags))
-				if (flag.value)
-					featureFlags[name] = flag.value;
+				featureFlags[name] = flag.value;
 
 			const data = await SettingsTransfer.dump(stripCode, Object.keys(featureFlags).length > 0 ? featureFlags : null);
 
