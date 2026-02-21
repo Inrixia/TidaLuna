@@ -24,10 +24,7 @@ export const LunaSettingsTransfer = React.memo(() =>
 		try
 		{
 			//feature flags
-			const tidalFlags = Tidal.featureFlags;
-			const featureFlags: Record<string, boolean> = {};
-			for (const [name, flag] of Object.entries(tidalFlags))
-				featureFlags[name] = flag.value;
+			const featureFlags = redux.store.getState().featureFlags.userOverrides as Record<string, boolean>;;
 
 			const data = await SettingsTransfer.dump(stripCode, Object.keys(featureFlags).length > 0 ? featureFlags : null);
 
