@@ -1,0 +1,17 @@
+name: Flake Review
+
+on:
+ pull_request:
+  branches: [master, dev]
+
+permissions:
+ contents: read
+ pull-requests: write
+
+jobs:
+ review:
+  uses: ojsef39/flake-review/.github/workflows/flake-review-reusable.yml@c0865b03f28eaca7342a928eb166a6d11a7c6c51
+  with:
+   # https://github.com/ojsef39/flake-review/blob/main/.github/workflows/flake-review-reusable.yml
+   concurrency-group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+   matrix: '[{"runner":"macos-latest","systems":"aarch64-darwin","name":"darwin"},{"runner":"ubuntu-latest","systems":"x86_64-linux","name":"linux"}]'
