@@ -180,8 +180,10 @@ export class LunaPlugin {
 
 		const stripped = structuredClone(data);
 		for (const value of Object.values(stripped))
+		{
 			if (value && typeof value === "object")
 				delete (value as any).package?.code;
+		}
 
 		return stripped;
 	}

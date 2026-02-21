@@ -83,8 +83,10 @@ export const LunaSettingsTransfer = React.memo(() =>
 			{
 				const currentFlags = Tidal.featureFlags;
 				for (const [name, value] of Object.entries(data.featureFlags))
+				{
 					if (name in currentFlags && currentFlags[name].value !== value)
 						redux.actions["featureFlags/TOGGLE_USER_OVERRIDE"]({ ...currentFlags[name], value });
+				}
 			}
 
 			Messager.Info("Settings imported successfully, restarting...");
