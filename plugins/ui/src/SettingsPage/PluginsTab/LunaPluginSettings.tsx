@@ -12,6 +12,7 @@ import { LunaPluginHeader } from "./LunaPluginHeader";
 
 import SettingsIcon from "@mui/icons-material/Settings";
 import { grey } from "@mui/material/colors";
+import { uninstallPluginWithDependenciesCheck } from "../PluginStoreTab/pluginInstall";
 
 export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }) => {
 	// Have to wrap in function call as Settings is a functional component
@@ -45,7 +46,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 	// Memoize callbacks
 	const handleReload = React.useCallback(plugin.reload.bind(plugin), [plugin]);
 	const toggleEnabled = React.useCallback((_: unknown, checked: boolean) => (checked ? plugin.enable() : plugin.disable()), [plugin]);
-	const uninstall = React.useCallback(plugin.uninstall.bind(plugin), [plugin]);
+	const uninstall = React.useCallback(() => uninstallPluginWithDependenciesCheck(plugin), [plugin]);
 
 	if (!installed) return null;
 
@@ -58,6 +59,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 	const name = pkg.name;
 	const link = pkg.homepage ?? pkg.repository?.url;
 	let version = isDev ? `${pkg.version ?? ""} [DEV]` : pkg.version;
+	const dependsOn = plugin.dependencyRequirements.map((dependency) => dependency.name);
 
 	// Dont allow disabling core plugins
 	const isCore = LunaPlugin.corePlugins.has(name);
@@ -84,6 +86,8 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 				loadError={loadError}
 				author={author}
 				desc={desc}
+				isLibrary={plugin.isLibrary}
+				dependsOn={dependsOn}
 				children={
 					<>
 						{!isCore && (

@@ -6,6 +6,7 @@ import { LunaPluginHeader } from "../PluginsTab/LunaPluginHeader";
 
 import ButtonBase from "@mui/material/ButtonBase";
 import Typography from "@mui/material/Typography";
+import { installPluginWithLibraries, uninstallPluginWithDependenciesCheck } from "./pluginInstall";
 
 export const LunaStorePlugin = React.memo(({ url }: { url: string }) => {
 	const [plugin, setPlugin] = useState<LunaPlugin | undefined>(undefined);
@@ -17,6 +18,13 @@ export const LunaStorePlugin = React.memo(({ url }: { url: string }) => {
 	}, [url]);
 
 	if (!plugin) return null;
+
+	const dependsOn = plugin.dependencyRequirements.map((dependency) => dependency.name);
+
+	const onInstallToggle = async () => {
+		if (plugin.installed) await uninstallPluginWithDependenciesCheck(plugin);
+		else await installPluginWithLibraries(plugin);
+	};
 
 	const version = url.startsWith("http://127.0.0.1") ? `${plugin.package?.version ?? ""} [DEV]` : plugin.package?.version;
 
@@ -38,7 +46,7 @@ export const LunaStorePlugin = React.memo(({ url }: { url: string }) => {
 				width: "100%",
 			}}
 			style={{ textAlign: "left" }}
-			onClick={() => (plugin.installed ? plugin.uninstall() : plugin.install())}
+			onClick={onInstallToggle}
 		>
 			<LunaPluginHeader
 				sx={{ transition: "opacity 0.3s ease-in-out", opacity: isHovered ? 0.2 : 1, width: "100%" }}
@@ -47,6 +55,8 @@ export const LunaStorePlugin = React.memo(({ url }: { url: string }) => {
 				loadError={loadError}
 				author={plugin.package?.author}
 				desc={plugin.package?.description}
+				isLibrary={plugin.isLibrary}
+				dependsOn={dependsOn}
 			/>
 			<Typography
 				sx={{

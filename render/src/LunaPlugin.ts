@@ -16,10 +16,20 @@ type ModuleExports = {
 	errSignal?: Signal<string | undefined>;
 };
 
+// #region Package Types
 export type LunaAuthor = {
 	name: string;
 	url: string;
 	avatarUrl?: string;
+};
+export type LunaPackageDependency = {
+	name: string;
+	storeUrl: string;
+	devStoreUrl?: string;
+};
+export type LunaPackageMeta = {
+	type?: "plugin" | "library";
+	dependencies?: LunaPackageDependency[];
 };
 export type PluginPackage = {
 	name: string;
@@ -35,7 +45,9 @@ export type PluginPackage = {
 	dependencies?: string[];
 	devDependencies?: string[];
 	code?: string;
+	luna?: LunaPackageMeta;
 };
+// #endregion
 
 // If adding to this make sure that the values are initalized in LunaPlugin.fromStorage
 export type LunaPluginStorage = {
@@ -82,6 +94,16 @@ export class LunaPlugin {
 		return Object.values(this.plugins).filter((p) => p.name === name);
 	}
 
+	// #region Dependency Lookup
+	public static getInstalled(): LunaPlugin[] {
+		return Object.values(this.plugins).filter((plugin) => plugin.installed);
+	}
+
+	public static findInstalledDependantsOf(pluginName: string): LunaPlugin[] {
+		return this.getInstalled().filter((plugin) => plugin.dependsOn(pluginName));
+	}
+	// #endregion
+
 	// Static list of Luna plugins that should be seperate from user plugins
 	public static readonly corePlugins: Set<string> = new Set(["@luna/lib", "@luna/lib.native", "@luna/ui", "@luna/dev", "@luna/linux"]);
 
@@ -96,6 +118,8 @@ export class LunaPlugin {
 					console.error(errMsg, err);
 				});
 			}
+
+			// #region Dependency Helpers
 		});
 		__ipcRenderer.on("__Luna.LunaPlugin.addDependant", (pluginName, dependantName) => {
 			const plugin = LunaPlugin.getByName(pluginName);
@@ -287,6 +311,15 @@ export class LunaPlugin {
 	public get installed(): boolean {
 		return this.store.installed;
 	}
+	public get isLibrary(): boolean {
+		return this.package?.luna?.type === "library";
+	}
+	public get dependencyRequirements(): LunaPackageDependency[] {
+		return this.package?.luna?.dependencies ?? [];
+	}
+	public dependsOn(pluginName: string): boolean {
+		return this.dependencyRequirements.some((dependency) => dependency.name === pluginName);
+	}
 	public get isDev(): boolean {
 		return this.url.startsWith("http://127.0.0.1");
 	}
@@ -327,6 +360,7 @@ export class LunaPlugin {
 	public async enable() {
 		try {
 			this.loading._ = true;
+			if (!(await this.ensureDependenciesEnabled())) return;
 			await this.loadExports();
 			this._enabled._ = true;
 			this.store.installed = true;
@@ -353,6 +387,18 @@ export class LunaPlugin {
 	public async install() {
 		this.loading._ = true;
 
+		const pluginType = this.package?.luna?.type ?? "plugin";
+		if (!LunaPlugin.corePlugins.has(this.name) && pluginType !== "plugin" && pluginType !== "library") {
+			this.loading._ = false;
+			return this.trace.msg.err(`Refusing to install '${this.name}': invalid luna.type '${pluginType}'.`);
+		}
+
+		const pluginPackage = this.package;
+		if (pluginPackage === undefined) {
+			this.loading._ = false;
+			return this.trace.msg.err(`Refusing to install '${this.name}': missing package metadata.`);
+		}
+
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
 		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);
 		for (const other of otherVersions) {
@@ -363,7 +409,7 @@ export class LunaPlugin {
 		// Update persisted store with this plugin's URL so it loads on restart
 		const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(this.name);
 		persistedStore.url = this.url;
-		persistedStore.package = this.package;
+		persistedStore.package = pluginPackage;
 		persistedStore.installed = true;
 		persistedStore.enabled = true;
 
@@ -372,6 +418,16 @@ export class LunaPlugin {
 		coreTrace.msg.log(`Installed plugin ${this.name}${this.isDev ? " [DEV]" : ""}`);
 	}
 	public async uninstall() {
+		if (this.isLibrary) {
+			const blockingDependants = LunaPlugin.findInstalledDependantsOf(this.name).filter((plugin) => plugin !== this);
+			if (blockingDependants.length > 0) {
+				const dependantNames = blockingDependants.map((plugin) => plugin.name).join(", ");
+				return this.trace.msg.warn(
+					`Cannot uninstall library plugin '${this.name}' while dependant plugins are installed: ${dependantNames}. Uninstall those first.`,
+				);
+			}
+		}
+
 		await this.disable();
 		this.loading._ = true;
 		// Remove this plugin from all dependants lists
@@ -383,6 +439,22 @@ export class LunaPlugin {
 		await LunaPlugin.pluginStorage.del(this.name);
 		this.loading._ = false;
 		coreTrace.msg.log(`Uninstalled plugin ${this.name}${this.isDev ? " [DEV]" : ""}`);
+	}
+
+	private async ensureDependenciesEnabled(): Promise<boolean> {
+		for (const dependency of this.dependencyRequirements) {
+			const dependencyPlugin = await LunaPlugin.fromName(dependency.name);
+			if (dependencyPlugin === undefined || !dependencyPlugin.installed) {
+				this.trace.msg.err(`Missing required library plugin '${dependency.name}' for '${this.name}'.`);
+				return false;
+			}
+
+			dependencyPlugin.addDependant(this);
+
+			if (!dependencyPlugin.enabled) await dependencyPlugin.enable();
+		}
+
+		return true;
 	}
 	// #endregion
 

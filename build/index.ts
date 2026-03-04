@@ -23,6 +23,11 @@ const externals = ["@luna/*", "oby", "react", "react-dom/client", "react/jsx-run
 export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions) => {
 	const pkgPath = path.join(pluginPath, "package.json");
 	const pluginPackage = await readFile(pkgPath, "utf8").then(JSON.parse);
+	// #region Luna Dependency Externals
+	const lunaDependencyModules = (pluginPackage.luna?.dependencies ?? [])
+		.map((dependency: { name?: string } | string) => (typeof dependency === "string" ? dependency : dependency?.name))
+		.filter((dependencyName: unknown): dependencyName is string => typeof dependencyName === "string" && dependencyName.length > 0);
+	// #endregion
 	// Sanitize pluginPackage.name, remove @, replace / with .
 	const pkgName = pluginPackage.name;
 	const safeName = pkgName.replace(/@/g, "").replace(/\//g, ".");
@@ -39,7 +44,9 @@ export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions
 		outfile: `./dist/${safeName}.mjs`,
 		entryPoints: ["./" + entryPoint],
 		...opts,
-		external: [...(opts?.external ?? []), ...externals],
+		// #region Externals
+		external: [...new Set([...(opts?.external ?? []), ...externals, ...lunaDependencyModules])],
+		// #endregion
 		plugins: [
 			...(opts?.plugins ?? []),
 			dynamicExternalsPlugin({
