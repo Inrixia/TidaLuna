@@ -12,6 +12,7 @@ export { modules, reduxStore } from "./modules";
 
 export * from "./LunaPlugin";
 export * from "./ReactiveStore";
+export * from "./SettingsTransfer";
 
 // Ensure this is loaded
 import "./window.core";
