@@ -452,16 +452,16 @@ export class MediaItem extends ContentBase {
 		if (cachedFormat !== undefined) listener(cachedFormat);
 		return unload;
 	}
-	public updateFormat: (audioQuality?: redux.AudioQuality, force?: true) => Promise<void> = asyncDebounce(async (audioQuality, force) => {
+	public updateFormat: (audioQuality?: redux.AudioQuality, force?: true) => Promise<MediaFormat | undefined> = asyncDebounce(async (audioQuality, force) => {
 		this.cache.format ??= {};
 		const requestedQuality = audioQuality;
 		audioQuality ??= Quality.Max.audioQuality;
 		const format = (this.cache.format[audioQuality] ??= {});
 
-		if (format.bitrate !== undefined && format.sampleRate !== undefined && force !== true) return;
+		if (format.bitrate !== undefined && format.sampleRate !== undefined && force !== true) return format;
 
 		const playbackInfo = await this.playbackInfo(audioQuality);
-		if (!playbackInfo) return;
+		if (!playbackInfo) return undefined;
 		format.duration = this.duration;
 
 		if (format.bitDepth === undefined || format.sampleRate === undefined || format.duration === undefined || format.bytes === undefined) {
@@ -495,6 +495,8 @@ export class MediaItem extends ContentBase {
 			const [_, emitRequested] = this.formatEmitters[requestedQuality] ?? [];
 			emitRequested?.(format, this.trace.err.withContext("updateFormat.emitFormat.requested"));
 		}
+
+		return format;
 	});
 	// #endregion
 }

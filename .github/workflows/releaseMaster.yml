@@ -15,7 +15,6 @@ jobs:
   name: Release latest on GitHub
   needs: Build
   runs-on: ubuntu-latest
-
   steps:
    - name: Download All Artifacts
      uses: actions/download-artifact@v4
@@ -28,7 +27,7 @@ jobs:
       VERSION=$(jq -r .version ./dist/package.json)
       echo "VERSION=${VERSION}" >> $GITHUB_ENV
 
-   - name: Publish dev release on GitHub
+   - name: Publish release on GitHub
      uses: marvinpinto/action-automatic-releases@latest
      with:
       repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -37,11 +36,60 @@ jobs:
       title: Release ${{ env.VERSION }}
       files: ./dist/luna.zip
 
-   - uses: actions/checkout@v3
-   - uses: cachix/install-nix-action@v18
-   - uses: workflow/nix-shell-action@v3
+ Nix-Update-Linux:
+  name: Update Linux Nix hashes
+  needs: Release
+  runs-on: ubuntu-latest
+  steps:
+   - uses: actions/checkout@v4
+
+   - name: Get version from package.json
+     run: |
+      VERSION=$(jq -r .version package.json)
+      echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+   - uses: cachix/install-nix-action@v31
      with:
-      packages: nix-update
-      script: |
-       nix-update --flake injection --version=${{ env.VERSION }}
+      extra_nix_config: |
+       access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+   - name: Update injection-linux hash
+     run: |
+      NIXPKGS_REV=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+      nix shell "github:NixOS/nixpkgs/${NIXPKGS_REV}#nix-update" --command nix-update --flake injection-linux --version=${{ env.VERSION }}
+
    - uses: stefanzweifel/git-auto-commit-action@v5
+     with:
+      commit_message: "nix: update Linux injection hash for ${{ env.VERSION }}"
+
+ Nix-Update-Darwin:
+  name: Update Darwin Nix hashes
+  needs: Nix-Update-Linux
+  runs-on: macos-latest
+  steps:
+   - uses: actions/checkout@v4
+     with:
+      ref: ${{ github.ref }}
+
+   - name: Pull latest changes
+     run: git pull --rebase
+
+   - name: Get version from package.json
+     run: |
+      VERSION=$(jq -r .version package.json)
+      echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+   - uses: cachix/install-nix-action@v31
+     with:
+      extra_nix_config: |
+       access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+   - name: Update Darwin injection and package hashes
+     run: |
+      NIXPKGS_REV=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+      nix shell "github:NixOS/nixpkgs/${NIXPKGS_REV}#nix-update" --command nix-update --flake injection-darwin --version=${{ env.VERSION }}
+      nix shell "github:NixOS/nixpkgs/${NIXPKGS_REV}#nix-update" --command nix-update --flake darwin-package --version=skip
+
+   - uses: stefanzweifel/git-auto-commit-action@v5
+     with:
+      commit_message: "nix: update Darwin injection and package hashes for ${{ env.VERSION }}"
