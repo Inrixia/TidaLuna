@@ -6,7 +6,8 @@ import { debounce } from "@inrixia/helpers";
 import { LunaPlugin } from "@luna/core";
 
 import { Messager } from "@luna/core";
-import { addToStores } from ".";
+import { addToStores } from "./storeState";
+import { installPluginWithLibraries } from "./pluginInstall";
 
 const successSx = {
 	"& .MuiOutlinedInput-root:hover:not(.Mui-focused) .MuiOutlinedInput-notchedOutline": {
@@ -43,7 +44,8 @@ export const InstallFromUrl = React.memo(() => {
 				successMessage = `Added store ${url}!`;
 			} else {
 				const plugin = await LunaPlugin.fromStorage({ url });
-				successMessage = `Loaded plugin ${plugin.name}!`;
+				if (!(await installPluginWithLibraries(plugin))) return;
+				successMessage = `Installed plugin ${plugin.name}!`;
 			}
 			setValue(""); // Reset input on success
 			setErr(null);

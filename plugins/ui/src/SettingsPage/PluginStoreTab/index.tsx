@@ -2,21 +2,14 @@ import React, { useCallback, useEffect, useState } from "react";
 
 import { store as obyStore } from "oby";
 
-import { ReactiveStore } from "@luna/core";
-
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 
 import { InstallFromUrl } from "./InstallFromUrl";
 import { LunaStore } from "./LunaStore";
+import { addToStores, storeUrls } from "./storeState";
 
-const pluginStores = ReactiveStore.getStore("@luna/pluginStores");
-export const storeUrls = await pluginStores.getReactive<string[]>("storeUrls", []);
-export const addToStores = (url: string) => {
-	if (url.endsWith("/store.json")) url = url.slice(0, -11);
-	if (storeUrls.includes(url)) return false;
-	return storeUrls.push(url);
-};
+export { addToStores, storeUrls } from "./storeState";
 
 // Devs! Add your stores here <3
 // TODO: Abstract this to a git repo
