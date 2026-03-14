@@ -5,13 +5,16 @@ on:
   branches: [master, dev]
 
 permissions:
+ actions: write
  contents: read
  pull-requests: write
 
 jobs:
  review:
-  uses: ojsef39/flake-review/.github/workflows/flake-review-reusable.yml@c0865b03f28eaca7342a928eb166a6d11a7c6c51
+  uses: ojsef39/flake-review/.github/workflows/flake-review-reusable.yml@test4
   with:
    # https://github.com/ojsef39/flake-review/blob/main/.github/workflows/flake-review-reusable.yml
    concurrency-group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+   flake-review-ref: "test4"
+   packages: "default"
    matrix: '[{"runner":"macos-latest","systems":"aarch64-darwin","name":"darwin"},{"runner":"ubuntu-latest","systems":"x86_64-linux","name":"linux"}]'
