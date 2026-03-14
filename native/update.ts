@@ -1,6 +1,7 @@
 import { access, mkdir, rm, unlink, writeFile } from "fs/promises";
 import { constants } from "fs";
 import { execFile } from "child_process";
+import { randomBytes } from "crypto";
 import { tmpdir } from "os";
 import JSZip from "jszip";
 import path from "path";
@@ -55,9 +56,20 @@ const runElevated = (tool: string, args: string[]) =>
 
 const elevationTools = ["pkexec", "kdesudo"] as const;
 
+const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
+	const zip = await JSZip.loadAsync(zipBuffer);
+	for (const filename of Object.keys(zip.files)) {
+		const destPath = path.join(destFolder, filename);
+		if (!destPath.startsWith(destFolder)) {
+			throw new Error(`[UPDATER] Zip Slip blocked: unsafe entry "${filename}"`);
+		}
+	}
+};
+
 const elevatedUpdate = async (zipBuffer: Buffer) => {
 	validateAppFolder(appFolder);
-	const tmpZip = path.join(tmpdir(), `luna-update-${Date.now()}.zip`);
+	await validateZipEntries(zipBuffer, appFolder);
+	const tmpZip = path.join(tmpdir(), `luna-update-${randomBytes(16).toString("hex")}.zip`);
 	try {
 		await writeFile(tmpZip, zipBuffer);
 		const cmd = `rm -rf "${appFolder}" && mkdir -p "${appFolder}" && unzip -o "${tmpZip}" -d "${appFolder}"`;

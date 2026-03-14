@@ -48,8 +48,12 @@ if (process.platform === "linux") {
 	// tidal-hifi theme file reading
 	ipcHandle("__Luna.getTidalHifiThemeCSS", async (_, themeName: string) => {
 		if (!themeName || themeName === "none") return undefined;
-		const userPath = path.join(electron.app.getPath("userData"), "themes", themeName);
-		const resourcesPath = path.join(process.resourcesPath, themeName);
+		const themesDir = path.join(electron.app.getPath("userData"), "themes");
+		const userPath = path.join(themesDir, themeName);
+		if (!userPath.startsWith(themesDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
+		const resourcesDir = process.resourcesPath;
+		const resourcesPath = path.join(resourcesDir, themeName);
+		if (!resourcesPath.startsWith(resourcesDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
 		try {
 			return await readFile(userPath, "utf8");
 		} catch {
@@ -64,8 +68,8 @@ if (process.platform === "linux") {
 
 const bundleFile = async (url: string): Promise<[Buffer, ResponseInit]> => {
 	const fileName = url.slice(13);
-	// Eh, can already use native to touch fs dont stress escaping bundleDir
 	const filePath = path.join(bundleDir, fileName);
+	if (!filePath.startsWith(bundleDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${fileName}`);
 	let content = await readFile(filePath);
 
 	// If JS file, check for .map and append if exists
@@ -89,6 +93,8 @@ ipcHandle("__Luna.renderJs", () => lunaBundle);
 
 // #region HTTPS Handler
 const tidalMainHosts = new Set(["listen.tidal.com", "tidal.com", "desktop.tidal.com", "stage.tidal.com"]);
+const lunaPages = new Set<string>();
+ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
 let httpsHandlerActive = false;
 
 const httpsHandler = async (req: Request): Promise<Response> => {
@@ -103,9 +109,13 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 
 	// Bypass CSP & Mark meta scripts for quartz injection on Tidal main pages
 	const reqUrl = new URL(req.url);
-	if (tidalMainHosts.has(reqUrl.hostname) && reqUrl.pathname === "/") {
+	if (tidalMainHosts.has(reqUrl.hostname) && !path.extname(reqUrl.pathname)) {
 		const res = await electron.net.fetch(req, { bypassCustomProtocolHandlers: true });
+		const contentType = res.headers.get("content-type") ?? "";
+		if (!contentType.includes("text/html")) return res;
 		let body = await res.text();
+		// Only modify the Tidal SPA shell (contains CSP meta tag)
+		if (!body.includes('<meta http-equiv="Content-Security-Policy"')) return new Response(body, res);
 		body = body.replace(
 			/(<meta http-equiv="Content-Security-Policy")|(<script type="module" crossorigin src="(.*?)">)/g,
 			(match, cspMatch, scriptMatch, src) => {
@@ -121,6 +131,7 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 				return match;
 			},
 		);
+		lunaPages.add(reqUrl.origin + reqUrl.pathname);
 		return new Response(body, res);
 	}
 
@@ -269,7 +280,7 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 					// Trigger SPA navigation without page reload
 					const authPath = navUrl.pathname + navUrl.search;
 					window.webContents.executeJavaScript(`
-						window.history.pushState({}, "", "${authPath}");
+						window.history.pushState({}, "", ${JSON.stringify(authPath)});
 						window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
 					`);
 					authCallbackPending = false;

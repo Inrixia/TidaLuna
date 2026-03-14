@@ -5,34 +5,49 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
-  outputs =
-    { self, nixpkgs }:
-    let
-      forAllSystems =
-        function:
-        nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (
-          # unfree packages needed for "castlabs-electron"
-          system: function (
-            import nixpkgs { inherit system; config.allowUnfree = true; }
+  outputs = {
+    self,
+    nixpkgs,
+  }: let
+    forAllSystems = function:
+      nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (
+        # unfree packages needed for "castlabs-electron"
+        system:
+          function (
+            import nixpkgs {
+              inherit system;
+              config.allowUnfree = true;
+            }
           )
-        );
-    in
-    {
+      );
+  in {
+    packages = forAllSystems (pkgs: {
+      # TidaLuna injection stand-alone (platform-dispatched)
+      injection =
+        if pkgs.stdenv.isDarwin
+        then pkgs.callPackage ./nix/injection-darwin.nix {}
+        else pkgs.callPackage ./nix/injection-linux.nix {};
 
-      packages = forAllSystems (pkgs: {
-        # TidaLuna injection stand-alone
-        injection = pkgs.callPackage ./nix/injection.nix { };
+      # Explicit per-platform injection targets (for nix-update)
+      injection-darwin = pkgs.callPackage ./nix/injection-darwin.nix {};
+      injection-linux = pkgs.callPackage ./nix/injection-linux.nix {};
 
-        # TidaLuna injected into tidal-hifi
-        default = pkgs.callPackage ./nix/overlay.nix { };
-      });
+      # macOS TIDAL app with Luna injected (for nix-update of DMG hash)
+      darwin-package = pkgs.callPackage ./nix/darwin-package.nix {};
 
-      # Dev environment
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.callPackage ./nix/shell.nix { };
-      });
+      # TidaLuna injected into tidal-hifi / TIDAL.app
+      default =
+        if pkgs.stdenv.isDarwin
+        then pkgs.callPackage ./nix/darwin-package.nix {}
+        else pkgs.callPackage ./nix/linux-package.nix {};
+    });
 
-      # Overlay (if preferred)
-      overlays.default = final: _: { tidal-hifi = final.callPackage ./nix/overlay.nix { }; };
+    # Dev environment
+    devShells = forAllSystems (pkgs: {
+      default = pkgs.callPackage ./nix/shell.nix {};
+    });
+
+    # Overlay (if preferred)
+    overlays.default = final: prev: {tidal-hifi = final.callPackage ./nix/linux-package.nix {tidal-hifi = prev.tidal-hifi;};};
   };
 }
