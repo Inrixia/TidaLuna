@@ -47,6 +47,9 @@
       default = pkgs.callPackage ./nix/shell.nix {};
     });
 
+    # Home Manager module
+    homeManagerModules.default = import ./nix/home-manager.nix {inherit self;};
+
     # Overlay (if preferred)
     overlays.default = final: prev: {tidal-hifi = final.callPackage ./nix/linux-package.nix {tidal-hifi = prev.tidal-hifi;};};
   };
