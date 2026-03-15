@@ -54,7 +54,7 @@ inputs.tidaLuna.url = "github:Inrixia/TidaLuna"
 
 There are now two ways to install the injected tidal-hifi client
 
-#### overlay
+#### Overlay
 Add TidaLuna into your overlay list
 ```nix
 nixpkgs.overlay = [
@@ -64,7 +64,7 @@ nixpkgs.overlay = [
 
 after that install the tidal-hifi package as you used to
 
-#### package
+#### Package
 Replace your current `tidal-hifi` package with the new input
 
 ```diff
@@ -73,6 +73,73 @@ environment.systemPackages = with pkgs; [
 +  inputs.tidaLuna.packages.${stdenv.hostPlatform.system}.default
 ];
 ```
+
+#### Home Manager 
+
+Add the home manager module to `sharedModules`
+
+```nix
+home-manager.sharedModules = [
+    inputs.tidaluna.homeManagerModules.default
+]
+```
+
+Then Enable TidaLuna using 
+
+```nix
+programs.tidaluna = {
+    enable = true;
+};
+```
+
+##### Configuring Stores
+
+In contrast to the other installation methods, the home manager module comes with no stores preconfigured. You must
+include the stores for any plugins you declare in `plugins`. To define stores add them to the `stores` array:
+
+```nix
+programs.tidaluna = {
+    enable = true;
+    stores = [
+        "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
+    ];
+};
+```
+
+The list of stores which come default with TidaLuna can be found in `plugins/ui/src/SettingsPage/PluginStoreTab/index.tsx`.
+
+##### Installing and Configuring Plugins
+
+After having added the stores needed plugins can be defined in the `plugins` array:
+```nix
+programs.tidaluna = {
+    enable = true;
+    stores = [
+        "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
+    ];
+    plugins = [
+        {
+            shortURL = "DiscordRPC";
+            settingsName = "DiscordRPC";
+            settings = {
+                "displayOnPause" = false;
+                "displayArtistIcon" = true;
+                "displayPlaylistButton" = true;
+                "customStatusText" = "{track} by {artist}";
+            };
+        }
+    ];
+};
+```
+
+A plugin definition consists of the following three keys: 
+
+- `shortURL`: The name as shown in the "Plugin Store" tab, used for installing the plugin.
+- `settingsName`: The key the plugin uses for storing its settings. This may or may not **differ** from the `shortURL`.
+- `settings`: Settings to be applied to the plugin.
+
+To get the `settingsName` and `settings` of all installed plugins run the following command in the developer console
+of Tidal: `const idb = await luna.core.ReactiveStore.getStore("@luna/pluginStorage").dump(); console.log(JSON.stringify(idb, null, 2));`
 
 ## Developers
 
