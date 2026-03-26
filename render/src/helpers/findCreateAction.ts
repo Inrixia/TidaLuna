@@ -1,11 +1,13 @@
 /**
  * Finds the name and index of https://redux-toolkit.js.org/api/createAction
  * based on the presence of (`.payload,..."meta"in `) commonly found in Redux Toolkit's `createAction`.
+ * Quote-agnostic — some bundlers convert string delimiters to backticks.
  */
 export function findCreateActionFunction(code: string): { fnName: string; startIdx: number } | null {
-	// Search for the specific pattern indicating a prepare callback structure.
-	const payloadMetaIndex = code.indexOf(`.payload,..."meta"in `);
-	if (payloadMetaIndex === -1) return null;
+	// Match .payload,..."meta"in with any quote style (", ', `)
+	const payloadMetaMatch = code.match(/\.payload,\.{3}(?:"|'|`)meta(?:"|'|`)in /);
+	if (!payloadMetaMatch) return null;
+	const payloadMetaIndex = payloadMetaMatch.index!;
 
 	// Find the start of the function definition preceding the pattern.
 	const codeBeforePattern = code.slice(0, payloadMetaIndex);
