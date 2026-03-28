@@ -56,7 +56,6 @@ in
     meta = with lib; {
       description = "TidaLuna macOS TIDAL DMG wrapper";
       platforms = [
-        "x86_64-darwin"
         "aarch64-darwin"
       ];
     };
