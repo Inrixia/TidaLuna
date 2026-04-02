@@ -70,7 +70,7 @@ Replace your current `tidal-hifi` package with the new input
 ```diff
 environment.systemPackages = with pkgs; [
 -  tidal-hifi
-+  inputs.tidaLuna.packages.${system}.default
++  inputs.tidaLuna.packages.${stdenv.hostPlatform.system}.default
 ];
 ```
 
