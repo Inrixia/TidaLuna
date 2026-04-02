@@ -35,6 +35,11 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
+  "pnpm": {
+    "overrides": {
+      "yaml@^1.10.0": "^1.10.3"
+    }
+  },
   "dependencies": {
     "@inrixia/helpers": "^3.21.0",
     "@types/clean-css": "^4.2.11",
