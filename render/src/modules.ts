@@ -1,5 +1,7 @@
 import type { Store } from "redux";
 import { findModuleByProperty } from "./helpers/findModule";
+import { tidalModules } from "./exposeTidalInternals";
+import { coreTrace } from "./trace/Tracer";
 
 export const modules: Record<string, any> = {};
 
@@ -13,15 +15,34 @@ window.require.main = undefined;
 
 export const reduxStore: Store = findModuleByProperty((key, value) => key === "replaceReducer" && typeof value === "function")!;
 
+// Tidal's bundler wraps CJS modules (React, ReactDOM, jsx-runtime) in lazy loaders
+// and minifies export names. Find the chunk by path, invoke the lazy loader, validate the result.
+const resolveCjsModule = (pathPattern: RegExp, validator: (r: any) => boolean) => {
+	for (const [path, mod] of Object.entries(tidalModules)) {
+		if (!pathPattern.test(path)) continue;
+		for (const value of Object.values(mod)) {
+			if (typeof value !== "function") continue;
+			const src = Function.prototype.toString.call(value);
+			if (!src.includes("{exports:{}") || !src.includes(".exports")) continue;
+			try {
+				const result = value();
+				if (result && typeof result === "object" && validator(result)) return result;
+			} catch {}
+		}
+	}
+};
+
 // Expose react
-modules["react"] = findModuleByProperty((key, value) => key === "createElement" && typeof value === "function");
-modules["react"].default ??= modules["react"];
+const react = resolveCjsModule(/\/react-(?!dom[-.])[^/]+\.js$/, (r) => typeof r.useState === "function" && typeof r.useEffect === "function");
+if (react) { react.default ??= react; modules["react"] = react; }
+else { coreTrace.warn("modules", "Failed to resolve React module"); }
 
-modules["react/jsx-runtime"] = findModuleByProperty((key, value) => key === "jsx" && typeof value === "function");
-modules["react/jsx-runtime"].default ??= modules["react/jsx-runtime"];
+const jsxRT = resolveCjsModule(/\/jsx-runtime-[^/]+\.js$/, (r) => typeof r.jsx === "function" && typeof r.jsxs === "function");
+if (jsxRT) { jsxRT.default ??= jsxRT; modules["react/jsx-runtime"] = jsxRT; }
+else { coreTrace.warn("modules", "Failed to resolve react/jsx-runtime module"); }
 
-// Expose react-dom
-modules["react-dom/client"] = findModuleByProperty((key, value) => key === "createRoot" && typeof value === "function");
-modules["react-dom/client"].default ??= modules["react-dom/client"];
+const reactDom = resolveCjsModule(/\/react-dom-[^/]+\.js$/, (r) => typeof r.createRoot === "function" && typeof r.hydrateRoot === "function");
+if (reactDom) { reactDom.default ??= reactDom; modules["react-dom/client"] = reactDom; }
+else { coreTrace.warn("modules", "Failed to resolve react-dom/client module"); }
 
 modules["oby"] = await import("oby");

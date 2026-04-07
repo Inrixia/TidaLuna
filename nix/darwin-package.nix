@@ -12,7 +12,7 @@ in
 
     src = fetchurl {
       url = "https://download.tidal.com/desktop/TIDAL.arm64.dmg";
-      sha256 = "sha256-77Z5i4m2nQtfw7CAZqWNybYzpUZG+mEqltlK/llKQJ0=";
+      sha256 = "sha256-18RjsLHhpUSAyITfwu3efokUbezE1b3GpFiafWHW/qo=";
     };
 
     dontUnpack = true;
@@ -56,7 +56,6 @@ in
     meta = with lib; {
       description = "TidaLuna macOS TIDAL DMG wrapper";
       platforms = [
-        "x86_64-darwin"
         "aarch64-darwin"
       ];
     };

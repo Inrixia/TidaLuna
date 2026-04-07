@@ -1,17 +1,50 @@
 import React from "react";
+import type { ErrorInfo, ReactNode } from "react";
 
 import { LunaPlugin, unloadSet, type PluginPackage } from "@luna/core";
 import { store as obyStore } from "oby";
 
 import Stack from "@mui/material/Stack";
 import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
+import Button from "@mui/material/Button";
 
 import { LunaSwitch, LunaTrashButton, SpinningButton } from "../../components";
 import { LiveReloadToggle } from "./LiveReloadToggle";
 import { LunaPluginHeader } from "./LunaPluginHeader";
 
 import SettingsIcon from "@mui/icons-material/Settings";
-import { grey } from "@mui/material/colors";
+import { grey, red } from "@mui/material/colors";
+
+class PluginSettingsErrorBoundary extends React.Component<{ name: string; children: ReactNode }, { error?: string }> {
+	state: { error?: string } = {};
+	static getDerivedStateFromError(error: Error) {
+		return { error: error.message || String(error) };
+	}
+	componentDidCatch(error: Error, info: ErrorInfo) {
+		console.error(`[Luna] Plugin settings crashed for ${this.props.name}:`, error, info.componentStack);
+	}
+	render() {
+		if (this.state.error) {
+			return (
+				<Stack spacing={1} sx={{ padding: 1 }}>
+					<Typography variant="body2" sx={{ color: red[300] }}>
+						Settings crashed: {this.state.error}
+					</Typography>
+					<Button
+						size="small"
+						variant="outlined"
+						sx={{ alignSelf: "flex-start", color: grey[400], borderColor: grey[700] }}
+						onClick={() => this.setState({ error: undefined })}
+					>
+						Retry
+					</Button>
+				</Stack>
+			);
+		}
+		return this.props.children;
+	}
+}
 
 export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }) => {
 	// Have to wrap in function call as Settings is a functional component
@@ -107,7 +140,11 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 					</>
 				}
 			/>
-			{hasSettings && !hideSettings && <Settings />}
+			{hasSettings && !hideSettings && (
+			<PluginSettingsErrorBoundary name={name}>
+				<Settings />
+			</PluginSettingsErrorBoundary>
+		)}
 		</Stack>
 	);
 });
