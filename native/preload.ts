@@ -59,10 +59,11 @@ ipcRenderer.on("__Luna.console", (_event, prop: ConsoleMethodName, args: any[]) 
 						// Created in native/injector.ts
 						const messageContainer = document.getElementById('tidaluna-loading-text');
 						if (messageContainer !== null) {
+							const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 							messageContainer.innerHTML += \`
 							<h2>Failed to load luna.js</h2><br/>
-							<span style="color: red">\${err.message}</span><br/><br/>
-							<span>\${err.stack}</span>\`;
+							<span style="color: red">\${escHtml(String(err.message))}</span><br/><br/>
+							<span>\${escHtml(String(err.stack))}</span>\`;
 						}
 					});
 					err.message = "[Luna.preload] Failed to load luna.js:\\n" + err.message;

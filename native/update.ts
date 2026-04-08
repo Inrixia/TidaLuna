@@ -72,11 +72,17 @@ const elevatedUpdate = async (zipBuffer: Buffer) => {
 	const tmpZip = path.join(tmpdir(), `luna-update-${randomBytes(16).toString("hex")}.zip`);
 	try {
 		await writeFile(tmpZip, zipBuffer);
-		const cmd = `rm -rf "${appFolder}" && mkdir -p "${appFolder}" && unzip -o "${tmpZip}" -d "${appFolder}"`;
+		// Use positional parameters to avoid shell injection — $1 and $2 are never interpreted as shell code
+		const shScript = 'rm -rf -- "$1" && mkdir -p -- "$1" && unzip -o "$2" -d "$1"';
+		const shellEscape = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 		for (const tool of elevationTools) {
 			try {
-				await runElevated(tool, tool === "kdesudo" ? ["-c", cmd] : ["sh", "-c", cmd]);
+				const args =
+					tool === "kdesudo"
+						? ["-c", `sh -c ${shellEscape(shScript)} _ ${shellEscape(appFolder)} ${shellEscape(tmpZip)}`]
+						: ["sh", "-c", shScript, "_", appFolder, tmpZip];
+				await runElevated(tool, args);
 				return;
 			} catch (err: any) {
 				if (err.message === "ELEVATION_CANCELLED") throw err;
@@ -117,8 +123,7 @@ export const update = async (version: string): Promise<string> => {
 
 		// Security: Prevent Zip Slip (directory traversal attacks)
 		if (!destPath.startsWith(appFolder)) {
-			console.warn(`[UPDATER] == Skipping unsafe path: ${filename}`);
-			continue;
+			throw new Error(`[UPDATER] Zip Slip blocked: unsafe path "${filename}"`);
 		}
 
 		if (file.dir) {
