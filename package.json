@@ -1,6 +1,6 @@
 {
   "name": "luna",
-  "version": "1.13.0-beta",
+  "version": "1.14.0-beta",
   "description": "A client mod for the Tidal music app for plugins",
   "author": {
     "name": "Inrixia",
@@ -31,7 +31,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "prettier": "^3.7.4",
-    "rimraf": "^6.1.2",
+    "rimraf": "^6.1.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
@@ -43,5 +43,10 @@
     "clean-css": "^5.3.3",
     "esbuild": "^0.27.1",
     "html-minifier-terser": "^7.2.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "yaml@<1.10.3": ">=1.10.3"
+    }
   }
 }
