@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/flake-review\\.yml$/"
+      ],
+      "matchStrings": [
+        "flake-review-ref: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "ojsef39/flake-review",
+      "datasourceTemplate": "github-tags"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "ojsef39/flake-review"
+      ],
+      "groupName": "flake-review"
+    }
+  ]
+}
