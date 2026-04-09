@@ -410,3 +410,13 @@ ipcHandle("__Luna.preloadErr", async (_, err: Error) => {
 	console.error(err);
 	electron.dialog.showErrorBox("TidaLuna", err.message);
 });
+
+// Seed settings from a declarative config (e.g. Nix home-manager)
+ipcHandle("__Luna.getSeedSettings", async () => {
+	const seedPath = path.join(bundleDir, "luna-settings.json");
+	try {
+		return JSON.parse(await readFile(seedPath, "utf8"));
+	} catch {
+		return null;
+	}
+});
