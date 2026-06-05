@@ -53,6 +53,9 @@
       default = pkgs.callPackage ./nix/shell.nix {};
     });
 
+    # Home Manager module
+    homeManagerModules.default = import ./nix/home-manager.nix {inherit self;};
+
     # Overlay (if preferred)
     overlays.default = final: prev:
       if prev.stdenv.isDarwin
