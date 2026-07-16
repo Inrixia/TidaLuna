@@ -11,6 +11,7 @@ import type { redux } from "@luna/lib";
 
 import { Semaphore } from "@inrixia/helpers";
 import type { PlaybackInfo } from "../../helpers";
+import { finalizeDashDownload } from "./MediaItem.finalizeDash.native";
 import type { MetaTags } from "./MediaItem.tags";
 
 const fileExists = async (path: string): Promise<boolean> => {
@@ -34,7 +35,8 @@ export const download = async (playbackInfo: PlaybackInfo, path: string | string
 			if (await fileExists(path)) return;
 			const parsedPath = parse(path);
 			await mkdir(parsedPath.dir, { recursive: true });
-			const writeStream = createWriteStream(join(parsedPath.dir, sanitize(parsedPath.base)));
+			const filePath = join(parsedPath.dir, sanitize(parsedPath.base));
+			const writeStream = createWriteStream(filePath);
 
 			const progress = { total: 0, downloaded: 0 };
 			const stream = await fetchMediaItemStream(playbackInfo, {
@@ -48,6 +50,10 @@ export const download = async (playbackInfo: PlaybackInfo, path: string | string
 			stream.pipe(writeStream).on("finish", resolve).on("error", reject);
 
 			await promise;
+
+			// FLAC streams are tagged in-flight, but DASH streams are written as raw
+			// fragmented MP4: remux to a standard MP4 and write the tags post-download
+			if (playbackInfo.manifestMimeType === "application/dash+xml") await finalizeDashDownload(filePath, tags);
 		} finally {
 			delete downloads[playbackInfo.trackId];
 		}

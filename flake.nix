@@ -33,13 +33,19 @@
       injection-linux = pkgs.callPackage ./nix/injection-linux.nix {};
 
       # macOS TIDAL app with Luna injected (for nix-update of DMG hash)
-      darwin-package = pkgs.callPackage ./nix/darwin-package.nix {};
+      darwin-package = pkgs.callPackage ./nix/darwin-package.nix {
+        tidal = pkgs.tidal or null;
+      };
 
       # TidaLuna injected into tidal-hifi / TIDAL.app
       default =
         if pkgs.stdenv.isDarwin
-        then pkgs.callPackage ./nix/darwin-package.nix {}
-        else pkgs.callPackage ./nix/linux-package.nix {};
+        then pkgs.callPackage ./nix/darwin-package.nix {
+          tidal = pkgs.tidal or null;
+        }
+        else pkgs.callPackage ./nix/linux-package.nix {
+          tidal-hifi = pkgs.tidal-hifi or null;
+        };
     });
 
     # Dev environment
@@ -51,6 +57,9 @@
     homeManagerModules.default = import ./nix/home-manager.nix {inherit self;};
 
     # Overlay (if preferred)
-    overlays.default = final: prev: {tidal-hifi = final.callPackage ./nix/linux-package.nix {tidal-hifi = prev.tidal-hifi;};};
+    overlays.default = final: prev:
+      if prev.stdenv.isDarwin
+      then {tidal = final.callPackage ./nix/darwin-package.nix {tidal = prev.tidal or null;};}
+      else {tidal-hifi = final.callPackage ./nix/linux-package.nix {tidal-hifi = prev.tidal-hifi or null;};};
   };
 }

@@ -1,0 +1,37 @@
+name: Flake Review Build
+
+on:
+ pull_request:
+  branches: [master, dev]
+  paths:
+   - ".github/workflows/flake-review-build.yml"
+   - ".github/workflows/flake-review-comment.yml"
+   - "flake.lock"
+   - "flake.nix"
+   - "nix/**"
+   - "**/package.json"
+   - "pnpm-lock.yaml"
+   - "pnpm-workspace.yaml"
+ workflow_dispatch:
+  inputs:
+   pr-url:
+    description: "PR URL to review"
+    type: string
+    required: true
+
+concurrency:
+ group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr-url || github.ref }}
+ cancel-in-progress: true
+
+permissions:
+ contents: read
+
+jobs:
+ build:
+  # https://github.com/ojsef39/flake-review/blob/main/.github/workflows/flake-review-build-reusable.yml
+  uses: ojsef39/flake-review/.github/workflows/flake-review-build-reusable.yml@0.3.0
+  with:
+   flake-review-ref: "0.3.0"
+   packages: "default"
+   matrix: '[{"runner":"macos-latest","systems":"aarch64-darwin","name":"darwin"},{"runner":"ubuntu-latest","systems":"x86_64-linux","name":"linux"}]'
+   pr-url: ${{ inputs.pr-url || github.event.pull_request.html_url }}
