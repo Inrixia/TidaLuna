@@ -1,0 +1,11 @@
+{
+	"type": "module",
+	"devDependencies": {
+		"electron": "^38.8.6",
+		"type-fest": "^5.0.1"
+	},
+	"dependencies": {
+		"jszip": "^3.10.1",
+		"mime": "^4.1.0"
+	}
+}

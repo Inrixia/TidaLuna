@@ -1,0 +1,62 @@
+{
+  description = "Injection for TIDAL";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  };
+
+  outputs = {
+    self,
+    nixpkgs,
+  }: let
+    forAllSystems = function:
+      nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (
+        # unfree packages needed for "castlabs-electron"
+        system:
+          function (
+            import nixpkgs {
+              inherit system;
+              config.allowUnfree = true;
+            }
+          )
+      );
+  in {
+    packages = forAllSystems (pkgs: {
+      # TidaLuna injection stand-alone (platform-dispatched)
+      injection =
+        if pkgs.stdenv.isDarwin
+        then pkgs.callPackage ./nix/injection-darwin.nix {}
+        else pkgs.callPackage ./nix/injection-linux.nix {};
+
+      # Explicit per-platform injection targets (for nix-update)
+      injection-darwin = pkgs.callPackage ./nix/injection-darwin.nix {};
+      injection-linux = pkgs.callPackage ./nix/injection-linux.nix {};
+
+      # macOS TIDAL app with Luna injected (for nix-update of DMG hash)
+      darwin-package = pkgs.callPackage ./nix/darwin-package.nix {
+        tidal = pkgs.tidal or null;
+      };
+
+      # TidaLuna injected into tidal-hifi / TIDAL.app
+      default =
+        if pkgs.stdenv.isDarwin
+        then pkgs.callPackage ./nix/darwin-package.nix {
+          tidal = pkgs.tidal or null;
+        }
+        else pkgs.callPackage ./nix/linux-package.nix {
+          tidal-hifi = pkgs.tidal-hifi or null;
+        };
+    });
+
+    # Dev environment
+    devShells = forAllSystems (pkgs: {
+      default = pkgs.callPackage ./nix/shell.nix {};
+    });
+
+    # Overlay (if preferred)
+    overlays.default = final: prev:
+      if prev.stdenv.isDarwin
+      then {tidal = final.callPackage ./nix/darwin-package.nix {tidal = prev.tidal or null;};}
+      else {tidal-hifi = final.callPackage ./nix/linux-package.nix {tidal-hifi = prev.tidal-hifi or null;};};
+  };
+}
