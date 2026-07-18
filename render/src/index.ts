@@ -18,6 +18,7 @@ export * from "./SettingsTransfer";
 import "./window.core";
 
 import { LunaPlugin } from "./LunaPlugin";
+import { applySeedSettings } from "./helpers/applySeedSettingsJSOn";
 
 // Wrap loading of plugins in a timeout so native/preload.ts can populate modules with @luna/core (see native/preload.ts)
 setTimeout(async () => {
@@ -32,6 +33,9 @@ setTimeout(async () => {
 
 	// Load ui after lib as it depends on it.
 	await LunaPlugin.fromStorage({ enabled: true, url: "https://luna/luna.ui" });
+
+	// Apply declarative seed settings (e.g. from Nix) before loading user plugins
+	await applySeedSettings();
 
 	// Load all plugins from storage
 	await LunaPlugin.loadStoredPlugins();
