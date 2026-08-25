@@ -41,8 +41,22 @@ const jsxRT = resolveCjsModule(/\/jsx-runtime-[^/]+\.js$/, (r) => typeof r.jsx =
 if (jsxRT) { jsxRT.default ??= jsxRT; modules["react/jsx-runtime"] = jsxRT; }
 else { coreTrace.warn("modules", "Failed to resolve react/jsx-runtime module"); }
 
-const reactDom = resolveCjsModule(/\/react-dom-[^/]+\.js$/, (r) => typeof r.createRoot === "function" && typeof r.hydrateRoot === "function");
-if (reactDom) { reactDom.default ??= reactDom; modules["react-dom/client"] = reactDom; }
-else { coreTrace.warn("modules", "Failed to resolve react-dom/client module"); }
+// Tidal tree shakes hydrateRoot
+const reactDomPath = /\/react-dom(-client)?-[^/]+\.js$/;
+const reactDom = resolveCjsModule(reactDomPath, (r) => typeof r.createRoot === "function");
+
+// Fallback for react-dom/client
+const taggedCreateRoot = (<any>globalThis).__lunaCreateRoot;
+
+if (reactDom) {
+	reactDom.default ??= reactDom;
+	modules["react-dom/client"] = reactDom;
+} else if (typeof taggedCreateRoot === "function") {
+	const client: any = { createRoot: taggedCreateRoot };
+	client.default = client;
+	modules["react-dom/client"] = client;
+} else {
+	coreTrace.warn("modules", "Failed to resolve react-dom/client module");
+}
 
 modules["oby"] = await import("oby");
