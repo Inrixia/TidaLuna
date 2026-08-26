@@ -94,9 +94,9 @@ programs.tidaluna = {
 
 ##### Configuring Stores
 
-In contrast to the other installation methods, the home manager module comes with no stores preconfigured. You must
-include the stores for any plugins you declare in `plugins`. To define stores add them to the `stores` array:
-
+In contrast to the other installation methods, the home manager module comes with no stores preconfigured.
+This module is declarative: any stores/plugins not listed will be removed and their settings cleared on startup.
+You must include the stores for any plugins you declare in `plugins`. To define stores add them to the `stores` array:
 ```nix
 programs.tidaluna = {
     enable = true;
