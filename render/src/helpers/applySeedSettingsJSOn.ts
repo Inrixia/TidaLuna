@@ -28,8 +28,15 @@ export async function applySeedSettings(): Promise<void> {
 
         }
 
-        // Install the plugins in the background so it doesn't block the boot sequence
+        // Remove any persisted plugin not in the declared set (skip core plugins) before plugins are loaded
         if (Array.isArray(seed.plugins)) {
+            const declared = new Set(seed.plugins.filter((n): n is string => typeof n === "string"));
+            for (const name of await LunaPlugin.pluginStorage.keys()) {
+                if (declared.has(name) || LunaPlugin.corePlugins.has(name)) continue;
+                await LunaPlugin.pluginStorage.del(name);
+            }
+
+            // Install the plugins in the background so it doesn't block the boot sequence
             applyPlugins(seed.plugins).catch((err) => console.error("[Luna.seed] Plugin sync failed:", err));
         }
     } catch (err) {
