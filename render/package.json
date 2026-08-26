@@ -10,7 +10,7 @@
 	"exports": "./src/index.ts",
 	"dependencies": {
 		"@uwu/quartz": "^1.5.3",
-		"idb-keyval": "^6.2.2",
+		"idb-keyval": "^6.3.0",
 		"spitroast": "^2.1.6"
 	},
 	"devDependencies": {

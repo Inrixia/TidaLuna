@@ -102,6 +102,10 @@ for (const script of scripts) {
 				plugins: [
 					{
 						transform({ code }) {
+							// Tidal react-dom/client
+							const createRootExport = /([\w$]+)\.createRoot\s*=(?!=)/;
+							code = code.replace(createRootExport, "$1.createRoot=globalThis.__lunaCreateRoot=");
+
 							const actionData = findCreateActionFunction(code);
 
 							if (actionData) {

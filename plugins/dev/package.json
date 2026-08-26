@@ -8,6 +8,6 @@
 	},
 	"exports": "./src/index.ts",
 	"dependencies": {
-		"@mui/material": "^7.3.2"
+		"@mui/material": "^9.3.1"
 	}
 }
