@@ -2,56 +2,36 @@ import React, { useCallback, useEffect, useState } from "react";
 
 import { store as obyStore } from "oby";
 
-import { ReactiveStore } from "@luna/core";
+import { unloadSet } from "@luna/core";
 
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 
 import { InstallFromUrl } from "./InstallFromUrl";
 import { LunaStore } from "./LunaStore";
+import { hiddenStoreUrls, refreshRegistry, registryStores, removeStore, userStoreUrls, visibleStores, type StoreEntry } from "./registry";
 
-const pluginStores = ReactiveStore.getStore("@luna/pluginStores");
-export const storeUrls = await pluginStores.getReactive<string[]>("storeUrls", []);
-export const addToStores = (url: string) => {
-	if (url.endsWith("/store.json")) url = url.slice(0, -11);
-	if (storeUrls.includes(url)) return false;
-	return storeUrls.push(url);
-};
+export * from "./registry";
 
-// Devs! Add your stores here <3
-// TODO: Abstract this to a git repo
-addToStores("https://github.com/SuperslowJelly/TIDAL-Clear-Coat/releases/download/latest/store.json");
-addToStores("https://github.com/meowarex/TidalLuna-Plugins/releases/download/latest/store.json");
-addToStores("https://github.com/wont-stream/lunar/releases/download/dev/store.json");
-addToStores("https://github.com/jxnxsdev/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/espeon/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json");
-addToStores("https://github.com/Aztup/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/vMohammad24/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/MathDesigns/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/otomir23/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/dantraynor/lunaplugins/releases/download/latest/store.json");
-addToStores("https://github.com/Akasiek/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Foukapik/TidaLuna-Plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Renskursa/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Henr1ES/TidalLunaPlugins/releases/download/latest/store.json");
-addToStores("https://github.com/SinnerK0N/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/squadgazzz/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/minseokk7/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/FireWall-code/TidaLuna-Plugins/releases/download/latest/store.json");
-addToStores("https://github.com/FlazeIGuess/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/seomin0610/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/visiuun/tidaluna-plugins/releases/download/latest/store.json");
+const DEV_STORE_URL = "http://127.0.0.1:3000";
 
 export const PluginStoreTab = React.memo(() => {
-	const [_storeUrls, setPluginStores] = useState<string[]>(obyStore.unwrap(storeUrls));
+	const [stores, setStores] = useState<StoreEntry[]>(visibleStores);
 	const [searchQuery, setSearchQuery] = useState("");
 
-	useEffect(() => obyStore.on(storeUrls, () => setPluginStores([...obyStore.unwrap(storeUrls)])), []);
-	const onRemove = useCallback((storeUrl: string) => {
-		const index = storeUrls.indexOf(storeUrl);
-		if (index > -1) storeUrls.splice(index, 1);
+	useEffect(() => {
+		const update = () => setStores(visibleStores());
+		// Any of the three can change the visible list, the registry from a fetch and the other two from the user
+		const unloads = new Set([obyStore.on(registryStores, update), obyStore.on(userStoreUrls, update), obyStore.on(hiddenStoreUrls, update)]);
+		refreshRegistry().catch((err) => console.error("[PluginStore] Failed to refresh registry:", err));
+		// Block body on purpose, unloadSet is async and React rejects a Promise as cleanup
+		return () => {
+			unloadSet(unloads);
+		};
 	}, []);
+
+	const onRemove = useCallback((storeUrl: string) => removeStore(storeUrl), []);
 
 	return (
 		<Stack spacing={2}>
@@ -65,10 +45,15 @@ export const PluginStoreTab = React.memo(() => {
 					onChange={(e) => setSearchQuery(e.target.value)}
 				/>
 			</Stack>
-			<LunaStore url={"http://127.0.0.1:3000"} onRemove={() => {}} searchQuery={searchQuery} />
-			{_storeUrls.map((store) => (
-				<LunaStore key={store} url={store} onRemove={() => onRemove(store)} searchQuery={searchQuery} />
+			<LunaStore url={DEV_STORE_URL} onRemove={() => {}} searchQuery={searchQuery} />
+			{stores.map((store) => (
+				<LunaStore key={store.url} url={store.url} entry={store.entry} onRemove={() => onRemove(store.url)} searchQuery={searchQuery} />
 			))}
+			{stores.length === 0 && (
+				<Typography variant="subtitle2" sx={{ opacity: 0.7 }}>
+					No plugin stores yet. They load from the registry, check your connection or add one above.
+				</Typography>
+			)}
 		</Stack>
 	);
 });
