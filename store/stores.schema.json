@@ -1,0 +1,53 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "TidaLuna plugin store registry",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["version", "stores"],
+	"properties": {
+		"$schema": { "type": "string" },
+		"version": { "const": 1 },
+		"stores": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["name", "repo", "url", "added"],
+				"properties": {
+					"name": {
+						"type": "string",
+						"minLength": 1,
+						"description": "Display name, usually the name field of the stores store.json"
+					},
+					"repo": {
+						"type": "string",
+						"pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+						"description": "GitHub owner/repo the store is published from, used by the registry generator to fetch stars and downloads"
+					},
+					"url": {
+						"type": "string",
+						"pattern": "^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/[^/]+/store\\.json$",
+						"description": "Direct link to the store.json release asset"
+					},
+					"added": {
+						"type": "string",
+						"pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+					},
+					"status": {
+						"enum": ["active", "removed"],
+						"description": "Defaults to active. removed is a tombstone, it drops the store from clients that already have it"
+					},
+					"removed": {
+						"type": "string",
+						"pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+					},
+					"reason": {
+						"type": "string",
+						"minLength": 1,
+						"description": "Why the store was removed, shown to nobody but read by everyone in the diff"
+					}
+				}
+			}
+		}
+	}
+}

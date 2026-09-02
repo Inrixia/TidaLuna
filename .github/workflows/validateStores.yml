@@ -1,0 +1,30 @@
+name: "Validate Stores"
+
+on:
+ pull_request:
+  paths:
+   - "store/**"
+ push:
+  branches: [master, dev]
+  paths:
+   - "store/**"
+ workflow_dispatch:
+
+# Read only on purpose, this runs on pull requests from forks
+permissions:
+ contents: read
+
+concurrency:
+ group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+ cancel-in-progress: true
+
+jobs:
+ Validate:
+  name: Validate
+  runs-on: ubuntu-latest
+
+  steps:
+   - uses: actions/checkout@v4
+
+   - name: Validate store registry 🔍
+     run: ./store/validate.sh
