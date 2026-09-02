@@ -9,12 +9,21 @@ import Typography from "@mui/material/Typography";
 import { LunaTrashButton, SpinningButton } from "../../components";
 import { LunaPluginHeader } from "../PluginsTab/LunaPluginHeader";
 import { LunaStorePlugin } from "./LunaStorePlugin";
+import type { RegistryStore } from "./registry";
 
 interface StorePackage extends PluginPackage {
 	plugins: string[];
 }
 
-export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: string; onRemove: () => void; searchQuery: string }) => {
+interface LunaStoreProps {
+	url: string;
+	onRemove: () => void;
+	searchQuery: string;
+	/** Registry metadata, undefined for stores the user added themselves */
+	entry?: RegistryStore;
+}
+
+export const LunaStore = React.memo(({ url, onRemove, searchQuery, entry }: LunaStoreProps) => {
 	const [loading, setLoading] = React.useState(false);
 	const [loadError, setLoadError] = React.useState<string | undefined>(undefined);
 	const [pkg, setPackage] = React.useState<StorePackage | undefined>(undefined);
@@ -47,7 +56,8 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	if (pkg === undefined && !loading && !loadError) return null; // Don't render anything until initial load attempt
 	if (!isLocalDevStore && loading && !pkg) return <Typography>Loading store {url}...</Typography>; // Show loading indicator if still loading initially
 
-	let name = pkg?.name ?? "Unknown Store";
+	// The registry knows the name even when the store itself is unreachable
+	let name = pkg?.name ?? entry?.name ?? "Unknown Store";
 	if (isLocalDevStore) name = `${name} [DEV]`;
 
 	const author = pkg?.author;
@@ -58,8 +68,10 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	// Don't show error for local dev store
 	if (loadError && isLocalDevStore) return null;
 
+	// Stores are third party json, a malformed plugins array must not take the whole settings page down
+	const plugins = Array.isArray(pkg?.plugins) ? pkg.plugins.filter((plugin) => typeof plugin === "string") : undefined;
 	const query = searchQuery.toLowerCase();
-	const filteredPlugins = query ? pkg?.plugins.filter((plugin) => plugin.toLowerCase().includes(query)) : pkg?.plugins;
+	const filteredPlugins = query ? plugins?.filter((plugin) => plugin.toLowerCase().includes(query)) : plugins;
 	if (query && (!filteredPlugins || filteredPlugins.length === 0)) return null;
 
 	return (
@@ -87,7 +99,7 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 			/>
 			<Grid columns={2} spacing={2} container>
 				{filteredPlugins?.map((plugin) => (
-					<Grid size={1} children={<LunaStorePlugin url={`${url}/${isLocalDevStore ? plugin : plugin.replace(" ", ".")}`} key={plugin} />} />
+					<Grid size={1} children={<LunaStorePlugin url={`${url}/${isLocalDevStore ? plugin : plugin.replaceAll(" ", ".")}`} key={plugin} />} />
 				))}
 			</Grid>
 		</Stack>

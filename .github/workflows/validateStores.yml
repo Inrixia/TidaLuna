@@ -28,3 +28,4 @@ jobs:
 
    - name: Validate store registry 🔍
      run: ./store/validate.sh
+
