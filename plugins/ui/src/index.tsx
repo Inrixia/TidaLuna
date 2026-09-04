@@ -11,7 +11,7 @@ import { Page } from "./classes/Page";
 import { confirm } from "./helpers/confirm";
 import { lunaMuiTheme } from "./lunaTheme";
 import { currentSettingsTab, LunaPage } from "./SettingsPage";
-import { storeUrls } from "./SettingsPage/PluginStoreTab";
+import { addToStores } from "./SettingsPage/PluginStoreTab";
 import { fetchReleases } from "./SettingsPage/SettingsTab/LunaClientUpdate";
 
 import { pkg } from "plugins/lib.native/src/index.native";
@@ -52,19 +52,23 @@ ContextMenu.onOpen(unloads, async ({ event, contextMenu }) => {
 });
 
 ipcRenderer.onOpenUrl(unloads, (reqUrl) => {
-	const url = URL.parse(reqUrl.toLowerCase());
+	const url = URL.parse(reqUrl);
 	if (url?.protocol !== "tidaluna:") return;
-	switch (url.pathname) {
-		case "//settings/store":
+	// Only the route is case insensitive, lowercasing the whole url would mangle the store link in the query
+	const pathname = url.pathname.toLowerCase();
+	switch (pathname) {
+		case "//settings/store": {
 			currentSettingsTab._ = "Plugin Store";
-			const newStoreUrl = url.searchParams.get("installfromurl");
-			if (newStoreUrl !== null && !storeUrls.includes(newStoreUrl)) storeUrls.push(newStoreUrl);
+			const newStoreUrl = url.searchParams.get("installFromUrl") ?? url.searchParams.get("installfromurl");
+			// addToStores normalizes the trailing /store.json, pushing raw persisted a url that always 404s
+			if (newStoreUrl !== null) addToStores(newStoreUrl);
 			break;
+		}
 		case "//settings/plugins":
 			currentSettingsTab._ = "Plugins";
 			break;
 	}
-	if (url.pathname.startsWith("//settings")) settingsPage.open();
+	if (pathname.startsWith("//settings")) settingsPage.open();
 });
 
 setTimeout(async () => {
