@@ -79,6 +79,8 @@ environment.systemPackages = with pkgs; [
 Proper developer documentation etc is planned after the inital beta release of Luna.  
 If you are a developer or want to try making your own plugin, please hop in discord and ask we are more than happy to assist with getting started.
 
+Got a plugin store to share? See [store/README.md](./store/README.md), it is a one entry pull request and no client release.
+
 ### Client Dev
 
 To develop for the luna client follow these steps:

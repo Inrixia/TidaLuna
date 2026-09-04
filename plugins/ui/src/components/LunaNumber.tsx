@@ -1,11 +1,31 @@
 import React from "react";
 
+import Box from "@mui/material/Box";
 import InputAdornment from "@mui/material/InputAdornment";
 
-import AddIcon from "@mui/icons-material/Add";
-import RemoveIcon from "@mui/icons-material/Remove";
 import { useTheme } from "@mui/material/styles";
 import TextField, { type TextFieldProps } from "@mui/material/TextField";
+
+import { MinusIcon } from "./LunaDrawnIcons";
+import { LunaIcon, icons } from "./LunaIcon";
+import { inputSx, wave } from "../tidalTokens";
+
+/**
+ * The steppers sit on the field's own fill, and text.secondary left them barely readable against
+ * it. Full text colour on hover plus a round hit area big enough to aim at.
+ */
+const stepperSx = {
+	display: "flex",
+	alignItems: "center",
+	justifyContent: "center",
+	width: 22,
+	height: 22,
+	borderRadius: wave.radiusFull,
+	color: wave.textSecondary,
+	cursor: "pointer",
+	transition: "color 120ms ease, background-color 120ms ease",
+	"&:hover": { color: wave.text, backgroundColor: wave.lineStrong },
+} as const;
 
 export type LunaNumberProps = TextFieldProps & {
 	min?: number;
@@ -33,36 +53,46 @@ export const LunaNumber = React.memo((props: LunaNumberProps) => {
 				input: {
 					startAdornment: (
 						<InputAdornment position="start">
-							<RemoveIcon
-								sx={{
-									color: theme.palette.text.secondary,
-									cursor: "pointer",
-								}}
+							<Box
 								onClick={() => onNumber(number - 1)}
+								sx={stepperSx}
+								children={<MinusIcon size={18} />}
 							/>
 						</InputAdornment>
 					),
 					endAdornment: (
 						<InputAdornment position="end">
-							<AddIcon
-								sx={{
-									color: theme.palette.text.secondary,
-									cursor: "pointer",
-								}}
+							<Box
 								onClick={() => onNumber(number + 1)}
+								sx={stepperSx}
+								children={<LunaIcon name={icons.add} size={18} />}
 							/>
 						</InputAdornment>
 					),
 				},
 			}}
 			onChange={(e) => onNumber(e.target.value)}
-			inputProps={{
-				style: { textAlign: "center" },
-			}}
 			value={number}
 			{...props}
+			// After the spread, so a caller cannot accidentally drop the centering again
+			inputProps={{ style: { textAlign: "center", padding: 0 } }}
 			sx={{
 				width: 128,
+				...inputSx,
+				// The notched outline draws its own corners; without this it keeps the MUI default
+				// radius and sits visibly inside the filled corners
+				"& .MuiOutlinedInput-root": {
+					...(inputSx as any)["& .MuiOutlinedInput-root"],
+					borderRadius: wave.radiusFull,
+					// Zeroing the input padding to centre the value also collapsed the field, so the
+					// height lives on the root instead
+					height: 32,
+					paddingLeft: 1,
+					paddingRight: 1,
+					"& .MuiOutlinedInput-notchedOutline": { borderRadius: wave.radiusFull },
+				},
+				// The value sits between two adornments, so it needs to flex to centre between them
+				"& .MuiInputBase-input": { textAlign: "center", padding: 0, flex: 1 },
 				...props.sx,
 			}}
 		/>

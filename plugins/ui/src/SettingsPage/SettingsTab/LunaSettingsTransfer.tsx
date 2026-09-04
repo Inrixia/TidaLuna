@@ -2,14 +2,17 @@ import React from "react";
 import { useConfirm } from "material-ui-confirm";
 
 import Stack from "@mui/material/Stack";
-import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import FileUploadIcon from "@mui/icons-material/FileUpload";
 
 import { Messager, SettingsTransfer, type ExportData } from "@luna/core";
 import { downloadObject, redux, Tidal } from "@luna/lib";
 import { relaunch } from "plugins/lib.native/src/index.native";
 
-import { LunaButton, LunaSettings, LunaSwitchSetting } from "../../components";
+import Button from "@mui/material/Button";
+
+import { LunaIcon, flipVertical, icons } from "../../components/LunaIcon";
+import { LunaSwitch } from "../../components";
+import { LunaGroup, LunaRow, LunaSection } from "../../components/LunaList";
+import { buttonSx } from "../../tidalTokens";
 
 export const LunaSettingsTransfer = React.memo(() =>
 {
@@ -105,18 +108,31 @@ export const LunaSettingsTransfer = React.memo(() =>
 	}, []);
 
 	return (
-		<LunaSettings title="Settings Transfer" desc="Exports installed plugins, plugin settings, themes, store URLs and feature flag overrides. Import clears existing settings, restores them and restarts the app.">
-			<Stack direction="row" spacing={2}>
-				<LunaButton disabled={busy} onClick={onExport} startIcon={<FileDownloadIcon />} children="Export Settings" />
-				<LunaButton disabled={busy} onClick={onImportClick} startIcon={<FileUploadIcon />} children="Import Settings" />
-				<input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }} onChange={onFileSelected} />
-			</Stack>
-			<LunaSwitchSetting
-				title="Include plugin source code"
-				desc="Including plugin source code will increase the size of the exported file. This is only useful for exporting dev or unreleased plugins."
-				checked={!stripCode}
-				onClick={() => setStripCode(!stripCode)}
-			/>
-		</LunaSettings>
+		<LunaSection title="Settings transfer" desc="Plugins, their settings, themes, store urls and feature flag overrides.">
+			<LunaGroup>
+				<LunaRow
+					title="Export to a file"
+					desc="Writes everything above into a single json file."
+					trailing={
+						<Button disableRipple disabled={busy} onClick={onExport} startIcon={<LunaIcon name={icons.upload} size={15} sx={flipVertical} />} sx={buttonSx} children="Export" />
+					}
+				/>
+				<LunaRow
+					title="Import from a file"
+					desc="Clears the current settings, restores the file, then restarts the app."
+					trailing={
+						<>
+							<Button disableRipple disabled={busy} onClick={onImportClick} startIcon={<LunaIcon name={icons.upload} size={15} />} sx={buttonSx} children="Import" />
+							<input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }} onChange={onFileSelected} />
+						</>
+					}
+				/>
+				<LunaRow
+					title="Include plugin source code"
+					desc="Makes the export larger. Only useful for dev or unreleased plugins."
+					trailing={<LunaSwitch checked={!stripCode} onClick={() => setStripCode(!stripCode)} />}
+				/>
+			</LunaGroup>
+		</LunaSection>
 	);
 });

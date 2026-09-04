@@ -1,4 +1,3 @@
-import CachedIcon from "@mui/icons-material/Cached";
 import IconButton, { type IconButtonProps } from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 
@@ -40,15 +39,17 @@ export const SpinningButton = ({ spin, ...props }: SpinningButtonProps) => {
 			title={props.title}
 			children={
 				<IconButton
-					color="warning"
+					disableRipple
+					sx={{ color: "var(--wave-color-text-secondary, #afafb6)", "&:hover": { color: "var(--wave-color-text-main, #fff)", backgroundColor: "var(--wave-color-opacity-contrast-fill-ultra-thin, #ffffff1a)" } }}
 					{...props}
 					onClick={(...args) => {
 						setIsSpinning(true);
 						props.onClick?.(...args);
 					}}
-					children={props.icon ? <props.icon sx={animationSx} /> : <CachedIcon sx={animationSx} />}
+					children={props.icon ? <props.icon sx={animationSx} /> : <RefreshIcon size={18} sx={animationSx} />}
 				/>
 			}
 		/>
 	);
 };
+import { RefreshIcon } from "./LunaDrawnIcons";

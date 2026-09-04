@@ -1,15 +1,19 @@
 import React from "react";
 
-import Stack from "@mui/material/Stack";
+import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
-
-import { LunaSwitch, LunaTrashButton, SpinningButton } from "../../components";
+import Typography from "@mui/material/Typography";
 
 import type { VoidFn } from "@inrixia/helpers";
 import { ftch } from "@luna/core";
 import { StyleTag } from "@luna/lib";
+
+import { RefreshIcon } from "../../components/LunaDrawnIcons";
+import { LunaIcon, icons } from "../../components/LunaIcon";
+import { LunaSwitch } from "../../components";
+import { LunaRow } from "../../components/LunaList";
+import { iconBtnSx, metaSx, wave } from "../../tidalTokens";
 import { unloads } from "../../index.safe";
-import { LunaPluginHeader } from "../PluginsTab/LunaPluginHeader";
 import { themes, themeStyles } from "../Storage";
 
 export type LunaThemeStorage = {
@@ -19,12 +23,10 @@ export type LunaThemeStorage = {
 
 export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThemeStorage; url: string; uninstall: VoidFn }) => {
 	const [enabled, setEnabled] = React.useState(theme.enabled);
-	// Sync enabled state when prop changes (e.g., emergency disable shortcut)
 	React.useEffect(() => setEnabled(theme.enabled), [theme.enabled]);
 	const [css, setCSS] = React.useState(theme.css);
 	const [loading, setLoading] = React.useState(false);
 	const [themeStyle] = React.useState(() => themeStyles[url] ?? (themeStyles[url] = new StyleTag(url, unloads)));
-	// Neptune theme manifest support
 	const [manifest, setManifest] = React.useState<{ name?: string; description?: string; author?: string } | undefined>();
 
 	const toggleEnabled = React.useCallback((_: unknown, checked: boolean) => {
@@ -36,7 +38,9 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 		try {
 			const css = (themes[url].css = await ftch.text(url));
 			setCSS(css);
-			setManifest(JSON.parse(css.slice(css.indexOf("/*") + 2, css.indexOf("*/"))));
+			try {
+				setManifest(JSON.parse(css.slice(css.indexOf("/*") + 2, css.indexOf("*/"))));
+			} catch {}
 		} finally {
 			setLoading(false);
 		}
@@ -49,33 +53,38 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 		}
 	}, []);
 
+	const name = manifest?.name ?? url;
+
 	return (
-		<Stack
-			spacing={1}
-			sx={{
-				borderRadius: 3,
-				backgroundColor: "rgba(0, 0, 0, 0.10)",
-				padding: 2,
-				paddingTop: 1,
-				paddingBottom: 1,
-			}}
-		>
-			<LunaPluginHeader
-				name={manifest?.name ?? url}
-				desc={manifest?.description}
-				author={manifest?.author}
-				link={url}
-				children={
-					<>
-						<Tooltip
-							title={enabled ? `Disable ${name}` : `Enable ${name}`}
-							children={<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />}
-						/>
-						<SpinningButton title="Reload theme" spin={loading} disabled={loading} onClick={loadCSS} />
-						<LunaTrashButton title="Uninstall plugin" onClick={uninstall} />
-					</>
-				}
-			/>
-		</Stack>
+		<LunaRow
+			title={name}
+			desc={manifest?.description ?? url}
+			titleAttr={url}
+			meta={manifest?.author ? <Typography component="span" sx={{ ...metaSx, flex: "0 0 auto" }} children={`by ${manifest.author}`} /> : undefined}
+			trailing={
+				<>
+					<Tooltip title={enabled ? `Disable ${name}` : `Enable ${name}`}>
+						<span>
+							<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />
+						</span>
+					</Tooltip>
+					<Tooltip title="Reload theme">
+						<span>
+							<IconButton disableRipple disabled={loading} onClick={loadCSS} sx={iconBtnSx} children={<RefreshIcon size={18} />} />
+						</span>
+					</Tooltip>
+					<Tooltip title="Uninstall theme">
+						<span>
+							<IconButton
+								disableRipple
+								onClick={uninstall}
+								sx={{ ...iconBtnSx, "&:hover": { color: wave.danger, backgroundColor: wave.line } }}
+								children={<LunaIcon name={icons.trash} size={18} />}
+							/>
+						</span>
+					</Tooltip>
+				</>
+			}
+		/>
 	);
 });

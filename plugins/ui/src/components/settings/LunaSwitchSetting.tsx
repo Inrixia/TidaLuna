@@ -10,6 +10,6 @@ export interface LunaSwitchSettingProps extends Omit<SwitchProps, "title">, Luna
 }
 
 export const LunaSwitchSetting = React.memo((props: LunaSwitchSettingProps) => {
-    const { title, desc, variant, ...rest } = props;
-    return <LunaSetting variant={variant} title={title} desc={desc} children={<LunaSwitch {...(rest as LunaSwitchProps)} />} />;
+    const { title, desc, variant: _variant, ...rest } = props;
+    return <LunaSetting title={title} desc={desc} children={<LunaSwitch {...(rest as LunaSwitchProps)} />} />;
 });

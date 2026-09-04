@@ -1,50 +1,41 @@
 import { redux, Tidal } from "@luna/lib";
 import React from "react";
-import { LunaSettings, LunaSwitchSetting, SpinningButton } from "../../components";
 
-import Grid from "@mui/material/Grid";
+import Button from "@mui/material/Button";
 
-import SettingsIcon from "@mui/icons-material/Settings";
-import { grey } from "@mui/material/colors";
+import { LunaSwitch } from "../../components";
+import { LunaGroup, LunaRow, LunaSection } from "../../components/LunaList";
+import { buttonSx } from "../../tidalTokens";
 
 export const LunaFeatureFlags = React.memo(() => {
 	const [featureFlags, setFeatureFlags] = React.useState(Tidal.featureFlags);
-	const [hide, setHidden] = React.useState(false);
+	const [hidden, setHidden] = React.useState(true);
 
 	const setFlag = React.useCallback((flag: redux.FeatureFlag) => {
 		redux.actions["featureFlags/TOGGLE_USER_OVERRIDE"]({ ...flag, value: !flag.value });
 		setFeatureFlags(Tidal.featureFlags);
 	}, []);
+
+	const flags = Object.values(featureFlags).sort((a, b) => a.name.localeCompare(b.name));
+
 	return (
-		<LunaSettings
+		<LunaSection
 			title="Feature flags"
-			desc="Feature flags & experiments currently in the Tidal desktop app. These are internal from Tidal and not Luna features"
-			titleChildren={
-				<SpinningButton title={hide ? "Show flags" : "Hide flags"} onClick={() => setHidden(!hide)} icon={SettingsIcon} sxColor={grey.A400} />
-			}
-			display={hide ? "none" : "flex"}
+			desc="Tidal desktop experiments. Internal to Tidal, not Luna features."
+			trailing={<Button disableRipple sx={buttonSx} onClick={() => setHidden((h) => !h)} children={hidden ? `Show (${flags.length})` : "Hide"} />}
 		>
-			{!hide && (
-				<Grid spacing={2} container>
-					{Object.values(featureFlags)
-						.sort((a, b) => a.name.localeCompare(b.name))
-						.map((flag) => (
-							<Grid
-								key={flag.name}
-								size={6}
-								sx={{ borderRadius: 4, backgroundColor: "rgba(0, 0, 0, 0.20)", boxShadow: 2, paddingLeft: 1.5 }}
-								children={
-									<LunaSwitchSetting
-										disabled={flag.type !== "BOOLEAN"}
-										title={flag.name[0].toUpperCase() + flag.name.slice(1).replaceAll("-", " ")}
-										onClick={setFlag.bind(null, flag)}
-										checked={flag.value}
-									/>
-								}
-							/>
-						))}
-				</Grid>
+			{!hidden && (
+				<LunaGroup>
+					{flags.map((flag) => (
+						<LunaRow
+							key={flag.name}
+							compact
+							title={flag.name[0].toUpperCase() + flag.name.slice(1).replaceAll("-", " ")}
+							trailing={<LunaSwitch disabled={flag.type !== "BOOLEAN"} checked={flag.value} onClick={() => setFlag(flag)} />}
+						/>
+					))}
+				</LunaGroup>
 			)}
-		</LunaSettings>
+		</LunaSection>
 	);
 });
