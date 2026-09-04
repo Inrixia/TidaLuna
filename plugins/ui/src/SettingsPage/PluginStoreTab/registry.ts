@@ -1,11 +1,14 @@
 import { ftch, ReactiveStore } from "@luna/core";
 
 const RAW = "https://raw.githubusercontent.com/Inrixia/TidaLuna/master/store";
+export const REGISTRY_URL = `${RAW}/registry.json`;
 export const STORES_URL = `${RAW}/stores.json`;
 export const BLOCKLIST_URL = `${RAW}/blocklist.json`;
 
 // The settings page unmounts tabs on switch, without this every visit refetches
 const REFRESH_INTERVAL = 15 * 60 * 1000;
+// Metrics go stale silently if the generator stops running, so drop them rather than show a wrong number
+const MAX_METRIC_AGE = 7 * 24 * 60 * 60 * 1000;
 
 export type RegistryStore = {
 	name: string;
@@ -14,9 +17,12 @@ export type RegistryStore = {
 	added?: string;
 	status?: "active" | "removed";
 	reason?: string;
+	health?: "ok" | "archived" | "unreachable";
+	stars?: number;
+	downloads?: Record<string, number>;
 };
 type BlocklistPattern = { pattern: string; reason: string };
-type Registry = { version: number; stores: RegistryStore[] };
+type Registry = { version: number; generatedAt?: string; stores: RegistryStore[] };
 type Blocklist = { version: number; patterns: BlocklistPattern[] };
 
 export type StoreEntry = {
@@ -44,6 +50,12 @@ const legacyStoreUrls = (await pluginStores.get<string[]>("storeUrls")) ?? [];
 export const normalizeStoreUrl = (url: string) => (url.endsWith("/store.json") ? url.slice(0, -11) : url);
 
 const globToRegex = (pattern: string) => new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*")}$`);
+export const metricsAreFresh = () => {
+	if (registryStores.generatedAt === undefined) return false;
+	const age = Date.now() - Date.parse(registryStores.generatedAt);
+	return Number.isFinite(age) && age >= 0 && age < MAX_METRIC_AGE;
+};
+
 export const isBlocked = (url: string) => blocklist.patterns.some(({ pattern }) => globToRegex(pattern).test(url));
 
 /**
@@ -119,11 +131,17 @@ const fetchRegistry = async () => {
 		})
 		.catch(() => {});
 
+	// registry.json carries the metrics, stores.json is the same shape without them
 	let fetched: Registry | undefined;
-	try {
-		const data = await ftch.json<Registry>(STORES_URL);
-		if (isRegistry(data)) fetched = data;
-	} catch {}
+	for (const url of [REGISTRY_URL, STORES_URL]) {
+		try {
+			const data = await ftch.json<Registry>(url);
+			if (isRegistry(data)) {
+				fetched = data;
+				break;
+			}
+		} catch {}
+	}
 	// Nothing reachable, keep whatever the last fetch left behind
 	if (fetched !== undefined) await pluginStores.set("registry", fetched);
 	if (registryStores.stores.length === 0) return false;

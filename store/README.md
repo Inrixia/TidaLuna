@@ -24,7 +24,7 @@ five minutes with no update needed.
    `name` is what shows up when your store cannot be reached, use the `name` from
    your own `store.json`. `repo` is what the metrics generator queries, it has to
    match the repo in `url`.
-4. Open the pull request. CI checks the entry and that your `store.json` actually
+4. Open the pull request. CI checks the schema and that your `store.json` actually
    resolves with a non empty `plugins` array, and annotates any problem right in the
    diff. Run the same checks locally with `./store/validate.sh`.
 
@@ -51,13 +51,60 @@ Deleting the line only stops new clients from picking the store up. The tombston
 what removes it from everyone who already has it, which is why several dead stores
 kept showing up as red error cards for months.
 
+## Optional fields for plugin authors
+
+Two fields are read from a plugin's own `package.json` and end up in its published
+`<plugin>.json`. Both are optional and everything keeps working without them.
+
+### `image` - one preview picture
+
+```json
+{
+	"name": "@you/your-plugin",
+	"image": "https://raw.githubusercontent.com/you/luna-plugins/master/assets/preview.png"
+}
+```
+
+The store card then shows it above the text, cropped to 16:9. A card without an
+`image` looks exactly as it does today.
+
+The url must be `https` and point at one of `github.com`,
+`raw.githubusercontent.com`, `user-images.githubusercontent.com` or
+`objects.githubusercontent.com`. Anything else is ignored and the card falls back to
+its plain form. That is not about trusting GitHub more than other hosts: the store
+loads the preview of *every* listed plugin, so a free choice of host would let any
+listed author collect the IP address of everyone who opens the store.
+
+Keep the file small, a few hundred KB is plenty. It is fetched on every store view.
+
+### `showDownloads` - opt in download counter
+
+```json
+{ "showDownloads": true }
+```
+
+Off unless you switch it on. Set it in a plugin's `package.json` for that plugin, or
+once in your store repo's root `package.json` to cover every plugin in the store. A
+plugin's own value wins over the store's, in both directions, so a store can enable
+the counter for everything and a single plugin can still opt back out with
+`"showDownloads": false`.
+
+The number itself comes from the GitHub release asset download count that the
+registry collects daily, not from anything the client reports. Nothing is sent from
+a user's machine either way.
+
 ## Files
 
 | File                 | Written by | What it is                                                                       |
 | -------------------- | ---------- | -------------------------------------------------------------------------------- |
 | `stores.json`        | humans     | The list. Source of truth, reviewed in pull requests.                              |
-| `stores.schema.json` | humans     | Shape of `stores.json`, for editor completion. CI checks the same rules itself.    |
+| `stores.schema.json` | humans     | Schema for `stores.json`, enforced in CI.                                          |
 | `blocklist.json`     | maintainers| Kill switch. Glob patterns, matching stores disappear from every client.           |
+| `registry.json`      | CI         | `stores.json` plus stars, repo health and per plugin downloads. This is what the client reads. |
+
+`registry.json` is regenerated daily and on every change to `stores.json` by
+`.github/workflows/registry.yml`. Do not edit it by hand, it will be overwritten.
+Run it locally with `GITHUB_TOKEN=... node store/generate.mjs`.
 
 ## What this is not
 

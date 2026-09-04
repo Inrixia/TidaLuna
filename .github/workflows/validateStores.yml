@@ -8,6 +8,8 @@ on:
   branches: [master, dev]
   paths:
    - "store/**"
+   # registry.json is generated, validating it on every bot commit is noise
+   - "!store/registry.json"
  workflow_dispatch:
 
 # Read only on purpose, this runs on pull requests from forks

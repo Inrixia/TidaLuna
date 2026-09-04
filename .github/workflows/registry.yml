@@ -1,0 +1,41 @@
+name: "Build Store Registry"
+
+on:
+ push:
+  branches: [master]
+  paths:
+   - "store/stores.json"
+ schedule:
+  # Daily, stars and download counts go stale otherwise
+  - cron: "17 4 * * *"
+ workflow_dispatch:
+
+permissions:
+ contents: write
+
+concurrency:
+ group: ${{ github.workflow }}
+ cancel-in-progress: false
+
+jobs:
+ Generate:
+  name: Generate registry.json
+  runs-on: ubuntu-latest
+
+  steps:
+   - uses: actions/checkout@v4
+
+   - name: Install Node.js 📥
+     uses: actions/setup-node@v4
+     with:
+      node-version: latest
+
+   - name: Generate registry 🛠️
+     run: node store/generate.mjs
+     env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+   - uses: stefanzweifel/git-auto-commit-action@v5
+     with:
+      commit_message: "store: refresh registry metrics"
+      file_pattern: store/registry.json
