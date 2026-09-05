@@ -5,7 +5,8 @@
 		"/plugins/ui/src/helpers",
 		"/plugins/lib/src/helpers",
 		"/plugins/lib/src/classes",
-		"/plugins/lib/src/redux"
+		"/plugins/lib/src/redux",
+		"/plugins/ui/src/react"
 	],
 	"discord.enabled": false,
 	"exportall.config.exportFileExtension": ""
