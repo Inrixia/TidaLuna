@@ -1,0 +1,201 @@
+{
+	"$schema": "https://raw.githubusercontent.com/Inrixia/TidaLuna/master/store/stores.schema.json",
+	"version": 1,
+	"stores": [
+		{
+			"name": "@superslowjelly/clearcoat",
+			"repo": "SuperslowJelly/TIDAL-Clear-Coat",
+			"url": "https://github.com/SuperslowJelly/TIDAL-Clear-Coat/releases/download/latest/store.json",
+			"added": "2025-05-31"
+		},
+		{
+			"name": "@meowarex/TidalLuna-Plugins",
+			"repo": "meowarex/TidaLuna-Plugins",
+			"url": "https://github.com/meowarex/TidaLuna-Plugins/releases/download/latest/store.json",
+			"added": "2025-06-02"
+		},
+		{
+			"name": "@seth/lunar",
+			"repo": "wont-stream/lunar",
+			"url": "https://github.com/wont-stream/lunar/releases/download/dev/store.json",
+			"added": "2025-05-25"
+		},
+		{
+			"name": "@jxnxsdev/luna-plugins",
+			"repo": "jxnxsdev/luna-plugins",
+			"url": "https://github.com/jxnxsdev/luna-plugins/releases/download/latest/store.json",
+			"added": "2025-05-25"
+		},
+		{
+			"name": "@espeon/luna-plugins",
+			"repo": "espeon/luna-plugins",
+			"url": "https://github.com/espeon/luna-plugins/releases/download/latest/store.json",
+			"added": "2025-05-31"
+		},
+		{
+			"name": "@inrixia/luna-plugins",
+			"repo": "Inrixia/luna-plugins",
+			"url": "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json",
+			"added": "2025-05-31"
+		},
+		{
+			"name": "@aztup/luna-plugins",
+			"repo": "Aztup/luna-plugins",
+			"url": "https://github.com/Aztup/luna-plugins/releases/download/latest/store.json",
+			"added": "2025-06-11"
+		},
+		{
+			"name": "@vmohammad/plugins",
+			"repo": "vMohammad24/luna-plugins",
+			"url": "https://github.com/vMohammad24/luna-plugins/releases/download/latest/store.json",
+			"added": "2025-06-11"
+		},
+		{
+			"name": "@MathDesigns/luna-plugins",
+			"repo": "MathDesigns/luna-plugins",
+			"url": "https://github.com/MathDesigns/luna-plugins/releases/download/latest/store.json",
+			"added": "2025-06-12"
+		},
+		{
+			"name": "@otomir23/luna-plugins",
+			"repo": "otomir23/luna-plugins",
+			"url": "https://github.com/otomir23/luna-plugins/releases/download/latest/store.json",
+			"added": "2025-07-02"
+		},
+		{
+			"name": "@dantraynor/lunaplugins",
+			"repo": "dantraynor/lunaplugins",
+			"url": "https://github.com/dantraynor/lunaplugins/releases/download/latest/store.json",
+			"added": "2025-07-10"
+		},
+		{
+			"name": "@Akasiek/tidaluna-plugins",
+			"repo": "Akasiek/tidaluna-plugins",
+			"url": "https://github.com/Akasiek/tidaluna-plugins/releases/download/latest/store.json",
+			"added": "2025-07-31"
+		},
+		{
+			"name": "@foukapik/TidaLuna-Plugins",
+			"repo": "Foukapik/TidaLuna-Plugins",
+			"url": "https://github.com/Foukapik/TidaLuna-Plugins/releases/download/latest/store.json",
+			"added": "2025-08-08"
+		},
+		{
+			"name": "@Renskursa/tidaluna-plugins",
+			"repo": "Renskursa/tidaluna-plugins",
+			"url": "https://github.com/Renskursa/tidaluna-plugins/releases/download/latest/store.json",
+			"added": "2025-08-11"
+		},
+		{
+			"name": "@Henr1ES/TidalLuna-Plugins",
+			"repo": "Henr1ES/TidalLunaPlugins",
+			"url": "https://github.com/Henr1ES/TidalLunaPlugins/releases/download/latest/store.json",
+			"added": "2025-09-01"
+		},
+		{
+			"name": "@sinnerk0n/tidaluna-plugins",
+			"repo": "SinnerK0N/tidaluna-plugins",
+			"url": "https://github.com/SinnerK0N/tidaluna-plugins/releases/download/latest/store.json",
+			"added": "2026-01-11"
+		},
+		{
+			"name": "@squadgazzz/luna-plugins",
+			"repo": "squadgazzz/luna-plugins",
+			"url": "https://github.com/squadgazzz/luna-plugins/releases/download/latest/store.json",
+			"added": "2026-02-20"
+		},
+		{
+			"name": "@minseokk7/korean-translation-store",
+			"repo": "minseokk7/luna-plugins",
+			"url": "https://github.com/minseokk7/luna-plugins/releases/download/latest/store.json",
+			"added": "2026-03-28"
+		},
+		{
+			"name": "@FireWall/TidaLuna-Plugins",
+			"repo": "FireWall-code/TidaLuna-Plugins",
+			"url": "https://github.com/FireWall-code/TidaLuna-Plugins/releases/download/latest/store.json",
+			"added": "2026-06-02"
+		},
+		{
+			"name": "Flaze's TidaLuna Plugins",
+			"repo": "FlazeIGuess/tidaluna-plugins",
+			"url": "https://github.com/FlazeIGuess/tidaluna-plugins/releases/download/latest/store.json",
+			"added": "2026-07-18"
+		},
+		{
+			"name": "@seomin0610/luna-plugin",
+			"repo": "seomin0610/luna-plugins",
+			"url": "https://github.com/seomin0610/luna-plugins/releases/download/latest/store.json",
+			"added": "2026-08-18"
+		},
+		{
+			"name": "Vis's Luna Plugins",
+			"repo": "visiuun/tidaluna-plugins",
+			"url": "https://github.com/visiuun/tidaluna-plugins/releases/download/latest/store.json",
+			"added": "2026-09-02"
+		},
+		{
+			"name": "Inrixia Neptune Plugins",
+			"repo": "Inrixia/neptune-plugins",
+			"url": "https://github.com/Inrixia/neptune-plugins/releases/download/dev/store.json",
+			"added": "2025-05-16",
+			"status": "removed",
+			"removed": "2025-05-31",
+			"reason": "Neptune predecessor, release asset no longer published"
+		},
+		{
+			"name": "DevonCasey Tidal Luna Plugins",
+			"repo": "DevonCasey/tidal-luna-plugins",
+			"url": "https://github.com/DevonCasey/tidal-luna-plugins/releases/download/latest/store.json",
+			"added": "2025-11-04",
+			"status": "removed",
+			"removed": "2025-11-08",
+			"reason": "Repo deleted, returns 404"
+		},
+		{
+			"name": "DevonCasey TidaLuna Plugins",
+			"repo": "DevonCasey/tidaluna-plugins",
+			"url": "https://github.com/DevonCasey/tidaluna-plugins/releases/download/latest/store.json",
+			"added": "2025-11-08",
+			"status": "removed",
+			"removed": "2026-07-19",
+			"reason": "Repo deleted, returns 404"
+		},
+		{
+			"name": "minseokk7 Korean Translation v1.0.0",
+			"repo": "minseokk7/luna-plugins",
+			"url": "https://github.com/minseokk7/luna-plugins/releases/download/v1.0.0/store.json",
+			"added": "2026-03-28",
+			"status": "removed",
+			"removed": "2026-03-28",
+			"reason": "Superseded by the latest tag of the same repo"
+		},
+		{
+			"name": "minseokk7 Korean Translation v1.1.0",
+			"repo": "minseokk7/luna-plugins",
+			"url": "https://github.com/minseokk7/luna-plugins/releases/download/v1.1.0/store.json",
+			"added": "2026-03-28",
+			"status": "removed",
+			"removed": "2026-03-28",
+			"reason": "Superseded by the latest tag of the same repo"
+		},
+		{
+			"name": "FireWall SMTC Shuffle Repeat",
+			"repo": "FireWall-code/tidaluna-smtc-shuffle-repeat",
+			"url": "https://github.com/FireWall-code/tidaluna-smtc-shuffle-repeat/releases/download/latest/store.json",
+			"added": "2026-06-02",
+			"status": "removed",
+			"removed": "2026-06-02",
+			"reason": "Superseded by FireWall-code/TidaLuna-Plugins"
+		},
+		{
+			"name": "meowarex Plugins (old repo name)",
+			"repo": "meowarex/TidalLuna-Plugins",
+			"url": "https://github.com/meowarex/TidalLuna-Plugins/releases/download/latest/store.json",
+			"added": "2025-06-02",
+			"status": "removed",
+			"removed": "2026-09-02",
+			"reason": "Repo renamed to meowarex/TidaLuna-Plugins, listed under the new url"
+		}
+	]
+}

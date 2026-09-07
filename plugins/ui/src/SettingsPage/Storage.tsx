@@ -9,14 +9,10 @@ import { StyleTag } from "@luna/lib";
 import { Messager } from "@luna/core";
 import type { LunaThemeStorage } from "./ThemesTab/LunaTheme";
 import { unloads } from "../index.safe";
+// Shared with the plugin store tab, this used to have its own copy writing to a different idb store
+import { addToStores } from "./PluginStoreTab/registry";
 
 const lunaStorage = ReactiveStore.getStore("@luna/storage");
-export const storeUrls = await lunaStorage.getReactive<string[]>("storeUrls", []);
-export const addToStores = (url: string) => {
-	if (url.endsWith("/store.json")) url = url.slice(0, -11);
-	if (storeUrls.includes(url)) return false;
-	return storeUrls.push(url);
-};
 
 export const themes = await lunaStorage.getReactive<Record<string, LunaThemeStorage>>("themes", {});
 export const addToThemes = async (url: string) => {
