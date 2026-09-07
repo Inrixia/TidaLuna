@@ -1,5 +1,5 @@
-import { Visibility, VisibilityOff } from "@mui/icons-material";
 
+import { EyeIcon, EyeOffIcon } from "./LunaDrawnIcons";
 import IconButton from "@mui/material/IconButton";
 import InputAdornment from "@mui/material/InputAdornment";
 import OutlinedInput, { type OutlinedInputProps } from "@mui/material/OutlinedInput";
@@ -26,7 +26,7 @@ export const LunaSecureText = React.memo((props: LunaSecureTextProps) => {
 							onMouseUp={(e) => e.preventDefault()}
 							edge="end"
 						>
-							{showPassword ? <VisibilityOff /> : <Visibility />}
+							{showPassword ? <EyeOffIcon size={20} /> : <EyeIcon size={20} />}
 						</IconButton>
 					</Tooltip>
 				</InputAdornment>

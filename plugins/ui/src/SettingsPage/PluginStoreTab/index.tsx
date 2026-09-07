@@ -2,73 +2,100 @@ import React, { useCallback, useEffect, useState } from "react";
 
 import { store as obyStore } from "oby";
 
-import { ReactiveStore } from "@luna/core";
+import { unloadSet } from "@luna/core";
 
+import Box from "@mui/material/Box";
+import IconButton from "@mui/material/IconButton";
 import Stack from "@mui/material/Stack";
-import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
 
-import { InstallFromUrl } from "./InstallFromUrl";
+import { LunaGroup, LunaRow, LunaSection } from "../../components/LunaList";
+import { LunaIcon, icons } from "../../components/LunaIcon";
+import { LunaSearch } from "../../components/LunaSearch";
+import { descSx, glassSx, iconBtnSx, metrics, searchStickyTop, wave } from "../../tidalTokens";
+import { InstallFromUrl } from "../Storage";
 import { LunaStore } from "./LunaStore";
+import { hiddenStoreUrls, refreshRegistry, registryStores, removeStore, userStoreUrls, visibleStores, type StoreEntry } from "./registry";
 
-const pluginStores = ReactiveStore.getStore("@luna/pluginStores");
-export const storeUrls = await pluginStores.getReactive<string[]>("storeUrls", []);
-export const addToStores = (url: string) => {
-	if (url.endsWith("/store.json")) url = url.slice(0, -11);
-	if (storeUrls.includes(url)) return false;
-	return storeUrls.push(url);
-};
+export * from "./registry";
 
-// Devs! Add your stores here <3
-// TODO: Abstract this to a git repo
-addToStores("https://github.com/SuperslowJelly/TIDAL-Clear-Coat/releases/download/latest/store.json");
-addToStores("https://github.com/meowarex/TidalLuna-Plugins/releases/download/latest/store.json");
-addToStores("https://github.com/wont-stream/lunar/releases/download/dev/store.json");
-addToStores("https://github.com/jxnxsdev/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/espeon/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json");
-addToStores("https://github.com/Aztup/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/vMohammad24/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/MathDesigns/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/otomir23/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/dantraynor/lunaplugins/releases/download/latest/store.json");
-addToStores("https://github.com/Akasiek/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Foukapik/TidaLuna-Plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Renskursa/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/Henr1ES/TidalLunaPlugins/releases/download/latest/store.json");
-addToStores("https://github.com/SinnerK0N/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/squadgazzz/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/minseokk7/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/FireWall-code/TidaLuna-Plugins/releases/download/latest/store.json");
-addToStores("https://github.com/FlazeIGuess/tidaluna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/seomin0610/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/visiuun/tidaluna-plugins/releases/download/latest/store.json");
+export const DEV_STORE_URL = "http://127.0.0.1:3000";
 
 export const PluginStoreTab = React.memo(() => {
-	const [_storeUrls, setPluginStores] = useState<string[]>(obyStore.unwrap(storeUrls));
+	const [stores, setStores] = useState<StoreEntry[]>(visibleStores);
 	const [searchQuery, setSearchQuery] = useState("");
+	const [addOpen, setAddOpen] = useState(false);
 
-	useEffect(() => obyStore.on(storeUrls, () => setPluginStores([...obyStore.unwrap(storeUrls)])), []);
-	const onRemove = useCallback((storeUrl: string) => {
-		const index = storeUrls.indexOf(storeUrl);
-		if (index > -1) storeUrls.splice(index, 1);
+	useEffect(() => {
+		const update = () => setStores(visibleStores());
+		// Any of the three can change the visible list, the registry from a fetch and the other two from the user
+		const unloads = new Set([obyStore.on(registryStores, update), obyStore.on(userStoreUrls, update), obyStore.on(hiddenStoreUrls, update)]);
+		refreshRegistry().catch((err) => console.error("[PluginStore] Failed to refresh registry:", err));
+		// Block body on purpose, unloadSet is async and React rejects a Promise as cleanup
+		return () => {
+			unloadSet(unloads);
+		};
 	}, []);
 
+	const onRemove = useCallback((storeUrl: string) => removeStore(storeUrl), []);
+
 	return (
-		<Stack spacing={2}>
-			<Stack direction="row" spacing={2}>
-				<InstallFromUrl />
-				<TextField
-					fullWidth
-					size="small"
-					placeholder="Search plugins..."
-					value={searchQuery}
-					onChange={(e) => setSearchQuery(e.target.value)}
-				/>
-			</Stack>
-			<LunaStore url={"http://127.0.0.1:3000"} onRemove={() => {}} searchQuery={searchQuery} />
-			{_storeUrls.map((store) => (
-				<LunaStore key={store} url={store} onRemove={() => onRemove(store)} searchQuery={searchQuery} />
+		<Stack spacing={3} sx={{ fontFamily: wave.font, maxWidth: metrics.maxTextW }}>
+			{/* Sticky at Tidal's search-bar height so filtering a long list never means scrolling up */}
+			<Box sx={{ position: "sticky", top: searchStickyTop, zIndex: 3 }}>
+				<Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+					<Box sx={{ flex: 1, minWidth: 0 }}>
+						<LunaSearch value={searchQuery} onChange={setSearchQuery} placeholder="Search plugins" />
+					</Box>
+					{/* Adding a store is rare next to searching, so it is one button here rather than a
+					    whole section competing for the top of the page. The plus turns into a cross while
+					    the field is open, which is the same glyph rotated and says what the click undoes. */}
+					<Tooltip title={addOpen ? "Close" : "Add a store, plugin or theme"}>
+						<IconButton
+							disableRipple
+							aria-expanded={addOpen}
+							onClick={() => setAddOpen((open) => !open)}
+							sx={{
+								...iconBtnSx,
+								width: 36,
+								height: 36,
+								flexShrink: 0,
+								...glassSx,
+								color: addOpen ? wave.text : wave.textSecondary,
+								"& svg": { transition: "transform 220ms cubic-bezier(0.2, 0, 0, 1)", transform: addOpen ? "rotate(45deg)" : "rotate(0deg)" },
+								"&:hover": { color: wave.text },
+								"@media (prefers-reduced-motion: reduce)": { "& svg": { transition: "none" } },
+							}}
+							children={<LunaIcon name={icons.add} size={18} />}
+						/>
+					</Tooltip>
+				</Stack>
+			</Box>
+
+			{addOpen && (
+				<LunaSection title="Add a store or plugin" desc="Paste a link to a store.json, a plugin, or a .css theme.">
+					<InstallFromUrl />
+				</LunaSection>
+			)}
+
+			<LunaStore url={DEV_STORE_URL} onRemove={() => {}} searchQuery={searchQuery} />
+			{stores.map((store) => (
+				<LunaStore key={store.url} url={store.url} entry={store.entry} onRemove={() => onRemove(store.url)} searchQuery={searchQuery} />
 			))}
+
+			{stores.length === 0 && (
+				<LunaGroup>
+					<LunaRow
+						title="No plugin stores yet"
+						desc="They load from the registry. Check your connection, or add one below."
+					/>
+				</LunaGroup>
+			)}
+
+			<Typography sx={{ ...descSx, color: wave.textTertiary }}>
+				Being listed is not a security review. Plugins run with full access to your machine.
+			</Typography>
 		</Stack>
 	);
 });

@@ -32,6 +32,16 @@ export type PluginPackage = {
 	};
 	description?: React.ReactNode;
 	version?: string;
+	/**
+	 * Optional preview image for the plugin store, one per plugin. Must be an https url on a GitHub
+	 * host, see isAllowedPreviewImage. Plugins without one keep the plain card.
+	 */
+	image?: string;
+	/**
+	 * Opt in to showing this plugin's download count in the store. Off unless the author sets it,
+	 * either here or once for a whole store in the store's own package.json.
+	 */
+	showDownloads?: boolean;
 	dependencies?: string[];
 	devDependencies?: string[];
 	code?: string;
@@ -242,6 +252,11 @@ export class LunaPlugin {
 	public readonly loading: Signal<boolean> = new Signal(false);
 	public readonly fetching: Signal<boolean> = new Signal(false);
 	public readonly loadError: Signal<string | undefined> = new Signal(undefined);
+	/**
+	 * True only when load() itself threw. loadError also carries runtime errors reported through the
+	 * module's tracer long after a successful load, and calling those "load failed" is wrong.
+	 */
+	public readonly loadFailed: Signal<boolean> = new Signal(false);
 
 	public readonly _liveReload: Signal<boolean>;
 	public onSetLiveReload;
@@ -291,6 +306,42 @@ export class LunaPlugin {
 	// #endregion
 
 	// #region Storage
+	/**
+	 * Find the plugin whose bundle appears in an error's stack. Emitters hand the same onError to
+	 * every listener without saying which one threw, so the stack is the only thing that still
+	 * names the culprit. Returns undefined when no frame belongs to a known plugin.
+	 */
+	public static fromStack(stack?: string): LunaPlugin | undefined {
+		if (stack === undefined) return undefined;
+		for (const plugin of Object.values(this.plugins)) {
+			const url = plugin.store.url;
+			if (url.length > 0 && stack.includes(url)) return plugin;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Refetch only the metadata of an already known plugin and merge it in, leaving the cached code
+	 * and any load state alone.
+	 *
+	 * fromStorage hands back an existing instance without refetching, so a store card pins whatever
+	 * the package looked like the first time it was rendered this session. An author who publishes a
+	 * new image or description would otherwise not reach anyone until they restart the client. The
+	 * store's reload button calls this.
+	 */
+	public async refreshPackage(): Promise<void> {
+		const fetched = await LunaPlugin.fetchPackage(this.url).catch(() => undefined);
+		if (fetched === undefined) return;
+		delete fetched.code;
+		// Keep the code we already have, only the description of the plugin changes here
+		this.package = { ...fetched, code: this.package?.code };
+	}
+
+	/** Record an error that happened after load. Does not mark the plugin as failed to load. */
+	public reportRuntimeError(message: string): void {
+		this.loadError._ = message;
+	}
+
 	public get url(): string {
 		return this.store.url;
 	}
@@ -361,6 +412,7 @@ export class LunaPlugin {
 		await this.unload();
 		this._enabled._ = false;
 		this.loadError._ = undefined;
+		this.loadFailed._ = false;
 	}
 	public async reload() {
 		// LoadExports will handle unloading etc and ensure code is live
@@ -459,6 +511,7 @@ export class LunaPlugin {
 
 			// Ensure loadError is cleared
 			this.loadError._ = undefined;
+			this.loadFailed._ = false;
 
 			const { onUnload, errSignal } = this.exports;
 
@@ -488,6 +541,7 @@ export class LunaPlugin {
 		} catch (err) {
 			// Set loadError for anyone listening
 			this.loadError._ = (<any>err)?.message ?? err?.toString();
+			this.loadFailed._ = true;
 			// Notify users
 			this.trace.msg.err.withContext(`Failed to load`)(err);
 			// Ensure we arnt partially loaded

@@ -1,4 +1,3 @@
-import Box from "@mui/material/Box";
 import React from "react";
 
 import { LunaSecureText, type LunaSecureTextProps } from "../LunaSecureText";
@@ -7,9 +6,7 @@ import { LunaSetting } from "./LunaSetting";
 
 export type LunaSecureTextSettingProps = LunaSecureTextProps & LunaTitleValues;
 export const LunaSecureTextSetting = React.memo((props: LunaSecureTextSettingProps) => (
-	<LunaSetting spacing={8} title={props.title} desc={props.desc}>
-		<Box flexGrow={1}>
-			<LunaSecureText fullWidth size="small" sx={{ marginTop: 0.75 }} {...props} placeholder={props.title} label={null} />
-		</Box>
+	<LunaSetting title={props.title} desc={props.desc}>
+		<LunaSecureText fullWidth size="small" {...props} placeholder={props.title} label={null} />
 	</LunaSetting>
 ));

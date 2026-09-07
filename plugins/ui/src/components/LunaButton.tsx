@@ -13,7 +13,7 @@ export const LunaButton = React.memo((props: LunaButtonProps) => {
 	return (
 		<Tooltip sx={{ marginRight: "auto" }} title={title}>
 			<Button
-				loadingIndicator={<CircularProgress color="warning" size={16} />}
+				loadingIndicator={<CircularProgress color="inherit" size={16} />}
 				variant={props.variant ?? "contained"}
 				children={props.children}
 				{...props}

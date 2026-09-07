@@ -122,13 +122,8 @@ export const lunaMuiTheme = createTheme({
 				},
 			},
 		},
-		MuiSelect: {
-			styleOverrides: {
-				select: {
-					backgroundColor: "rgba(0, 0, 0, 0.20)",
-				},
-			},
-		},
+		// No MuiSelect override. tidalTokens' selectSx already fills the OutlinedInput root, and
+		// painting the inner select as well drew a second, darker, square-cornered box inside the pill.
 		MuiMenu: {
 			styleOverrides: {
 				paper: {
