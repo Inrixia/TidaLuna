@@ -10,8 +10,6 @@ export interface LunaSearchProps {
 	value: string;
 	onChange: (value: string) => void;
 	placeholder?: string;
-	/** When true the field sticks to the top of the scroll area, aligned with Tidal's own search. */
-	sticky?: boolean;
 }
 
 /**
@@ -20,11 +18,10 @@ export interface LunaSearchProps {
  * flat bar. Sticky top is 14px, which places it at the same height as Tidal's real search field and
  * the back/forward buttons (both at y=44 in a scroll container that starts at y=30).
  */
-export const LunaSearch = React.memo(({ value, onChange, placeholder = "Search", sticky }: LunaSearchProps) => (
+export const LunaSearch = React.memo(({ value, onChange, placeholder = "Search" }: LunaSearchProps) => (
 	<Box
 		sx={{
-			position: sticky ? "sticky" : "relative",
-			top: sticky ? "14px" : undefined,
+			position: "relative",
 			zIndex: 3,
 			display: "flex",
 			alignItems: "center",

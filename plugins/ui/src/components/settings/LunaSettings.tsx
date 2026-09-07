@@ -10,4 +10,5 @@ export const settingsSx = {
 	padding: 0,
 } as const;
 
+// spacing={0} is load-bearing: it is what makes the row hairlines butt up against each other.
 export const LunaSettings = React.memo((props: LunaStackProps) => <LunaStack {...props} spacing={0} sx={settingsSx} />);

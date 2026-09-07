@@ -29,17 +29,13 @@ export const LunaPreviewImage = React.memo(({ src, label, onError }: LunaPreview
 	const [open, setOpen] = React.useState(false);
 	const close = React.useCallback(() => setOpen(false), []);
 	const captionId = React.useId();
+	const imgProps = { component: "img", src, alt: "", decoding: "async", referrerPolicy: "no-referrer" } as const;
 
 	React.useEffect(() => {
 		if (!open) return;
-		const unloads = new Set<LunaUnload>();
-		const unIntercept = redux.intercept("router/NAVIGATED", unloads, () => {
-			setOpen(false);
-		});
-		return () => {
-			unIntercept();
-		};
-	}, [open]);
+		const unIntercept = redux.intercept("router/NAVIGATED", new Set<LunaUnload>(), close);
+		return () => void unIntercept();
+	}, [open, close]);
 
 	return (
 		<>
@@ -73,16 +69,7 @@ export const LunaPreviewImage = React.memo(({ src, label, onError }: LunaPreview
 					},
 				}}
 			>
-				<Box
-					component="img"
-					src={src}
-					alt=""
-					loading="lazy"
-					decoding="async"
-					referrerPolicy="no-referrer"
-					onError={onError}
-					sx={{ width: "100%", aspectRatio: "16 / 9", objectFit: "cover", display: "block" }}
-				/>
+				<Box {...imgProps} loading="lazy" onError={onError} sx={{ width: "100%", aspectRatio: "16 / 9", objectFit: "cover", display: "block" }} />
 				{/* One cue, not three. The image does not also zoom on hover: that gesture is the most
 				    recognisable stock template tell there is, and it was a second sticker saying what the
 				    scrim already says. The scrim stays light enough to read the screenshot through. */}
@@ -163,15 +150,7 @@ export const LunaPreviewImage = React.memo(({ src, label, onError }: LunaPreview
 						    that bounds the image. No viewport arithmetic, so a caption that wraps to two
 						    lines cannot push the image off screen. */}
 						<Box sx={{ flex: "1 1 auto", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-							<Box
-								component="img"
-								src={src}
-								alt=""
-								decoding="async"
-								referrerPolicy="no-referrer"
-								onError={onError}
-								sx={{ maxWidth: "min(1440px, 100%)", maxHeight: "100%", display: "block", borderRadius: wave.radius }}
-							/>
+							<Box {...imgProps} sx={{ maxWidth: "min(1440px, 100%)", maxHeight: "100%", display: "block", borderRadius: wave.radius }} />
 						</Box>
 						<Typography id={captionId} sx={{ ...metaSx, textAlign: "center", flexShrink: 0 }} children={label} />
 					</Box>

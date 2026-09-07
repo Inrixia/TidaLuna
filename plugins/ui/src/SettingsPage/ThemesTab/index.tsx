@@ -12,7 +12,8 @@ import { LunaTheme } from "./LunaTheme";
 export const ThemesTab = React.memo(() => {
 	const [_themes, setThemes] = React.useState(() => ({ ...obyStore.unwrap(themes) }));
 	React.useEffect(() => {
-		obyStore.on(themes, () => setThemes({ ...obyStore.unwrap(themes) }));
+		const dispose = obyStore.on(themes, () => setThemes({ ...obyStore.unwrap(themes) }));
+		return () => void dispose();
 	}, []);
 
 	const entries = Object.entries(_themes);

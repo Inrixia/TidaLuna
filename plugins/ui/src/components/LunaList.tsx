@@ -12,9 +12,7 @@ import { descSx, groupSx, liftSx, metaSx, metrics, oneLineSx, rowSx, sectionSx, 
 // tiles for things with artwork. A plugin has no artwork, so everything here is a row in a group.
 
 /** The one container. Rows inside get their separators from rowSx. */
-export const LunaGroup = React.memo(({ children, sx }: PropsWithChildren<{ sx?: object }>) => (
-	<Box sx={{ ...groupSx, ...sx }} children={children} />
-));
+export const LunaGroup = React.memo(({ children }: PropsWithChildren) => <Box sx={groupSx} children={children} />);
 
 /** Heading and subline sit outside and above the group, so the group reads as one object. */
 export const LunaSection = React.memo(

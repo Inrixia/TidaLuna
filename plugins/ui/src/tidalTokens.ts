@@ -127,29 +127,10 @@ export const buttonSx = {
 	"&.Mui-disabled": { color: wave.textTertiary, backgroundColor: wave.surface, borderColor: wave.line },
 } as const;
 
-// Controls fill with surfaceHover so they stay lighter than the panel they sit inside
-
-// For TextField wrappers, the sx targets the inner OutlinedInput. Every Luna input shares one radius
-export const inputSx = {
-	"& .MuiOutlinedInput-root": {
-		fontFamily: wave.font,
-		fontSize: 14,
-		color: wave.text,
-		backgroundColor: wave.surfaceHover,
-		borderRadius: wave.radiusFull,
-		"& fieldset": { borderColor: wave.lineStrong },
-		"&:hover fieldset": { borderColor: wave.textTertiary },
-		"&.Mui-focused fieldset": { borderColor: wave.accent, borderWidth: 1 },
-	},
-	// Tidal gives its search 44px before the text, these have no icon so they take less
-	"& .MuiOutlinedInput-input": { paddingLeft: "20px", paddingRight: "20px" },
-	"& .MuiOutlinedInput-input::placeholder": { color: wave.textTertiary, opacity: 1 },
-	"& .MuiInputLabel-root": { fontFamily: wave.font, fontSize: 14, color: wave.textTertiary },
-	"& .MuiInputLabel-root.Mui-focused": { color: wave.accent },
-} as const;
-
-/** For a MUI Select, whose sx lands on the OutlinedInput root itself. */
-export const selectSx = {
+// Controls fill with surfaceHover so they stay lighter than the panel they sit inside.
+// One outlined control, shared. A Select is the OutlinedInput root itself, a TextField wraps one,
+// so selectSx spreads this directly and inputSx nests it.
+export const outlinedRootSx = {
 	fontFamily: wave.font,
 	fontSize: 14,
 	color: wave.text,
@@ -158,7 +139,17 @@ export const selectSx = {
 	"& .MuiOutlinedInput-notchedOutline": { borderColor: wave.lineStrong },
 	"&:hover .MuiOutlinedInput-notchedOutline": { borderColor: wave.textTertiary },
 	"&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: wave.accent, borderWidth: 1 },
-	"& .MuiSvgIcon-root": { color: wave.textSecondary },
+} as const;
+
+export const selectSx = { ...outlinedRootSx, "& .MuiSvgIcon-root": { color: wave.textSecondary } } as const;
+
+export const inputSx = {
+	"& .MuiOutlinedInput-root": outlinedRootSx,
+	// Tidal gives its search 44px before the text, these have no icon so they take less
+	"& .MuiOutlinedInput-input": { paddingLeft: "20px", paddingRight: "20px" },
+	"& .MuiOutlinedInput-input::placeholder": { color: wave.textTertiary, opacity: 1 },
+	"& .MuiInputLabel-root": { fontFamily: wave.font, fontSize: 14, color: wave.textTertiary },
+	"& .MuiInputLabel-root.Mui-focused": { color: wave.accent },
 } as const;
 
 // Lifts the search level with Tidal's own, which sits at y=42 behind a ~56px top bar

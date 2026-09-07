@@ -3,12 +3,11 @@ import React from "react";
 import Box from "@mui/material/Box";
 import InputAdornment from "@mui/material/InputAdornment";
 
-import { useTheme } from "@mui/material/styles";
 import TextField, { type TextFieldProps } from "@mui/material/TextField";
 
 import { MinusIcon } from "./LunaDrawnIcons";
 import { LunaIcon, icons } from "./LunaIcon";
-import { inputSx, wave } from "../tidalTokens";
+import { inputSx, outlinedRootSx, wave } from "../tidalTokens";
 
 /**
  * The steppers sit on the field's own fill, and text.secondary left them barely readable against
@@ -36,7 +35,6 @@ export type LunaNumberProps = TextFieldProps & {
 };
 
 export const LunaNumber = React.memo((props: LunaNumberProps) => {
-	const theme = useTheme();
 	const [number, setNumber] = React.useState<number>(isNaN(props.value!) ? (props.defaultValue ?? 0) : (props.value ?? 0));
 	const onNumber = (number: any) => {
 		const num = +number;
@@ -79,17 +77,13 @@ export const LunaNumber = React.memo((props: LunaNumberProps) => {
 			sx={{
 				width: 128,
 				...inputSx,
-				// The notched outline draws its own corners; without this it keeps the MUI default
-				// radius and sits visibly inside the filled corners
 				"& .MuiOutlinedInput-root": {
-					...(inputSx as any)["& .MuiOutlinedInput-root"],
-					borderRadius: wave.radiusFull,
+					...outlinedRootSx,
 					// Zeroing the input padding to centre the value also collapsed the field, so the
 					// height lives on the root instead
 					height: 32,
 					paddingLeft: 1,
 					paddingRight: 1,
-					"& .MuiOutlinedInput-notchedOutline": { borderRadius: wave.radiusFull },
 				},
 				// The value sits between two adornments, so it needs to flex to centre between them
 				"& .MuiInputBase-input": { textAlign: "center", padding: 0, flex: 1 },
