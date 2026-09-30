@@ -1,6 +1,6 @@
 import type { Store } from "redux";
-import { findModuleByProperty } from "./helpers/findModule";
 import { tidalModules } from "./exposeTidalInternals";
+import { findModuleByProperty } from "./helpers/findModule";
 import { coreTrace } from "./trace/Tracer";
 
 export const modules: Record<string, any> = {};
@@ -17,33 +17,53 @@ export const reduxStore: Store = findModuleByProperty((key, value) => key === "r
 
 // Tidal's bundler wraps CJS modules (React, ReactDOM, jsx-runtime) in lazy loaders
 // and minifies export names. Find the chunk by path, invoke the lazy loader, validate the result.
-const resolveCjsModule = (pathPattern: RegExp, validator: (r: any) => boolean) => {
+const resolveCjsModule = (validator: (result: any) => boolean, pathPattern = /.*/) => {
 	for (const [path, mod] of Object.entries(tidalModules)) {
+		// Fallback pattern catches everything if paths are obfuscated
 		if (!pathPattern.test(path)) continue;
+
 		for (const value of Object.values(mod)) {
 			if (typeof value !== "function") continue;
+
 			const src = Function.prototype.toString.call(value);
-			if (!src.includes("{exports:{}") || !src.includes(".exports")) continue;
+			// Broadened check: only ensures it touches module exports in some capacity
+			if (!src.includes("exports")) continue;
+
 			try {
+				// Attempt to execute the thunk
 				const result = value();
-				if (result && typeof result === "object" && validator(result)) return result;
-			} catch {}
+				if (result && typeof result === "object" && validator(result)) {
+					return result;
+				}
+			} catch (err) {
+				// If it fails, it's either not a no-arg thunk or it's the wrong module.
+				// Keep iterating.
+			}
 		}
 	}
+	return null;
 };
 
 // Expose react
-const react = resolveCjsModule(/\/react-(?!dom[-.])[^/]+\.js$/, (r) => typeof r.useState === "function" && typeof r.useEffect === "function");
-if (react) { react.default ??= react; modules["react"] = react; }
-else { coreTrace.warn("modules", "Failed to resolve React module"); }
+const react = resolveCjsModule((r) => typeof r.useState === "function" && typeof r.useEffect === "function");
 
-const jsxRT = resolveCjsModule(/\/jsx-runtime-[^/]+\.js$/, (r) => typeof r.jsx === "function" && typeof r.jsxs === "function");
-if (jsxRT) { jsxRT.default ??= jsxRT; modules["react/jsx-runtime"] = jsxRT; }
-else { coreTrace.warn("modules", "Failed to resolve react/jsx-runtime module"); }
+if (react) {
+	react.default ??= react;
+	modules["react"] = react;
+} else {
+	coreTrace.warn("modules", "Failed to resolve React module");
+}
+
+const jsxRT = resolveCjsModule((r) => typeof r.jsx === "function" && typeof r.jsxs === "function");
+if (jsxRT) {
+	jsxRT.default ??= jsxRT;
+	modules["react/jsx-runtime"] = jsxRT;
+} else {
+	coreTrace.warn("modules", "Failed to resolve react/jsx-runtime module");
+}
 
 // Tidal tree shakes hydrateRoot
-const reactDomPath = /\/react-dom(-client)?-[^/]+\.js$/;
-const reactDom = resolveCjsModule(reactDomPath, (r) => typeof r.createRoot === "function");
+const reactDom = resolveCjsModule((r) => typeof r.createRoot === "function");
 
 // Fallback for react-dom/client
 const taggedCreateRoot = (<any>globalThis).__lunaCreateRoot;
