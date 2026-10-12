@@ -49,7 +49,10 @@ Done! Start Tidal and you should see the Luna splashscreen.
 ### Nix install
 TidaLuna is managed through flakes, so the first thing you have to do is add TidaLuna in your inputs
 ```nix
-inputs.tidaLuna.url = "github:Inrixia/TidaLuna"
+inputs.tidaLuna = {
+  url = "github:Inrixia/TidaLuna";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
 ```
 
 There are now two ways to install the injected tidal-hifi client

@@ -20,8 +20,8 @@ in
 
     pnpmDeps = fetchPnpmDeps {
       inherit pname src version;
-      fetcherVersion = 3;
-      hash = "sha256-g6ZLUkgs0nszh8nJIDclNMq3wNJYxGxlg6qIOWkMZzA=";
+      fetcherVersion = 4;
+      hash = "sha256-x4SpcWwiP+Q5bUtyp83/cerE90D+YrtHRjhHMT9JnGY=";
     };
 
     buildPhase = ''
