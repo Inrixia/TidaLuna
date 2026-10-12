@@ -19,7 +19,7 @@ import { interceptors, type LunaUnload, type LunaUnloads } from "@luna/core";
  * Intercept a Redux action based on its `type`
  * @param actionType The ActionKey to intercept
  * @param cb Called when action is intercepted with action args, if returning true action is not dispatched (cancelled)
- * @param unloads Set of unload functions to add this to, can be null but only pass if you know what your doing
+ * @param unloads Set of unload functions to add this to, can be nullish but only if you know what your doing
  * @param once If set true only intercepts once
  * @returns Function to call to unload/cancel the intercept
  */
@@ -34,26 +34,25 @@ export function intercept<T extends ActionType | ActionType[]>(
 	const actionTypeArray: ActionType[] = Array.isArray(actionTypes) ? actionTypes : [actionTypes];
 
 	// If once is true then call unIntercept immediately to only run once
-	const intercept = once
-		? (payload: InterceptPayload<T>, type: ActionType) => {
-				unIntercept();
-				return cb(payload, type);
-			}
-		: cb;
+	if (once)
+		cb = (payload: InterceptPayload<T>, type: ActionType) => {
+			unIntercept();
+			return cb(payload, type);
+		};
 
 	// Wrap removing the callback from the interceptors in a unload function and return it
 	const unIntercept = () => {
 		for (const actionType of actionTypeArray) {
 			// ?. so that it doesn't throw if the interceptor was already removed
-			interceptors[actionType]?.delete(intercept);
+			interceptors[actionType]?.delete(cb);
 			if (interceptors[actionType]?.size === 0) delete interceptors[actionType];
 		}
 	};
-	unIntercept.source = `intercept${JSON.stringify(actionTypeArray)}`;
+	unIntercept.source = `intercept::${JSON.stringify(actionTypeArray)}`;
 
 	for (const actionType of actionTypeArray) {
 		interceptors[actionType] ??= new Set<InterceptCallback<T>>();
-		interceptors[actionType].add(intercept);
+		interceptors[actionType].add(cb);
 	}
 
 	unloads?.add(unIntercept);
