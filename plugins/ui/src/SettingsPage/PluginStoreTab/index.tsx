@@ -43,7 +43,7 @@ addToStores("https://github.com/FlazeIGuess/tidaluna-plugins/releases/download/l
 addToStores("https://github.com/seomin0610/luna-plugins/releases/download/latest/store.json");
 addToStores("https://github.com/visiuun/tidaluna-plugins/releases/download/latest/store.json");
 addToStores("https://github.com/Kisakay/luna-plugins/releases/download/latest/store.json");
-addToStores("https://github.com/BaeHyolyn/luna-plugins/releases/download/latest/store.json");
+addToStores("https://github.com/BaeHyolyn/luna-plugins/releases/latest/download/store.json");
 addToStores("https://github.com/Drousis3/Tidaluna-nice-to-have-plugins/releases/download/latest/store.json");
 
 export const PluginStoreTab = React.memo(() => {
