@@ -24,7 +24,7 @@
     packages = forAllSystems (pkgs: {
       # TidaLuna injection stand-alone (platform-dispatched)
       injection =
-        if pkgs.stdenv.isDarwin
+        if pkgs.stdenv.hostPlatform.isDarwin
         then pkgs.callPackage ./nix/injection-darwin.nix {}
         else pkgs.callPackage ./nix/injection-linux.nix {};
 
@@ -39,7 +39,7 @@
 
       # TidaLuna injected into tidal-hifi / TIDAL.app
       default =
-        if pkgs.stdenv.isDarwin
+        if pkgs.stdenv.hostPlatform.isDarwin
         then pkgs.callPackage ./nix/darwin-package.nix {
           tidal = pkgs.tidal or null;
         }
@@ -55,7 +55,7 @@
 
     # Overlay (if preferred)
     overlays.default = final: prev:
-      if prev.stdenv.isDarwin
+      if prev.stdenv.hostPlatform.isDarwin
       then {tidal = final.callPackage ./nix/darwin-package.nix {tidal = prev.tidal or null;};}
       else {tidal-hifi = final.callPackage ./nix/linux-package.nix {tidal-hifi = prev.tidal-hifi or null;};};
   };
