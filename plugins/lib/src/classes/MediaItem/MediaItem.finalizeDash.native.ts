@@ -194,6 +194,11 @@ const asInt = (value: string | undefined): number | undefined => {
 	const parsed = parseInt(value, 10);
 	return Number.isFinite(parsed) ? parsed : undefined;
 };
+const asFloat = (value: string | undefined): number | undefined => {
+	if (value === undefined) return undefined;
+	const parsed = parseFloat(value);
+	return Number.isFinite(parsed) ? parsed : undefined;
+};
 const yearFrom = (tags: MetaTags["tags"]): number | undefined => {
 	const year = asInt(first(tags.year));
 	if (year !== undefined && year > 0 && year <= 9999) return year;
@@ -256,6 +261,10 @@ const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<vo
 		if (musicBrainzTrackId !== undefined) tag.musicBrainzTrackId = musicBrainzTrackId;
 		const musicBrainzAlbumId = first(tags.musicbrainz_albumid);
 		if (musicBrainzAlbumId !== undefined) tag.musicBrainzReleaseId = musicBrainzAlbumId;
+		const replayGain = asFloat(first(tags.REPLAYGAIN_TRACK_GAIN));
+		if (replayGain !== undefined) tag.replayGainTrackGain = replayGain;
+		const replayGainPeak = asFloat(first(tags.REPLAYGAIN_TRACK_PEAK));
+		if (replayGainPeak !== undefined) tag.replayGainTrackPeak = replayGainPeak;
 		if (cover !== undefined) tag.pictures = [cover];
 
 		file.save();
