@@ -164,6 +164,25 @@ export class LunaPlugin {
 		return this.fromStorage(store);
 	}
 
+	// Moves installed plugins to a new store url <3
+	public static async migrateBaseUrl(fromBaseUrl: string, toBaseUrl: string): Promise<void> {
+		const fromPrefix = `${fromBaseUrl}/`.toLowerCase();
+		for (const name of await this.pluginStorage.keys()) {
+			const store = await this.pluginStorage.getReactive<LunaPluginStorage>(name);
+			if (!store.url?.toLowerCase().startsWith(fromPrefix)) continue;
+
+			const newUrl = `${toBaseUrl}/${store.url.slice(fromPrefix.length)}`;
+			// Re-key loaded plugin so it isnt duplicated <3
+			const plugin = this.plugins[store.url];
+			if (plugin !== undefined) {
+				delete this.plugins[store.url];
+				this.plugins[newUrl] = plugin;
+			}
+			this.trace.log(`Migrating plugin ${name} from ${store.url} to ${newUrl}`);
+			store.url = newUrl;
+		}
+	}
+
 	public static async loadStoredPlugins() {
 		const keys = await LunaPlugin.pluginStorage.keys();
 		return Promise.all(keys.map(async (name) => LunaPlugin.fromName(name).catch(this.trace.err.withContext("loadStoredPlugins", name))));
