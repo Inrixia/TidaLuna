@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 
 import { store as obyStore } from "oby";
 
-import { ReactiveStore } from "@luna/core";
+import { LunaPlugin, ReactiveStore } from "@luna/core";
 
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
@@ -12,16 +12,38 @@ import { LunaStore } from "./LunaStore";
 
 const pluginStores = ReactiveStore.getStore("@luna/pluginStores");
 export const storeUrls = await pluginStores.getReactive<string[]>("storeUrls", []);
+const normalizeStoreUrl = (url: string) => (url.endsWith("/store.json") ? url.slice(0, -11) : url);
 export const addToStores = (url: string) => {
-	if (url.endsWith("/store.json")) url = url.slice(0, -11);
+	url = normalizeStoreUrl(url);
 	if (storeUrls.includes(url)) return false;
 	return storeUrls.push(url);
 };
 
+// Migrates a store that has moved to a new url <3
+export const replaceStore = async (legacyUrls: string | string[], newUrl: string) => {
+	newUrl = normalizeStoreUrl(newUrl);
+	for (let legacyUrl of [legacyUrls].flat()) {
+		legacyUrl = normalizeStoreUrl(legacyUrl);
+		await LunaPlugin.migrateBaseUrl(legacyUrl, newUrl);
+		const legacyIndex = storeUrls.indexOf(legacyUrl);
+		if (legacyIndex === -1) continue;
+		if (storeUrls.includes(newUrl)) storeUrls.splice(legacyIndex, 1);
+		else storeUrls[legacyIndex] = newUrl;
+	}
+	addToStores(newUrl);
+};
+
 // Devs! Add your stores here <3
+// If your store has moved use `await replaceStore(oldUrl, newUrl)` so existing installs and installed plugins are migrated <3
 // TODO: Abstract this to a git repo
 addToStores("https://github.com/SuperslowJelly/TIDAL-Clear-Coat/releases/download/latest/store.json");
-addToStores("https://release.radiant-lyrics.org/store.json");
+await replaceStore(
+	[
+		"https://github.com/meowarex/TidalLuna-Plugins/releases/download/latest/store.json",
+		"https://github.com/meowarex/TidaLuna-Plugins/releases/download/latest/store.json",
+	],
+	"https://release.radiant-lyrics.org/store.json",
+);
 addToStores("https://github.com/wont-stream/lunar/releases/download/dev/store.json");
 addToStores("https://github.com/jxnxsdev/luna-plugins/releases/download/latest/store.json");
 addToStores("https://github.com/espeon/luna-plugins/releases/download/latest/store.json");

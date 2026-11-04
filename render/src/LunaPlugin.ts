@@ -164,6 +164,26 @@ export class LunaPlugin {
 		return this.fromStorage(store);
 	}
 
+
+// Rewrites the url of any stored plugins installed from `fromBaseUrl` to use `toBaseUrl` instead (for migrating stores)
+	public static async migrateBaseUrl(fromBaseUrl: string, toBaseUrl: string): Promise<void> {
+		const fromPrefix = `${fromBaseUrl}/`;
+		for (const name of await this.pluginStorage.keys()) {
+			const store = await this.pluginStorage.getReactive<LunaPluginStorage>(name);
+			if (!store.url?.startsWith(fromPrefix)) continue;
+
+			const newUrl = `${toBaseUrl}/${store.url.slice(fromPrefix.length)}`;
+			// Re-key any already loaded instance so it isnt duplicated
+			const plugin = this.plugins[store.url];
+			if (plugin !== undefined) {
+				delete this.plugins[store.url];
+				this.plugins[newUrl] = plugin;
+			}
+			this.trace.log(`Migrating plugin ${name} from ${store.url} to ${newUrl}`);
+			store.url = newUrl;
+		}
+	}
+
 	public static async loadStoredPlugins() {
 		const keys = await LunaPlugin.pluginStorage.keys();
 		return Promise.all(keys.map(async (name) => LunaPlugin.fromName(name).catch(this.trace.err.withContext("loadStoredPlugins", name))));
@@ -175,7 +195,7 @@ export class LunaPlugin {
 	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>>
 	{
 		const data = await this.pluginStorage.dump();
-		if (!stripCode) 
+		if (!stripCode)
 			return data;
 
 		const stripped = structuredClone(data);
