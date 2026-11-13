@@ -26,8 +26,11 @@ addBuiltInSettingsTab({ id: "Themes", label: "Themes", icon: <PaletteIcon />, or
 addBuiltInSettingsTab({ id: "Settings", label: "Settings", icon: <SettingsIcon />, order: 400, content: <SettingsTab /> });
 addBuiltInSettingsTab({ id: "Supporters", label: "Supporters", icon: <FavoriteIcon />, order: 500, content: <SupportersTab /> });
 
+// Content is either a node or a component, components can be objects too (React.memo, forwardRef)
+const isComponent = (content: SettingsTabDef["content"]): content is React.ComponentType<{ active: boolean }> =>
+	typeof content === "function" || (typeof content === "object" && content !== null && !React.isValidElement(content) && "$$typeof" in content);
 const renderContent = (tab: SettingsTabDef, active: boolean): React.ReactNode =>
-	typeof tab.content === "function" ? React.createElement(tab.content, { active }) : tab.content;
+	isComponent(tab.content) ? React.createElement(tab.content, { active }) : tab.content;
 
 const LunaTabPage = React.memo(({ tab, active }: { tab: SettingsTabDef; active: boolean }) => {
 	const [visited, setVisited] = React.useState(active);
