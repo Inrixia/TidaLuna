@@ -189,6 +189,37 @@ export class LunaPlugin {
 	}
 
 	/**
+	 * Reload every installed and enabled plugin, except core plugins, one at a time.
+	 * A plugin that depends on another plugin being reloaded is skipped, reloading that plugin reloads its dependants.
+	 * @returns The plugins that failed to reload (each one also reports its own error), including dependants of a failed plugin, which are left unloaded
+	 */
+	public static async reloadAll(): Promise<LunaPlugin[]> {
+		const plugins = Object.values(LunaPlugin.plugins).filter(
+			(plugin) => plugin.installed && plugin.enabled && !LunaPlugin.corePlugins.has(plugin.name),
+		);
+		const failed: LunaPlugin[] = [];
+		const dependants: LunaPlugin[] = [];
+		for (const plugin of plugins) {
+			if (plugins.some((other) => other !== plugin && other.dependants.has(plugin))) {
+				dependants.push(plugin);
+				continue;
+			}
+			try {
+				await plugin.reload();
+			} catch {
+				failed.push(plugin);
+			}
+		}
+		// A failed plugin unloads its dependants and doesn't load them again
+		for (let i = 0; i < failed.length; i++) {
+			for (const dependant of dependants) {
+				if (failed[i].dependants.has(dependant) && !failed.includes(dependant)) failed.push(dependant);
+			}
+		}
+		return failed;
+	}
+
+	/**
 	 * Dump all plugin storage entries
 	 */
 	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>>
