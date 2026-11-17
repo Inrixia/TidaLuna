@@ -210,10 +210,11 @@ export class LunaPlugin {
 				failed.push(plugin);
 			}
 		}
-		// A failed plugin unloads its dependants and doesn't load them again
-		for (let i = 0; i < failed.length; i++) {
+		// A failed plugin unloads its dependants and doesn't load them again.
+		// for...of also visits the dependants pushed here, so chains (A -> B -> C) are covered.
+		for (const plugin of failed) {
 			for (const dependant of dependants) {
-				if (failed[i].dependants.has(dependant) && !failed.includes(dependant)) failed.push(dependant);
+				if (plugin.dependants.has(dependant) && !failed.includes(dependant)) failed.push(dependant);
 			}
 		}
 		return failed;
