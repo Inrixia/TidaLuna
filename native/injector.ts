@@ -1,5 +1,6 @@
 import electron from "electron";
 
+import { readFileSync } from "fs";
 import { readFile } from "fs/promises";
 import mime from "mime";
 
@@ -11,6 +12,15 @@ import Module, { createRequire } from "module";
 import { ipcHandle } from "./ipc";
 
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
+
+/** tidal-hifi's settings (Linux), read synchronously so they can be used before the app is ready */
+const readTidalHifiConfig = (): Record<string, unknown> | undefined => {
+	try {
+		return JSON.parse(readFileSync(path.join(electron.app.getPath("userData"), "config.json"), "utf8"));
+	} catch {
+		return undefined;
+	}
+};
 
 // #region Bundle
 const bundleDir = process.env.TIDALUNA_DIST_PATH ?? path.dirname(fileURLToPath(import.meta.url));
@@ -32,6 +42,19 @@ if (process.platform === "linux") {
 	electron.app.commandLine.appendSwitch("class", "tidal-hifi");
 	electron.app.name = "tidal-hifi";
 	process.env.CHROME_DESKTOP = "tidal-hifi.desktop";
+
+	// tidal-hifi registers its own MPRIS player, fed by @luna/linux. Chromium registers a second one
+	// (org.mpris.MediaPlayer2.chromium.instance*) for the playing audio, so desktops show two players (#210).
+	// Disable Chromium's while tidal-hifi's is enabled, as tidal-hifi's "Disable hardware media keys" flag does.
+	if (readTidalHifiConfig()?.mpris !== false) {
+		const lunaDisabledFeatures = ["HardwareMediaKeyHandling"];
+		const commandLine = electron.app.commandLine;
+		const appendSwitch = commandLine.appendSwitch.bind(commandLine);
+		const withLunaFeatures = (value?: string) => [...new Set([...(value?.split(",") ?? []), ...lunaDisabledFeatures])].filter(Boolean).join(",");
+		// Appending a switch again replaces its value, so merge ours into the disable-features tidal-hifi sets from its own flags
+		commandLine.appendSwitch = (name: string, value?: string) => appendSwitch(name, name === "disable-features" ? withLunaFeatures(value) : value);
+		appendSwitch("disable-features", withLunaFeatures(commandLine.getSwitchValue("disable-features")));
+	}
 
 	// tidal-hifi settings access for Linux integration
 	ipcHandle("__Luna.getTidalHifiSetting", async (_, key: string) => {

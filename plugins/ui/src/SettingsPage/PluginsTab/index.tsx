@@ -4,6 +4,7 @@ import Stack from "@mui/material/Stack";
 
 import { LunaPlugin } from "@luna/core";
 import { LunaPluginSettings } from "./LunaPluginSettings";
+import { ReloadAllPlugins } from "./ReloadAllPlugins";
 
 export const PluginsTab = React.memo(() => {
 	const plugins = [];
@@ -14,5 +15,10 @@ export const PluginsTab = React.memo(() => {
 		plugins.push(<LunaPluginSettings key={plugin.url} plugin={plugin} />);
 	}
 	if (plugins.length === 0) return "You have no plugins installed!";
-	return <Stack spacing={2}>{plugins}</Stack>;
+	return (
+		<Stack spacing={2}>
+			<ReloadAllPlugins />
+			{plugins}
+		</Stack>
+	);
 });

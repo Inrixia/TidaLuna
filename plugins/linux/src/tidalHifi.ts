@@ -57,11 +57,19 @@ const cycleRepeatMode = () => {
 	PlayState.setRepeatMode(modes[(i + 1) % 3] as Parameters<typeof PlayState.setRepeatMode>[0]);
 };
 
-const sendNotification = (title: string, body: string, icon?: string) => {
+// "Now playing" notifications share a tag, so each track's one replaces the previous one instead of piling up (#210)
+let trackNotification: Notification | undefined;
+unloads.add(() => trackNotification?.close());
+
+const sendNotification = (title: string, body: string, icon?: string, replacesTrack = false) => {
+	const show = () => {
+		if (!replacesTrack) return new Notification(title, { body, icon });
+		trackNotification = new Notification(title, { body, icon, tag: "luna-now-playing" });
+	};
 	if (Notification.permission === "granted") {
-		new Notification(title, { body, icon });
+		show();
 	} else if (Notification.permission !== "denied") {
-		Notification.requestPermission().then((p) => p === "granted" && new Notification(title, { body, icon }));
+		Notification.requestPermission().then((p) => p === "granted" && show());
 	}
 };
 
@@ -167,7 +175,7 @@ MediaItem.onMediaTransition(unloads, async (item) => {
 
 		// Desktop notification
 		if (await getTidalHifiSetting<boolean>("notifications")) {
-			sendNotification(lastInfo.title as string, artistStr, image ?? undefined);
+			sendNotification(lastInfo.title as string, artistStr, image ?? undefined, true);
 		}
 	} catch (err) {
 		linuxTrace.err.withContext("tidalHifi.onMediaTransition")(err);
