@@ -284,6 +284,18 @@ export class LunaPlugin {
 		if (!(plugin instanceof LunaPlugin)) throw new Error("Cannot add dependancy to non plugin!");
 		this.dependants.add(plugin);
 	}
+	/**
+	 * Another enabled plugin that `dependant` depends on and that has not finished loading, if any.
+	 * That plugin will load `dependant` itself once its own exports are available.
+	 */
+	private pendingDependencyOf(dependant: LunaPlugin): LunaPlugin | undefined {
+		for (const plugin of Object.values(LunaPlugin.plugins)) {
+			if (plugin === this || plugin === dependant) continue;
+			if (!plugin.dependants.has(dependant)) continue;
+			if (plugin.enabled && plugin.installed !== false && plugin.exports === undefined) return plugin;
+		}
+		return undefined;
+	}
 	// #endregion
 
 	// #region _exports
@@ -499,6 +511,14 @@ export class LunaPlugin {
 			this.trace.log("Loaded");
 			// Make sure we load any enabled dependants, this is mostly to facilitate live reloading dependency trees
 			for (const dependant of this.dependants) {
+				// If the dependant also depends on another enabled plugin that is not loaded yet, leave it to that plugin.
+				// It stays in that plugin's dependants and is loaded once that plugin finishes loading.
+				// Loading it now would race and fail with "Cannot find module ... in luna.core.modules".
+				const pendingDependency = this.pendingDependencyOf(dependant);
+				if (pendingDependency !== undefined) {
+					this.trace.log(`Deferring dependant ${dependant.name} until ${pendingDependency.name} is loaded`);
+					continue;
+				}
 				// Remove dependant, dependant.load() will add it back if its still a dependant
 				this.dependants.delete(dependant);
 				this.trace.log(`Loading dependant ${dependant.name}`);
