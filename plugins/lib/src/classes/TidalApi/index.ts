@@ -2,6 +2,7 @@ import { type Tracer } from "@luna/core";
 
 import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
 
+import type { TApiTrackWithLyrics } from "./types/Lyrics";
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
 
 import { getCredentials } from "../../helpers";
@@ -61,8 +62,27 @@ export class TidalApi {
 		return result;
 	}
 
-	public static async lyrics(trackId: redux.ItemId) {
-		return this.fetch<redux.Lyrics>(`https://desktop.tidal.com/v1/tracks/${trackId}/lyrics?${this.queryArgs()}`);
+	public static async lyrics(trackId: redux.ItemId): Promise<redux.Lyrics | undefined> {
+		const lyrics = await this.fetch<redux.Lyrics>(`https://desktop.tidal.com/v1/tracks/${trackId}/lyrics?${this.queryArgs()}`);
+		// The v1 API has no lyrics for uploaded tracks, the OpenAPI does (#168)
+		return lyrics ?? this.openApiLyrics(trackId);
+	}
+	/** Lyrics from the OpenAPI, in the shape of the v1 API's lyrics */
+	private static async openApiLyrics(trackId: redux.ItemId): Promise<redux.Lyrics | undefined> {
+		const resp = await this.fetch<TApiTrackWithLyrics>(`https://openapi.tidal.com/v2/tracks/${trackId}?${this.queryArgs()}&include=lyrics`).catch(
+			() => undefined,
+		);
+		const lyrics = resp?.included?.find((item) => item.type === "lyrics")?.attributes;
+		if (!lyrics?.text) return undefined;
+		return {
+			trackId,
+			lyricsProvider: lyrics.provider?.name ?? lyrics.provider?.source ?? "",
+			providerCommontrackId: lyrics.provider?.commonTrackId ?? "",
+			providerLyricsId: lyrics.provider?.lyricsId ?? "",
+			lyrics: lyrics.text,
+			subtitles: lyrics.lrcText || null,
+			isRightToLeft: lyrics.direction === "RIGHT_TO_LEFT",
+		};
 	}
 	public static async artist(artistId: redux.ItemId) {
 		return this.fetch<redux.Artist>(`https://desktop.tidal.com/v1/artists/${artistId}?${this.queryArgs()}`);
