@@ -1,5 +1,6 @@
 import { ftch } from "@luna/core";
 import React from "react";
+import semverGt from "semver/functions/gt";
 
 import { components } from "@octokit/openapi-types";
 type GitHubRelease = components["schemas"]["release"];
@@ -10,13 +11,25 @@ import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
 
 import { pkg, relaunch, update, needsElevation, runElevatedInstall } from "plugins/lib.native/src/index.native";
 
 export const version = (await pkg()).version;
 
 import { useConfirm } from "material-ui-confirm";
-import { LunaButton, LunaSettings, SpinningButton } from "../../components";
+import { LunaButton, LunaLink, LunaSettings, SpinningButton } from "../../components";
+
+const REPO_URL = "https://github.com/Inrixia/TidaLuna";
+// A compare link only reads well forwards, so it is shown for newer releases only
+const isNewer = (tag: string) => {
+	try {
+		return semverGt(tag, version!);
+	} catch {
+		return false;
+	}
+};
 
 export const fetchReleases = () => ftch.json<GitHubRelease[]>("https://api.github.com/repos/Inrixia/TidaLuna/releases");
 
@@ -62,15 +75,27 @@ export const LunaClientUpdate = React.memo(() => {
 					<DialogContentText>Please do not close the application. It will restart automatically.</DialogContentText>
 				</DialogContent>
 			</Dialog>
-			<Select
-				fullWidth
-				sx={{ flex: 1, height: 48 }}
-				value={selectedRelease}
-				onChange={(e) => setSelectedRelease(e.target.value)}
-				children={releases.map((release) => {
-					return <MenuItem value={release.tag_name}>{`${release.tag_name}${release.prerelease ? "-dev" : ""}`}</MenuItem>;
-				})}
-			/>
+			<Stack sx={{ flex: 1 }} spacing={0.5}>
+				<Select
+					fullWidth
+					sx={{ height: 48 }}
+					value={selectedRelease}
+					onChange={(e) => setSelectedRelease(e.target.value)}
+					children={releases.map((release) => {
+						return <MenuItem value={release.tag_name}>{`${release.tag_name}${release.prerelease ? "-dev" : ""}`}</MenuItem>;
+					})}
+				/>
+				{/* What the selected release brings, before installing it (#56) */}
+				<Typography variant="caption" sx={{ opacity: 0.8 }}>
+					<LunaLink href={`${REPO_URL}/releases/tag/${selectedRelease}`}>Release notes</LunaLink>
+					{isNewer(selectedRelease) && (
+						<>
+							{" · "}
+							<LunaLink href={`${REPO_URL}/compare/${version}...${selectedRelease}`}>Changes since {version}</LunaLink>
+						</>
+					)}
+				</Typography>
+			</Stack>
 			<LunaButton
 				sx={{ height: 48 }}
 				disabled={!!busy}
