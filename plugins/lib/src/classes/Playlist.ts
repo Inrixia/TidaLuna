@@ -3,6 +3,7 @@ import { asyncDebounce } from "@inrixia/helpers";
 import type { Tracer } from "@luna/core";
 
 import { addNotificationButton } from "../helpers/notificationButton";
+import { trackTableProps, trackTableRows } from "../helpers/trackTable";
 import { libTrace } from "../index.safe";
 import { ContentBase } from "./ContentBase";
 import type { MediaCollection } from "./MediaCollection";
@@ -299,36 +300,14 @@ const groupRemoved = (order: string[], items: TApiPlaylistItemRef[]): RemovedIte
 
 type PlaylistSelection = { getSelectedPlaylistItems: () => TApiPlaylistItemRef[]; clearSelection?: () => void };
 /**
- * The selection of the open playlist page's track table, `undefined` if there is none. TIDAL keeps it in the table's
- * React state and passes these getters down to every row, so they are read from the first row rendered.
+ * The selection of the open playlist page's track table, `undefined` if there is none. Read from the first row rendered.
  */
 const getPlaylistSelection = (): PlaylistSelection | undefined => {
-	const row = [...document.querySelectorAll(`[data-test="playlist-page"] [data-test="tracklist-row"]`)].find(
-		(row) => row.closest(`[data-test="media-table-suggested-items"]`) === null,
-	);
+	const row = trackTableRows(`[data-test="playlist-page"]`)[0];
 	if (row === undefined) return undefined;
-	type Fiber = {
-		memoizedProps?: Partial<PlaylistSelection>;
-		return?: Fiber | null;
-		alternate?: Fiber | null;
-		tag?: number;
-		stateNode?: { current?: Fiber };
-	};
-	// React keeps two copies of each fiber and the one a DOM node points to may be the previous render's, whose getters
-	// return the previous selection. The current copy is the one that leads up to the root's current fiber.
-	const isCurrent = (fiber: Fiber) => {
-		while (fiber.return) fiber = fiber.return;
-		return fiber.tag === 3 && fiber.stateNode?.current === fiber;
-	};
-	const fiberKey = Object.keys(row).find((key) => key.startsWith("__reactFiber$"));
-	let fiber = fiberKey && (<Record<string, Fiber | undefined>>(<unknown>row))[fiberKey];
-	for (let depth = 0; fiber && depth < 10; depth++, fiber = fiber.return ?? undefined) {
-		if (typeof fiber.memoizedProps?.getSelectedPlaylistItems !== "function") continue;
-		const current = isCurrent(fiber) ? fiber : fiber.alternate;
-		if (typeof current?.memoizedProps?.getSelectedPlaylistItems === "function") return <PlaylistSelection>current.memoizedProps;
-		break;
-	}
-	libTrace.warn("Couldn't find TIDAL's playlist selection, the playlist page may have changed");
+	const selection = trackTableProps<PlaylistSelection>(row, "getSelectedPlaylistItems");
+	if (selection === undefined) libTrace.warn("Couldn't find TIDAL's playlist selection, the playlist page may have changed");
+	return selection;
 };
 
 type ItemsQuery = {
