@@ -1,4 +1,4 @@
-import React, { type PropsWithChildren } from "react";
+import React from "react";
 
 import Container from "@mui/material/Container";
 import Tab from "@mui/material/Tab";
@@ -10,43 +10,66 @@ import PaletteIcon from "@mui/icons-material/Palette";
 import SettingsIcon from "@mui/icons-material/Settings";
 import StorefrontIcon from "@mui/icons-material/Storefront";
 
-import { Signal } from "@inrixia/helpers";
 import { PluginsTab } from "./PluginsTab";
 import { PluginStoreTab } from "./PluginStoreTab";
 import { SettingsTab } from "./SettingsTab";
 import { SupportersTab } from "./SupportersTab";
+import { addBuiltInSettingsTab, currentSettingsTab, SettingsTabs, settingsTabsVersion, type SettingsTab as SettingsTabDef } from "./tabs";
 import { ThemesTab } from "./ThemesTab";
 
-type LunaSettingsTab = "Plugins" | "Plugin Store" | "Settings" | "Themes" | "Supporters";
+export { currentSettingsTab, SettingsTabs } from "./tabs";
+export type { SettingsTab as SettingsTabDefinition, SettingsTabContent, SettingsTabOverride, SettingsTabProps } from "./tabs";
 
-const LunaTabPage = React.memo(({ tab, currentTab, children }: { tab: LunaSettingsTab; currentTab: LunaSettingsTab } & PropsWithChildren) => {
-	if (tab !== currentTab) return null;
-	return <Container sx={{ marginTop: 3, marginLeft: -3 }} children={children} />;
+addBuiltInSettingsTab({ id: "Plugins", label: "Plugins", icon: <ExtensionIcon />, order: 100, content: <PluginsTab /> });
+addBuiltInSettingsTab({ id: "Plugin Store", label: "Plugin Store", icon: <StorefrontIcon />, order: 200, content: <PluginStoreTab /> });
+addBuiltInSettingsTab({ id: "Themes", label: "Themes", icon: <PaletteIcon />, order: 300, content: <ThemesTab /> });
+addBuiltInSettingsTab({ id: "Settings", label: "Settings", icon: <SettingsIcon />, order: 400, content: <SettingsTab /> });
+addBuiltInSettingsTab({ id: "Supporters", label: "Supporters", icon: <FavoriteIcon />, order: 500, content: <SupportersTab /> });
+
+// Content is either a node or a component, components can be objects too (React.memo, forwardRef)
+const isComponent = (content: SettingsTabDef["content"]): content is React.ComponentType<{ active: boolean }> =>
+	typeof content === "function" || (typeof content === "object" && content !== null && !React.isValidElement(content) && "$$typeof" in content);
+const renderContent = (tab: SettingsTabDef, active: boolean): React.ReactNode =>
+	isComponent(tab.content) ? React.createElement(tab.content, { active }) : tab.content;
+
+const LunaTabPage = React.memo(({ tab, active }: { tab: SettingsTabDef; active: boolean }) => {
+	const [visited, setVisited] = React.useState(active);
+	React.useEffect(() => {
+		if (active && !visited) setVisited(true);
+	}, [active, visited]);
+
+	if (!active && !(tab.keepAlive && visited)) return null;
+	return (
+		<Container sx={{ marginTop: 3, marginLeft: -3 }} hidden={!active} data-luna-settings-tab-page={tab.id}>
+			{renderContent(tab, active)}
+		</Container>
+	);
 });
 
-export const currentSettingsTab = new Signal<LunaSettingsTab>("Plugins");
 export const LunaPage = React.memo(() => {
 	const [currentTab, setCurrentTab] = React.useState(currentSettingsTab._);
+	React.useEffect(() => currentSettingsTab.onValue((tab) => setCurrentTab(tab)), []);
+	const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
+	React.useEffect(() => settingsTabsVersion.onValue(forceUpdate), []);
+
+	const tabs = SettingsTabs.list().filter((tab) => !tab.hidden);
+	// If the selected tab was removed or hidden fall back to the first tab
+	const selected = tabs.some((tab) => tab.id === currentTab) ? currentTab : tabs[0]?.id;
+	// Keep currentSettingsTab (and onChange listeners) in sync with the fallback
 	React.useEffect(() => {
-		const unload = currentSettingsTab.onValue((tab) => setCurrentTab(tab));
-		return () => {
-			unload();
-		};
-	}, []);
+		if (selected !== undefined && selected !== currentTab) currentSettingsTab._ = selected;
+	}, [selected, currentTab]);
+
 	return (
-		<Container maxWidth="md" sx={{ padding: 0, marginBottom: 10, flexGrow: 1 }}>
-			<Tabs value={currentTab} onChange={(_, tab) => (currentSettingsTab._ = tab)}>
-				<Tab iconPosition="start" icon={<ExtensionIcon />} value={"Plugins"} label={"Plugins"} />
-				<Tab iconPosition="start" icon={<StorefrontIcon />} value={"Plugin Store"} label={"Plugin Store"} />
-				<Tab iconPosition="start" icon={<PaletteIcon />} value={"Themes"} label={"Themes"} />
-				<Tab iconPosition="start" icon={<SettingsIcon />} value={"Settings"} label={"Settings"} />
-				<Tab iconPosition="start" icon={<FavoriteIcon />} value={"Supporters"} label={"Supporters"} />
+		<Container maxWidth="md" sx={{ padding: 0, marginBottom: 10, flexGrow: 1 }} data-luna-settings-root>
+			<Tabs value={selected ?? false} onChange={(_, tab) => (currentSettingsTab._ = tab)}>
+				{tabs.map((tab) => (
+					<Tab key={tab.id} iconPosition="start" icon={tab.icon} value={tab.id} label={tab.label} data-luna-settings-tab={tab.id} />
+				))}
 			</Tabs>
-			<LunaTabPage tab={"Plugins"} currentTab={currentTab} children={<PluginsTab />} />
-			<LunaTabPage tab={"Settings"} currentTab={currentTab} children={<SettingsTab />} />
-			<LunaTabPage tab={"Plugin Store"} currentTab={currentTab} children={<PluginStoreTab />} />
-			<LunaTabPage tab={"Themes"} currentTab={currentTab} children={<ThemesTab />} />
-			<LunaTabPage tab={"Supporters"} currentTab={currentTab} children={<SupportersTab />} />
+			{tabs.map((tab) => (
+				<LunaTabPage key={tab.id} tab={tab} active={tab.id === selected} />
+			))}
 		</Container>
 	);
 });
