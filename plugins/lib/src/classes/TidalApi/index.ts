@@ -1,6 +1,6 @@
 import { type Tracer } from "@luna/core";
 
-import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
+import { memoize, memoizeArgless, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
 
 import type { TApiTrackWithLyrics } from "./types/Lyrics";
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
@@ -49,17 +49,33 @@ export class TidalApi {
 		return this.fetch<redux.Track>(`https://desktop.tidal.com/v1/tracks/${trackId}?${this.queryArgs()}`);
 	}
 
-	// Lock to two concurrent requests
-	private static readonly playbackInfoSemaphore = new Semaphore(2);
+	// Lock to two concurrent requests, the playing track skips ahead of queued ones (eg tracklist rows)
+	private static playbackInfoSlots = 2;
+	private static readonly playbackInfoQueue: { trackId: redux.ItemId; start: () => void }[] = [];
+	private static async obtainPlaybackInfoSlot(trackId: redux.ItemId) {
+		if (this.playbackInfoSlots > 0) this.playbackInfoSlots--;
+		else await new Promise<void>((start) => this.playbackInfoQueue.push({ trackId, start }));
+		return () => {
+			const playingId = redux.store.getState().playbackControls.playbackContext?.actualProductId;
+			const playingIndex = this.playbackInfoQueue.findIndex((queued) => String(queued.trackId) === String(playingId));
+			const next = this.playbackInfoQueue.splice(Math.max(playingIndex, 0), 1)[0];
+			// Hand the slot over to the next request, or free it
+			if (next !== undefined) next.start();
+			else this.playbackInfoSlots++;
+		};
+	}
 	public static async playbackInfo(trackId: redux.ItemId, audioQuality: redux.AudioQuality) {
 		if (this.unavailableTracks.has(trackId)) return undefined;
-		const result = await this.playbackInfoSemaphore.with(() =>
-			this.fetch<PlaybackInfoResponse>(
+		const release = await this.obtainPlaybackInfoSlot(trackId);
+		try {
+			const result = await this.fetch<PlaybackInfoResponse>(
 				`https://desktop.tidal.com/v1/tracks/${trackId}/playbackinfo?audioquality=${audioQuality}&playbackmode=STREAM&assetpresentation=FULL`,
-			),
-		);
-		if (result === undefined) this.unavailableTracks.add(trackId);
-		return result;
+			);
+			if (result === undefined) this.unavailableTracks.add(trackId);
+			return result;
+		} finally {
+			release();
+		}
 	}
 
 	public static async lyrics(trackId: redux.ItemId): Promise<redux.Lyrics | undefined> {
