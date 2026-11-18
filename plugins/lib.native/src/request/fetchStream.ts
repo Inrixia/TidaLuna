@@ -38,7 +38,10 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 
 	try {
 		for (const url of urls) {
-			const res = await fetch(url, reqInit).then(rejectNotOk);
+			let res = await fetch(url, reqInit);
+			// Retry once on server errors (e.g. CDN 504 Gateway Time-out)
+			if (res.status >= 500) res = await fetch(url, reqInit);
+			rejectNotOk(res);
 			(progress.total as number) += parseTotal(res.headers);
 			const reader = res.body?.getReader();
 			if (!reader) continue;

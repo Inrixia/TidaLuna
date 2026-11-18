@@ -1,5 +1,5 @@
 import type { PlaybackInfo } from "@luna/lib";
-import { Readable } from "stream";
+import { pipeline, Readable } from "stream";
 
 import { makeDecipher } from "./decrypt";
 import { fetchStream, type TrackStreamOptions } from "./fetchStream";
@@ -39,11 +39,14 @@ export const fetchMediaItemStream = ({ manifestMimeType, manifest }: PlaybackInf
 						}))
 						.catch(() => undefined);
 				}
-				return stream.pipe(
+				// pipeline forwards source errors to the tagger, pipe() would leave them unhandled
+				return pipeline(
+					stream,
 					new FlacStreamTagger({
 						tagMap: tags,
 						picture,
 					}),
+					() => {},
 				);
 			}
 			case "application/dash+xml": {
