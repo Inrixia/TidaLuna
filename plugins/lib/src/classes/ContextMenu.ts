@@ -2,7 +2,7 @@ import { registerEmitter, type AddReceiver } from "@inrixia/helpers";
 
 import type { LunaUnloads, Tracer } from "@luna/core";
 
-import { observePromise } from "../helpers";
+import { listenerError, observePromise } from "../helpers";
 import { libTrace, unloads } from "../index.safe";
 import * as redux from "../redux";
 import { Album } from "./Album";
@@ -90,7 +90,10 @@ export class ContextMenu {
 		redux.intercept("contextMenu/OPEN", unloads, async (event) => {
 			const contextMenu = await ContextMenu.getCurrent();
 			if (contextMenu === null) return;
-			onOpen({ event, contextMenu }, ContextMenu.trace.msg.err.withContext(".onOpen", event.type, contextMenu));
+			onOpen(
+				{ event, contextMenu },
+				listenerError("ContextMenu.onOpen", ContextMenu.trace.msg.err.withContext(".onOpen", event.type, contextMenu)),
+			);
 		});
 	});
 
@@ -104,7 +107,7 @@ export class ContextMenu {
 				if (contextMenu === null) return;
 				onMediaItem(
 					{ mediaCollection: MediaItems.fromIds([item.id]), contextMenu },
-					ContextMenu.trace.err.withContext("onMediaItem.OPEN_MEDIA_ITEM", contextMenu),
+					listenerError("ContextMenu.onMediaItem", ContextMenu.trace.err.withContext("onMediaItem.OPEN_MEDIA_ITEM", contextMenu)),
 				);
 			});
 			redux.intercept(`contextMenu/OPEN_MULTI_MEDIA_ITEM`, unloads, async (items) => {
@@ -112,7 +115,7 @@ export class ContextMenu {
 				if (contextMenu === null) return;
 				onMediaItem(
 					{ mediaCollection: MediaItems.fromIds(items.ids), contextMenu },
-					ContextMenu.trace.err.withContext("onMediaItem.OPEN_MULTI_MEDIA_ITEM", contextMenu),
+					listenerError("ContextMenu.onMediaItem", ContextMenu.trace.err.withContext("onMediaItem.OPEN_MULTI_MEDIA_ITEM", contextMenu)),
 				);
 			});
 			ContextMenu.onOpen(unloads, async ({ event, contextMenu }) => {

@@ -354,6 +354,25 @@ export class LunaPlugin {
 	// #endregion
 
 	// #region Storage
+	/**
+	 * The non-core plugin whose bundle threw, found from the topmost stack frame that belongs to one.
+	 * Plugin code runs from a blob with `//# sourceURL=<url>.mjs`, so its frames carry that url.
+	 */
+	public static fromStack(stack?: string): LunaPlugin | undefined {
+		if (stack === undefined) return undefined;
+		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !LunaPlugin.corePlugins.has(plugin.name) && plugin.url.length > 0);
+		for (const frame of stack.split("\n")) {
+			const plugin = plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
+			if (plugin !== undefined) return plugin;
+		}
+		return undefined;
+	}
+
+	/** Show an error that happened after the plugin loaded (e.g. in one of its listeners) on its card */
+	public setLoadError(message: string): void {
+		this.loadError._ = message;
+	}
+
 	public get url(): string {
 		return this.store.url;
 	}
