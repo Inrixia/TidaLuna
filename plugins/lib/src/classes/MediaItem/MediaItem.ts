@@ -191,7 +191,11 @@ export class MediaItem extends ContentBase {
 			// If a recording exists then fetch the full recording details including media for title resolution
 			const release = await ftch
 				.json<IRecording>(`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`)
-				.then(({ releases }) => releases?.filter((release) => release["text-representation"].language === "eng")[0] ?? releases?.[0])
+				.then(({ title, releases }) => {
+					// Release data can be wrong (eg a Japanese release tagged as English), only use releases where the track title matches the recording
+					releases = releases?.filter((release) => MediaItem.baseTitle(release.media?.[0]?.tracks?.[0]?.title) === MediaItem.baseTitle(title));
+					return releases?.filter((release) => release["text-representation"].language === "eng")[0] ?? releases?.[0];
+				})
 				.catch(this.trace.warn.withContext("brainzItem.getISRCRecordings"));
 			if (release === undefined) return undefined;
 
@@ -209,7 +213,8 @@ export class MediaItem extends ContentBase {
 					if (err.message !== "Status code is 404") this.trace.warn.withContext("brainzItem.getISRCRecordings");
 				});
 
-			if (recording !== undefined) return releaseTrackFromRecording(recording);
+			const releaseTrack = recording && (await releaseTrackFromRecording(recording));
+			if (releaseTrack !== undefined) return releaseTrack;
 		}
 
 		const album = await this.album();
@@ -231,23 +236,27 @@ export class MediaItem extends ContentBase {
 	 * Pick the recording whose title matches the Tidal title, otherwise the one closest in length, otherwise none.
 	 */
 	private matchBrainzRecording(recordings?: IRecording[]): IRecording | undefined {
-		const baseTitle = (title?: string) =>
-			ContentBase.normalizeQuotes(title ?? "")
-				.toLowerCase()
-				.replace(/\s*[([].*?[)\]]/g, "")
-				.trim();
 		const lengthDiff = (recording: IRecording) =>
 			this.tidalItem.duration && recording.length ? Math.abs(recording.length / 1000 - this.tidalItem.duration) : Infinity;
 		const byLength = (a: IRecording, b: IRecording) => lengthDiff(a) - lengthDiff(b);
 
-		const tidalTitle = baseTitle(this.tidalItem.title);
-		const titleMatches = recordings?.filter((recording) => baseTitle(recording.title) === tidalTitle) ?? [];
+		const tidalTitle = MediaItem.baseTitle(this.tidalItem.title);
+		const titleMatches = recordings?.filter((recording) => MediaItem.baseTitle(recording.title) === tidalTitle) ?? [];
 		if (titleMatches.length !== 0) return titleMatches.sort(byLength)[0];
 
 		const closest = recordings?.slice().sort(byLength)[0];
 		if (closest !== undefined && lengthDiff(closest) <= MediaItem.brainzLengthTolerance) return closest;
 	}
 	private static readonly brainzLengthTolerance = 5;
+	/**
+	 * Title for comparing Tidal and MusicBrainz titles, ignores case, quote style and anything in brackets.
+	 */
+	private static baseTitle(title?: string): string {
+		return ContentBase.normalizeQuotes(title ?? "")
+			.toLowerCase()
+			.replace(/\s*[([].*?[)\]]/g, "")
+			.trim();
+	}
 
 	public brainzId: () => Promise<string | undefined> = memoize(async () => {
 		const brainzItem = await this.brainzItem();
