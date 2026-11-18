@@ -16,8 +16,7 @@ export const addNotificationButton = (message: string, label: string, onClick: (
 		if (shown.has(notification) || !notification.textContent?.includes(message)) return;
 		const close = notification.querySelector<HTMLButtonElement>(`[data-test="notification-close"]`);
 		if (close === null) return;
-		stop();
-		clearTimeout(timeout);
+		done();
 		const button = <HTMLButtonElement>close.cloneNode();
 		button.removeAttribute("data-test");
 		button.textContent = label;
@@ -27,5 +26,11 @@ export const addNotificationButton = (message: string, label: string, onClick: (
 		});
 		close.before(button);
 	});
-	const timeout = setTimeout(stop, timeoutMs);
+	// Also take the observer's unload back out of lib's unloads, it would keep `onClick` alive until Luna unloads
+	const done = () => {
+		stop();
+		unloads.delete(stop);
+		clearTimeout(timeout);
+	};
+	const timeout = setTimeout(done, timeoutMs);
 };

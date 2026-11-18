@@ -28,6 +28,8 @@ const ShortcutSetting = ({ shortcut }: { shortcut: Shortcut }) => {
 					onFocus={() => setRecording(true)}
 					onBlur={() => setRecording(false)}
 					onKeyDown={(event) => {
+						// Tab moves on as usual, so keyboard users can get past the field without rebinding it
+						if (event.key === "Tab" && !event.ctrlKey && !event.altKey && !event.metaKey) return;
 						event.preventDefault();
 						event.stopPropagation();
 						if (event.key === "Escape") return (event.target as HTMLElement).blur();
@@ -48,7 +50,10 @@ const ShortcutSetting = ({ shortcut }: { shortcut: Shortcut }) => {
 
 export const LunaShortcuts = React.memo(() => {
 	const [, setVersion] = React.useState(Shortcut.version._);
-	React.useEffect(() => Shortcut.version.onValue(setVersion), []);
+	React.useEffect(() => {
+		const unload = Shortcut.version.onValue(setVersion);
+		return () => void unload();
+	}, []);
 	const shortcuts = [...Shortcut.shortcuts.values()];
 	if (shortcuts.length === 0) return null;
 	return (

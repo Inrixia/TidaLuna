@@ -95,22 +95,22 @@ export class Playlist extends ContentBase implements MediaCollection {
 	}
 	// Group the entries by the entry that follows them in playlist order, so they can be added back before it
 	private async removedItems(items: TApiPlaylistItemRef[]): Promise<RemovedItems> {
-		const itemIds = new Set(items.map(({ meta }) => meta.itemId));
-		// The list must hold all the entries and the one after the last of them, unless it is the whole playlist
-		const covers = (list: TApiPlaylistItemRef[], complete = false) => {
-			const found = list.filter(({ meta }) => itemIds.has(meta.itemId)).length;
-			return found === itemIds.size && (complete || !itemIds.has(list.at(-1)!.meta.itemId));
-		};
+		const byItemId = new Map(items.map((item) => [item.meta.itemId, item]));
+		// TIDAL's cached list will do if it holds all the entries and the one after the last of them, or is the whole playlist
 		const cached = cachedItemRefs(this.uuid);
-		let list = cached?.items;
-		if (cached === undefined || !covers(cached.items, cached.complete)) list = await TidalApi.playlistItemRefs(this.uuid, { until: covers });
+		const cachedIds = cached?.items.map(({ meta }) => meta.itemId) ?? [];
+		const covers =
+			cachedIds.filter((itemId) => byItemId.has(itemId)).length === byItemId.size && (cached!.complete || !byItemId.has(cachedIds.at(-1)!));
+		// Otherwise get the order of the whole playlist, one request
+		const order = covers ? cachedIds : await TidalApi.playlistItemIds(this.uuid);
 
 		const removed: RemovedItems = [];
 		let group: TApiPlaylistItemRef[] = [];
-		for (const item of list!) {
-			if (itemIds.has(item.meta.itemId)) group.push(item);
+		for (const itemId of order) {
+			const item = byItemId.get(itemId);
+			if (item !== undefined) group.push(item);
 			else if (group.length > 0) {
-				removed.push({ items: group, before: item.meta.itemId });
+				removed.push({ items: group, before: itemId });
 				group = [];
 			}
 		}
@@ -162,18 +162,23 @@ export class Playlist extends ContentBase implements MediaCollection {
 		// Entries removed a moment ago can still be selected until TIDAL has reloaded the list
 		const selected = selection?.getSelectedPlaylistItems().filter(({ meta }) => !removedItemIds.has(meta.itemId));
 		if (selected === undefined || selected.length === 0) return false;
+		// Still removing the previous selection, swallow the key rather than remove anything twice
+		if (this.removing) return;
+		this.removing = true;
+		// Like TIDAL on its own removal. Cleared right away, so the rows that move up aren't selected and a selection made
+		// while this runs stays
+		selection!.clearSelection?.();
 
 		return (async () => {
 			const removal: Removal = { uuid, removed: await playlist.removeItems(selected), restoring: false };
-			// Like TIDAL after its own removal, otherwise the selection would cover the rows that moved up
-			selection!.clearSelection?.();
 			Playlist.lastRemoval = removal;
 			const message = `Removed ${selected.length} ${selected.length === 1 ? "item" : "items"}`;
 			// The notification's Undo restores this removal, wherever the user is by then
 			addNotificationButton(message, "Undo", () => Playlist.undo(removal).catch(playlist.trace.msg.err.withContext("Undo")));
 			playlist.trace.msg.log(message);
-		})();
+		})().finally(() => (this.removing = false));
 	}
+	private static removing = false;
 
 	public async count() {
 		return this.tidalPlaylist.numberOfTracks!;

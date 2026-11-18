@@ -116,17 +116,13 @@ export class TidalApi {
 
 	/**
 	 * Items of a playlist in playlist order, with the `meta.itemId` that identifies each entry (duplicates have their own).
-	 * Not cached, always the current state. Fetched 20 per request, so pass `until` if only the first ones are needed.
-	 * @param options.until Stop fetching once this returns true for the items fetched so far
+	 * Not cached, always the current state. Fetched 20 per request, slow on big playlists.
 	 */
-	public static async playlistItemRefs(
-		playlistUUID: redux.ItemId,
-		{ until }: { until?: (refs: TApiPlaylistItemRef[]) => boolean } = {},
-	): Promise<TApiPlaylistItemRef[]> {
+	public static async playlistItemRefs(playlistUUID: redux.ItemId): Promise<TApiPlaylistItemRef[]> {
 		const headers = await this.getAuthHeaders();
 		const refs: TApiPlaylistItemRef[] = [];
 		let path: string | undefined = `playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
-		while (path !== undefined && !until?.(refs)) {
+		while (path !== undefined) {
 			const res = await fetch(`https://openapi.tidal.com/v2/${path.replace(/^\//, "")}`, { headers });
 			if (!statusOK(res.status)) this.trace.err.withContext(path).throw(`${res.status} ${res.statusText}`);
 			const page: { data: TApiPlaylistItemRef[]; links: { next?: string } } = await res.json();
@@ -134,6 +130,17 @@ export class TidalApi {
 			path = page.links.next;
 		}
 		return refs;
+	}
+	/**
+	 * The `meta.itemId` of each entry of a playlist in playlist order, from a single request.
+	 * Not cached, always the current state.
+	 */
+	public static async playlistItemIds(playlistUUID: redux.ItemId): Promise<string[]> {
+		const url = `https://desktop.tidal.com/v1/playlists/${playlistUUID}/items?${this.queryArgs()}&limit=-1`;
+		const res = await fetch(url, { headers: await this.getAuthHeaders() });
+		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+		const body: { items: { item: { itemUuid: string } }[] } = await res.json();
+		return body.items.map(({ item }) => item.itemUuid);
 	}
 	/**
 	 * Remove items from a playlist, the same request TIDAL's "Remove from playlist" makes

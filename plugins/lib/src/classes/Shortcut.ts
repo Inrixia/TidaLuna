@@ -32,7 +32,7 @@ const userEnabled = await store.getReactive<Record<string, boolean>>("enabled", 
 export class Shortcut {
 	public static readonly trace: Tracer = libTrace.withSource(".Shortcut").trace;
 	public static readonly shortcuts: Map<string, Shortcut> = new Map();
-	/** Bumped whenever shortcuts are registered, removed or rebound */
+	/** Bumped whenever shortcuts are registered, removed, rebound or turned on or off */
 	public static readonly version: Signal<number> = new Signal(0);
 	private static changed() {
 		this.version._ = this.version._ + 1;
