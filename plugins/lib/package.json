@@ -16,7 +16,6 @@
 	},
 	"devDependencies": {
 		"musicbrainz-api": "^1.2.1",
-		"neptune-types": "^1.0.1",
 		"oby": "^15.1.2",
 		"redux": "^5.0.1"
 	}
