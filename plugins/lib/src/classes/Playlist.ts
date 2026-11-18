@@ -73,9 +73,12 @@ export class Playlist extends ContentBase implements MediaCollection {
 			}
 		} catch (err) {
 			if (done.length === 0) throw err;
-			throw Object.assign(new Error(`Removed only ${done.length} of ${items.length} items`, { cause: err }), {
-				removed: groupRemoved(order, done),
-			});
+			throw Object.assign(
+				new Error(`Removed only ${done.length} of ${items.length} items: ${err instanceof Error ? err.message : err}`, { cause: err }),
+				{
+					removed: groupRemoved(order, done),
+				},
+			);
 		} finally {
 			if (done.length > 0) this.refresh();
 		}
@@ -182,8 +185,8 @@ export class Playlist extends ContentBase implements MediaCollection {
 			}
 			const count = removed.reduce((sum, { items }) => sum + items.length, 0);
 			if (count > 0) {
-				// Like TIDAL on its own removal, so the rows that move up aren't selected. Only if the selection is still the
-				// removed one, a selection made while this ran stays, and on a failure the user can try again
+				// Clear the removed entries' selection like TIDAL does on its own removal. Only if the selection is still the
+				// removed one: a selection made while this ran stays, and on a failure the user can try again
 				const current = getPlaylistSelection();
 				const currentIds = current?.getSelectedPlaylistItems().map(({ meta }) => meta.itemId) ?? [];
 				const selectedIds = new Set(selected.map(({ meta }) => meta.itemId));
@@ -253,6 +256,9 @@ const groupRemoved = (order: string[], items: TApiPlaylistItemRef[]): RemovedIte
 			group = [];
 		}
 	}
+	// Entries the order doesn't have go back at the end rather than not at all
+	const inOrder = new Set(order);
+	group.push(...items.filter(({ meta }) => !inOrder.has(meta.itemId)));
 	if (group.length > 0) groups.push({ items: group });
 	// Batches with the same `before` go back in order, each before the same entry
 	const max = TidalApi.maxPlaylistItemsPerRequest;
@@ -298,6 +304,7 @@ const getPlaylistSelection = (): PlaylistSelection | undefined => {
 type ItemsQuery = {
 	endpointName?: string;
 	originalArgs?: { id?: string; sort?: string[] };
+	status?: string;
 	data?: { pages?: { data: TApiPlaylistItemRef[]; links?: { next?: string } }[] };
 };
 /**
@@ -313,7 +320,9 @@ const cachedItemRefs = (uuid: redux.ItemId) => {
 			query.originalArgs?.id === uuid &&
 			(query.originalArgs.sort?.length ?? 0) === 0,
 	);
-	const pages = query?.data?.pages;
+	// While it is being fetched again, e.g. right after a change, it still holds the old pages
+	if (query?.status !== "fulfilled") return undefined;
+	const pages = query.data?.pages;
 	if (pages === undefined) return undefined;
 	const items = pages.flatMap((page) => page.data);
 	if (items.some(({ meta }) => removedItemIds.has(meta.itemId))) return undefined;
