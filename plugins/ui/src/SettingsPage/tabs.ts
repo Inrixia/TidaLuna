@@ -1,4 +1,4 @@
-import type { LunaUnloads } from "@luna/core";
+import type { LunaUnload, LunaUnloads } from "@luna/core";
 import { Signal } from "@inrixia/helpers";
 import type React from "react";
 
@@ -77,8 +77,16 @@ export const SettingsTabs = {
 	open(id: string) {
 		currentSettingsTab._ = id;
 	},
-	/** Called with the tab id whenever the selected tab changes */
-	onChange: (cb: (id: string) => unknown) => currentSettingsTab.onValue(cb),
-	/** Called whenever tabs or overrides change */
-	onUpdate: (cb: () => unknown) => settingsTabsVersion.onValue(() => cb()),
+	/** Called with the tab id whenever the selected tab changes. Removed again when unloads run. */
+	onChange(unloads: LunaUnloads, cb: (id: string) => unknown): LunaUnload {
+		const unload: LunaUnload = currentSettingsTab.onValue(cb);
+		unloads.add(unload);
+		return unload;
+	},
+	/** Called whenever tabs or overrides change. Removed again when unloads run. */
+	onUpdate(unloads: LunaUnloads, cb: () => unknown): LunaUnload {
+		const unload: LunaUnload = settingsTabsVersion.onValue(() => cb());
+		unloads.add(unload);
+		return unload;
+	},
 };

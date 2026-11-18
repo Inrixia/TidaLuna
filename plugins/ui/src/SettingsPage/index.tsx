@@ -14,7 +14,7 @@ import { PluginsTab } from "./PluginsTab";
 import { PluginStoreTab } from "./PluginStoreTab";
 import { SettingsTab } from "./SettingsTab";
 import { SupportersTab } from "./SupportersTab";
-import { addBuiltInSettingsTab, currentSettingsTab, SettingsTabs, type SettingsTab as SettingsTabDef } from "./tabs";
+import { addBuiltInSettingsTab, currentSettingsTab, SettingsTabs, settingsTabsVersion, type SettingsTab as SettingsTabDef } from "./tabs";
 import { ThemesTab } from "./ThemesTab";
 
 export { currentSettingsTab, SettingsTabs } from "./tabs";
@@ -50,11 +50,15 @@ export const LunaPage = React.memo(() => {
 	const [currentTab, setCurrentTab] = React.useState(currentSettingsTab._);
 	React.useEffect(() => currentSettingsTab.onValue((tab) => setCurrentTab(tab)), []);
 	const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
-	React.useEffect(() => SettingsTabs.onUpdate(forceUpdate), []);
+	React.useEffect(() => settingsTabsVersion.onValue(forceUpdate), []);
 
 	const tabs = SettingsTabs.list().filter((tab) => !tab.hidden);
 	// If the selected tab was removed or hidden fall back to the first tab
 	const selected = tabs.some((tab) => tab.id === currentTab) ? currentTab : tabs[0]?.id;
+	// Keep currentSettingsTab (and onChange listeners) in sync with the fallback
+	React.useEffect(() => {
+		if (selected !== undefined && selected !== currentTab) currentSettingsTab._ = selected;
+	}, [selected, currentTab]);
 
 	return (
 		<Container maxWidth="md" sx={{ padding: 0, marginBottom: 10, flexGrow: 1 }} data-luna-settings-root>
