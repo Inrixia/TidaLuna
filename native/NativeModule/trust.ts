@@ -45,7 +45,26 @@ const saveTrustStore = () => {
 
 const fastCache = new WeakMap<object, boolean>();
 
-export const isTrusted = ({ hash, fileName }: NativeModuleInfo, moduleName: string, module: object): boolean => {
+// Prompts needed while module code runs under the vm timeout (see secureLoad), to be asked once it has stopped
+let deferredPrompts: Map<string, () => boolean> | undefined;
+
+/**
+ * Runs `load` without showing trust prompts: a call that would prompt throws instead and its prompt is returned in `prompts`.
+ * Calling a returned prompt shows the dialog and saves the answer.
+ */
+export const withDeferredPrompts = <T>(load: () => T) => {
+	const prompts = (deferredPrompts = new Map<string, () => boolean>());
+	try {
+		return { exports: load(), prompts: [...prompts.values()] };
+	} catch (error) {
+		return { error, prompts: [...prompts.values()] };
+	} finally {
+		deferredPrompts = undefined;
+	}
+};
+
+export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string, module: object): boolean => {
+	const { hash, fileName } = moduleInfo;
 	// If we have already verified this exact object, return immediately. Cost: O(1) lookup. Zero garbage generation.
 	if (fastCache.has(module)) return fastCache.get(module)!;
 
@@ -60,6 +79,11 @@ export const isTrusted = ({ hash, fileName }: NativeModuleInfo, moduleName: stri
 			fastCache.set(module, decision);
 			return decision;
 		}
+	}
+
+	if (deferredPrompts !== undefined) {
+		deferredPrompts.set(methodHash, () => isTrusted(moduleInfo, moduleName, module));
+		throw new Error(`[🛑Security🛑] '${moduleName}' in '${fileName}' needs permission, asking after load`);
 	}
 
 	const win = BrowserWindow.getFocusedWindow();
