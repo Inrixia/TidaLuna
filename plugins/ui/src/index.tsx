@@ -11,6 +11,8 @@ import { Page } from "./classes/Page";
 import { confirm } from "./helpers/confirm";
 import { lunaMuiTheme } from "./lunaTheme";
 import { currentSettingsTab, LunaPage } from "./SettingsPage";
+export { currentSettingsTab, SettingsTabs } from "./SettingsPage";
+export type { SettingsTabContent, SettingsTabDefinition, SettingsTabOverride, SettingsTabProps } from "./SettingsPage";
 import { storeUrls } from "./SettingsPage/PluginStoreTab";
 import { fetchReleases } from "./SettingsPage/SettingsTab/LunaClientUpdate";
 
@@ -24,7 +26,8 @@ export * from "./helpers";
 
 export { lunaMuiTheme, unloads };
 
-const settingsPage = Page.register(
+/** The Luna Settings page, plugins can restyle it via settingsPage.pageStyles */
+export const settingsPage = Page.register(
 	"LunaSettings",
 	unloads,
 	<ThemeProvider theme={lunaMuiTheme}>
