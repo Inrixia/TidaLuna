@@ -17,18 +17,18 @@ const AuthorName = React.memo((props: { name: string; prefix?: string } & Typogr
 
 export const LunaAuthorDisplay = React.memo((props: { author: LunaAuthor | string; prefix?: string } & StackProps) => {
 	const { author, prefix } = props;
-	if (typeof author === "string") return <Box paddingTop={0.75} children={<AuthorName name={author} />} />;
+	if (typeof author === "string") return <Box sx={{ paddingTop: 0.75 }} children={<AuthorName name={author} />} />;
 	return (
 		<Tooltip title={`Visit ${author.name}'s profile`}>
 			<Stack
 				direction="row"
 				spacing={1}
-				alignItems="center"
 				onClick={() => {
 					window.open(author.url, "_blank");
 				}}
 				{...props}
 				sx={{
+					alignItems: "center",
 					cursor: "pointer",
 					...props.sx,
 				}}

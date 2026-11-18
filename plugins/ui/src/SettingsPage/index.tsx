@@ -48,9 +48,15 @@ const LunaTabPage = React.memo(({ tab, active }: { tab: SettingsTabDef; active: 
 
 export const LunaPage = React.memo(() => {
 	const [currentTab, setCurrentTab] = React.useState(currentSettingsTab._);
-	React.useEffect(() => currentSettingsTab.onValue((tab) => setCurrentTab(tab)), []);
+	React.useEffect(() => {
+		const unload = currentSettingsTab.onValue((tab) => setCurrentTab(tab));
+		return () => void unload();
+	}, []);
 	const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
-	React.useEffect(() => settingsTabsVersion.onValue(forceUpdate), []);
+	React.useEffect(() => {
+		const unload = settingsTabsVersion.onValue(forceUpdate);
+		return () => void unload();
+	}, []);
 
 	const tabs = SettingsTabs.list().filter((tab) => !tab.hidden);
 	// If the selected tab was removed or hidden fall back to the first tab

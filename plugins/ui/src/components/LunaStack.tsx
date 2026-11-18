@@ -9,13 +9,12 @@ import { LunaTitle, type LunaTitleValues } from "./LunaTitle";
 export type LunaStackProps = StackProps & { variant?: TypographyProps["variant"]; titleChildren?: React.ReactNode } & Partial<LunaTitleValues>;
 
 export const LunaStack = React.memo((props: LunaStackProps) => {
-	const { title, desc, variant } = props;
-	delete props.title;
+	const { title, desc, variant, titleChildren, ...stackProps } = props;
 	return (
 		<Box>
-			{title && <LunaTitle variant={variant} title={title} desc={desc} children={props.titleChildren} />}
+			{title && <LunaTitle variant={variant} title={title} desc={desc} children={titleChildren} />}
 			<div style={{ height: 8 }} />
-			<Stack display="flex" spacing={1} {...props} />
+			<Stack spacing={1} {...stackProps} />
 		</Box>
 	);
 });
