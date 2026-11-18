@@ -52,6 +52,10 @@ export interface MultiMediaItemContextMenu extends Omit<ContextMenuBase, "id"> {
 	sourceContext: MediaCollectionContext;
 	type: "MULTI_MEDIA_ITEM";
 }
+export interface PlaylistItemMultiSelectContextMenu extends Omit<ContextMenuBase, "id"> {
+	items: { id: ItemId; meta: { itemId: string }; type: "tracks" | "videos" }[];
+	sourceContext: MediaCollectionContext;
+}
 export interface InputFieldClipboardContextMenu extends ContextMenuBase {
 	targetElement?: EventTarget | HTMLInputElement | HTMLTextAreaElement;
 	type: "INPUT_FIELD_CLIPBOARD";

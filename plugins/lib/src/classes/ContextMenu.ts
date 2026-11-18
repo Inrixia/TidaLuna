@@ -118,6 +118,17 @@ export class ContextMenu {
 					listenerError("ContextMenu.onMediaItem", ContextMenu.trace.err.withContext("onMediaItem.OPEN_MULTI_MEDIA_ITEM", contextMenu)),
 				);
 			});
+			redux.intercept(`contextMenu/OPEN_PLAYLIST_ITEM_MULTI_SELECT`, unloads, async ({ items }) => {
+				const contextMenu = await ContextMenu.getCurrent();
+				if (contextMenu === null) return;
+				const mediaCollection = MediaItems.fromTMediaItems(
+					items.map(({ id, type }) => ({ item: { id }, type: type === "videos" ? "video" : "track" })),
+				);
+				onMediaItem(
+					{ mediaCollection, contextMenu },
+					listenerError("ContextMenu.onMediaItem", ContextMenu.trace.err.withContext("onMediaItem.OPEN_PLAYLIST_ITEM_MULTI_SELECT", contextMenu)),
+				);
+			});
 			ContextMenu.onOpen(unloads, async ({ event, contextMenu }) => {
 				switch (event.type) {
 					case "ALBUM": {
