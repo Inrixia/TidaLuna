@@ -26,6 +26,10 @@ const textRoles = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
 const popupRoles = new Set(["menu", "menubar", "listbox", "dialog", "alertdialog"]);
 // TIDAL's dialogs are <dialog> elements opened without being modal, focus can be on the dialog itself or outside it
 const openDialogSelector = `dialog[open], [aria-modal="true"]`;
+// Whether a dialog is open and visible in `root` or in a shadow root inside it
+const hasOpenDialog = (root: Document | ShadowRoot): boolean =>
+	[...root.querySelectorAll(openDialogSelector)].some((dialog) => dialog.checkVisibility()) ||
+	[...root.querySelectorAll("*")].some((element) => element.shadowRoot !== null && hasOpenDialog(element.shadowRoot));
 
 // Keys the user rebound and shortcuts they turned on or off in Luna Settings, by shortcut id
 const store = ReactiveStore.getStore("@luna/shortcuts");
@@ -163,21 +167,23 @@ export class Shortcut {
 	}
 
 	/**
-	 * True if a dialog is open or the event comes from a menu, e.g. TIDAL's context menu.
+	 * True if a dialog is open and visible (also in shadow DOM) or the event comes from a menu, e.g. TIDAL's context menu.
 	 * Their keys belong to them, not to the page behind them.
 	 */
 	public static isInPopup(event: Event): boolean {
-		if (document.querySelector(openDialogSelector) !== null) return true;
+		if (hasOpenDialog(document)) return true;
 		return event.composedPath().some((target) => target instanceof HTMLElement && popupRoles.has(target.getAttribute("role") ?? ""));
 	}
 }
 
 const onKeyDown = (event: KeyboardEvent) => {
-	if (event.defaultPrevented || event.repeat || Shortcut.isTyping(event) || Shortcut.isInPopup(event)) return;
+	if (event.defaultPrevented || event.repeat) return;
 	const keys = Shortcut.fromEvent(event);
 	if (keys === undefined) return;
-	for (const shortcut of Shortcut.shortcuts.values()) {
-		if (!shortcut.enabled || !shortcut.keys.includes(keys)) continue;
+	const matching = [...Shortcut.shortcuts.values()].filter((shortcut) => shortcut.enabled && shortcut.keys.includes(keys));
+	// Checked only for keys that are bound, as looking for open dialogs goes through the whole page
+	if (matching.length === 0 || Shortcut.isTyping(event) || Shortcut.isInPopup(event)) return;
+	for (const shortcut of matching) {
 		const onError = Shortcut.trace.msg.err.withContext(shortcut.id);
 		try {
 			const result = shortcut.options.action(event);
