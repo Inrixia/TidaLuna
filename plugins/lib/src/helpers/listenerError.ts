@@ -10,11 +10,11 @@ import { LunaPlugin } from "@luna/core";
 export const listenerError =
 	(context: string, fallback: (err: unknown) => unknown) =>
 	(err: unknown): void => {
-		const culprit = LunaPlugin.fromStack((<Error>err)?.stack);
-		if (culprit === undefined) {
+		const erroredPlugin = LunaPlugin.fromStack((<Error>err)?.stack);
+		if (erroredPlugin === undefined) {
 			fallback(err);
 			return;
 		}
-		console.error(`[${culprit.name}] Listener error in ${context}:`, err);
-		culprit.reportError(`${context}: ${(<Error>err)?.message ?? String(err)}`);
+		console.error(`[${erroredPlugin.name}] Listener error in ${context}:`, err);
+		erroredPlugin.setLoadError(`${context}: ${(<Error>err)?.message ?? String(err)}`);
 	};

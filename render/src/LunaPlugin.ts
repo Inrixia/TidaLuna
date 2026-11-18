@@ -369,7 +369,7 @@ export class LunaPlugin {
 	}
 
 	/** Show an error that happened after the plugin loaded (e.g. in one of its listeners) on its card */
-	public reportError(message: string): void {
+	public setLoadError(message: string): void {
 		this.loadError._ = message;
 	}
 
