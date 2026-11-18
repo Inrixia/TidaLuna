@@ -43,11 +43,19 @@ const saveTrustStore = () => {
 	}
 };
 
-const fastCache = new WeakMap<object, boolean>();
+// Decisions made this session, per plugin code hash and module name.
+// Never key this by the function being called: e.g. require("os").hostname is the same object for every plugin.
+const fastCache = new Map<string, Map<string, boolean>>();
+const setFastCache = (hash: string, moduleName: string, decision: boolean) => {
+	let decisions = fastCache.get(hash);
+	if (decisions === undefined) fastCache.set(hash, (decisions = new Map()));
+	decisions.set(moduleName, decision);
+};
 
-export const isTrusted = ({ hash, fileName }: NativeModuleInfo, moduleName: string, module: object): boolean => {
-	// If we have already verified this exact object, return immediately. Cost: O(1) lookup. Zero garbage generation.
-	if (fastCache.has(module)) return fastCache.get(module)!;
+export const isTrusted = ({ hash, fileName }: NativeModuleInfo, moduleName: string): boolean => {
+	// If this plugin was already allowed/blocked for this module, return immediately. Cost: two O(1) lookups. Zero garbage generation.
+	const cached = fastCache.get(hash)?.get(moduleName);
+	if (cached !== undefined) return cached;
 
 	getTrustStore();
 	const methodHash = `${hash}::${moduleName}`;
@@ -57,7 +65,7 @@ export const isTrusted = ({ hash, fileName }: NativeModuleInfo, moduleName: stri
 		// re-prompt on saved denies
 		if (decision === true) {
 			// Backfill fastCache so next time we skip the string build/map lookup
-			fastCache.set(module, decision);
+			setFastCache(hash, moduleName, decision);
 			return decision;
 		}
 	}
@@ -80,7 +88,7 @@ Only click "Allow" if you trust this!`,
 	const isAllowed = responseIndex === 1;
 
 	trustStore.set(methodHash, isAllowed); // Save to Map
-	fastCache.set(module, isAllowed); // Save to WeakMap
+	setFastCache(hash, moduleName, isAllowed); // Save to session cache
 	saveTrustStore(); // Write to Disk
 
 	return isAllowed;

@@ -53,7 +53,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 					},
 
 					apply: (fn, thisArg, args) => {
-						if (!isTrusted(moduleInfo, moduleName, targetValue)) {
+						if (!isTrusted(moduleInfo, moduleName)) {
 							throw new Error(`[🛑Security🛑] Access Denied: User blocked execution of '${moduleName}' in '${fileName}'`);
 						}
 
@@ -65,7 +65,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 					},
 
 					construct: (fn, args) => {
-						if (!isTrusted(moduleInfo, moduleName, targetValue)) {
+						if (!isTrusted(moduleInfo, moduleName)) {
 							throw new Error(`[🛑Security🛑] Access Denied: User blocked construction of '${moduleName}' in '${fileName}'`);
 						}
 
@@ -93,7 +93,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 	const WebAssembly = new Proxy(globalThis.WebAssembly, {
 		get(target, prop, receiver) {
 			console.warn(`[🛑Security🛑] '${fileName}' is loading WebAssembly (${String(prop)})!`);
-			if (!isTrusted(moduleInfo, "WebAssembly", target)) {
+			if (!isTrusted(moduleInfo, "WebAssembly")) {
 				throw new Error(`[🛑Security🛑] Access Denied! User blocked 'WebAssembly' (${String(prop)}) in '${fileName}'`);
 			}
 
@@ -142,7 +142,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 			// @ts-expect-error This exists
 			const debugProcess: (pid: number) => void = process._debugProcess;
 			console.warn(`[🛑Security🛑] '${fileName}' is calling 'process.debugProcess'`);
-			if (!isTrusted(moduleInfo, "DebugProcess", debugProcess)) {
+			if (!isTrusted(moduleInfo, "DebugProcess")) {
 				throw new Error(`[🛑Security🛑] Access Denied! User blocked 'process.debugProcess' in '${fileName}'`);
 			}
 			debugProcess(process.pid);
