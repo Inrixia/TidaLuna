@@ -17,6 +17,10 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 			// Whitelist (Pass through directly, no proxy needed)
 			if (moduleWhitelist.has(moduleName)) return target.apply(thisArg, argumentsList);
 
+			// The sandbox exposes a filtered `process` mock; hand out the same mock for require("process")
+			// so it can't be used to read the real, unfiltered process.env (USERPROFILE, PATH, APPDATA, ...).
+			if (moduleName === "process") return mockProcess;
+
 			// Load the real module
 			const realModule = target.apply(thisArg, argumentsList);
 
