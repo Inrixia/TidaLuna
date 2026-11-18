@@ -194,7 +194,7 @@ export class MediaItem extends ContentBase {
 				.then(({ title, releases }) => {
 					// Release data can be wrong (eg a Japanese release tagged as English), only use releases where the track title matches the recording
 					releases = releases?.filter((release) => MediaItem.baseTitle(release.media?.[0]?.tracks?.[0]?.title) === MediaItem.baseTitle(title));
-					return releases?.filter((release) => release["text-representation"].language === "eng")[0] ?? releases?.[0];
+					return releases?.filter((release) => release["text-representation"]?.language === "eng")[0] ?? releases?.[0];
 				})
 				.catch(this.trace.warn.withContext("brainzItem.getISRCRecordings"));
 			if (release === undefined) return undefined;
