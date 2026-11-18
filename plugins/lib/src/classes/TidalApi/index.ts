@@ -114,36 +114,23 @@ export class TidalApi {
 		);
 	}
 
-	/**
-	 * Items of a playlist in playlist order, with the `meta.itemId` that identifies each entry (duplicates have their own).
-	 * Not cached, always the current state. Fetched 20 per request, slow on big playlists.
-	 */
-	public static async playlistItemRefs(playlistUUID: redux.ItemId): Promise<TApiPlaylistItemRef[]> {
-		const headers = await this.getAuthHeaders();
-		const refs: TApiPlaylistItemRef[] = [];
-		let path: string | undefined = `playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
-		while (path !== undefined) {
-			const res = await fetch(`https://openapi.tidal.com/v2/${path.replace(/^\//, "")}`, { headers });
-			if (!statusOK(res.status)) this.trace.err.withContext(path).throw(`${res.status} ${res.statusText}`);
-			const page: { data: TApiPlaylistItemRef[]; links: { next?: string } } = await res.json();
-			refs.push(...page.data);
-			path = page.links.next;
-		}
-		return refs;
-	}
+	/** Most entries the openapi takes in one request to add or remove playlist items, more is rejected */
+	public static readonly maxPlaylistItemsPerRequest = 50;
 	/**
 	 * The `meta.itemId` of each entry of a playlist in playlist order, from a single request.
 	 * Not cached, always the current state.
 	 */
 	public static async playlistItemIds(playlistUUID: redux.ItemId): Promise<string[]> {
-		const url = `https://desktop.tidal.com/v1/playlists/${playlistUUID}/items?${this.queryArgs()}&limit=-1`;
+		// The server caches this list by URL for a while after changes, a unique URL gets the current one
+		const url = `https://desktop.tidal.com/v1/playlists/${playlistUUID}/items?${this.queryArgs()}&limit=-1&_=${Date.now()}`;
 		const res = await fetch(url, { headers: await this.getAuthHeaders() });
 		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
 		const body: { items: { item: { itemUuid: string } }[] } = await res.json();
 		return body.items.map(({ item }) => item.itemUuid);
 	}
 	/**
-	 * Remove items from a playlist, the same request TIDAL's "Remove from playlist" makes
+	 * Remove items from a playlist, the same request TIDAL's "Remove from playlist" makes.
+	 * At most `maxPlaylistItemsPerRequest` items.
 	 */
 	public static async removePlaylistItems(playlistUUID: redux.ItemId, items: TApiPlaylistItemRef[]) {
 		const url = `https://openapi.tidal.com/v2/playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
@@ -157,8 +144,8 @@ export class TidalApi {
 
 	/**
 	 * Add tracks/videos to a playlist, the same request TIDAL makes. They are added in order before the entry
-	 * with the `meta.itemId` `positionBefore`, or at the end.
-	 * @returns The new entries
+	 * with the `meta.itemId` `positionBefore`, or at the end. At most `maxPlaylistItemsPerRequest` items.
+	 * @returns The new entries, in the order of `items`
 	 * @throws An error with the response `status` if the request is rejected, nothing is added then
 	 */
 	public static async addPlaylistItems(

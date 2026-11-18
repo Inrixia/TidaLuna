@@ -9,7 +9,7 @@ const notificationSelector = `[data-test="notification"]`;
  * Clicking the button closes the notification and calls `onClick`.
  * @param timeoutMs Give up if no such notification appears within this time
  */
-export const addNotificationButton = (message: string, label: string, onClick: () => unknown, timeoutMs: number = 2000) => {
+export const addNotificationButton = (message: string, label: string, onClick: () => unknown, timeoutMs: number = 5000) => {
 	// Notifications already showing, so an older one with the same message isn't picked
 	const shown = new Set(document.querySelectorAll(notificationSelector));
 	const stop = observe(unloads, notificationSelector, (notification) => {
