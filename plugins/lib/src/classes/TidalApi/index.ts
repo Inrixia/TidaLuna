@@ -116,19 +116,19 @@ export class TidalApi {
 
 	/**
 	 * Items of a playlist with the `meta.itemId` that identifies each entry (duplicates have their own).
-	 * Not cached, always the current state. Fetched 20 per request, so pass `count` if only the first ones are needed.
+	 * Not cached, always the current state. Fetched 20 per request, so pass `until` if only the first ones are needed.
 	 * @param options.sort OpenAPI sort field like TIDAL's sorted playlist views use, e.g. `"title"` or `"-addedAt"`. Playlist order if omitted
-	 * @param options.count Stop once at least this many items are fetched
+	 * @param options.until Stop fetching once this returns true for the items fetched so far
 	 */
 	public static async playlistItemRefs(
 		playlistUUID: redux.ItemId,
-		{ sort, count = Infinity }: { sort?: string; count?: number } = {},
+		{ sort, until }: { sort?: string; until?: (refs: TApiPlaylistItemRef[]) => boolean } = {},
 	): Promise<TApiPlaylistItemRef[]> {
 		const headers = await this.getAuthHeaders();
 		const refs: TApiPlaylistItemRef[] = [];
 		const sortArg = sort === undefined ? "" : `&sort=${encodeURIComponent(sort)}`;
 		let path: string | undefined = `playlists/${playlistUUID}/relationships/items?${this.queryArgs()}${sortArg}`;
-		while (path !== undefined && refs.length < count) {
+		while (path !== undefined && !until?.(refs)) {
 			const res = await fetch(`https://openapi.tidal.com/v2/${path.replace(/^\//, "")}`, { headers });
 			if (!statusOK(res.status)) this.trace.err.withContext(path).throw(`${res.status} ${res.statusText}`);
 			const page: { data: TApiPlaylistItemRef[]; links: { next?: string } } = await res.json();
@@ -148,6 +148,29 @@ export class TidalApi {
 			body: JSON.stringify({ data: items.map(({ id, type, meta }) => ({ id, type, meta: { itemId: meta.itemId } })) }),
 		});
 		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+	}
+
+	/**
+	 * Add tracks/videos to a playlist, the same request TIDAL makes. They are added in order before the entry
+	 * with the `meta.itemId` `positionBefore`, or at the end.
+	 * @returns The new entries
+	 */
+	public static async addPlaylistItems(
+		playlistUUID: redux.ItemId,
+		items: Pick<TApiPlaylistItemRef, "id" | "type">[],
+		positionBefore?: string,
+	): Promise<TApiPlaylistItemRef[]> {
+		const url = `https://openapi.tidal.com/v2/playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
+		const res = await fetch(url, {
+			method: "POST",
+			headers: { ...(await this.getAuthHeaders()), "Content-Type": "application/vnd.api+json" },
+			body: JSON.stringify({
+				data: items.map(({ id, type }) => ({ id, type })),
+				meta: positionBefore === undefined ? undefined : { positionBefore },
+			}),
+		});
+		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+		return (await res.json()).data;
 	}
 
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {

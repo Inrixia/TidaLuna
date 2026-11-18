@@ -14,6 +14,8 @@ export interface ShortcutOptions {
 	keys: string | string[];
 	/** Human readable description of what the shortcut does, shown in Luna Settings */
 	label?: string;
+	/** `false` to have it off until the user turns it on in Luna Settings, default `true` */
+	enabled?: boolean;
 	/** Called when the keys are pressed outside of a text field. Return `false` to let the key through to TIDAL */
 	action: (event: KeyboardEvent) => unknown;
 }
@@ -22,8 +24,10 @@ const modifiers = ["Ctrl", "Alt", "Shift", "Meta"] as const;
 const modifierKeys = new Set<string>(["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"]);
 const textRoles = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
 
-// Keys the user rebound in Luna Settings, by shortcut id
-const userKeys = await ReactiveStore.getStore("@luna/shortcuts").getReactive<Record<string, string[]>>("keys", {});
+// Keys the user rebound and shortcuts they turned on or off in Luna Settings, by shortcut id
+const store = ReactiveStore.getStore("@luna/shortcuts");
+const userKeys = await store.getReactive<Record<string, string[]>>("keys", {});
+const userEnabled = await store.getReactive<Record<string, boolean>>("enabled", {});
 
 export class Shortcut {
 	public static readonly trace: Tracer = libTrace.withSource(".Shortcut").trace;
@@ -52,6 +56,16 @@ export class Shortcut {
 	public get isRebound() {
 		return userKeys[this.id] !== undefined;
 	}
+	/** Whether the shortcut is on, the user's choice if they made one */
+	public get enabled(): boolean {
+		return userEnabled[this.id] ?? this.options.enabled ?? true;
+	}
+	/** Turn the shortcut on or off, saved across restarts */
+	public setEnabled(enabled: boolean) {
+		userEnabled[this.id] = enabled;
+		Shortcut.changed();
+		this.warnConflicts();
+	}
 	/**
 	 * Rebind this shortcut, `undefined` restores the default keys. Saved across restarts.
 	 */
@@ -61,9 +75,12 @@ export class Shortcut {
 		Shortcut.changed();
 		this.warnConflicts();
 	}
-	/** Other shortcuts bound to one of the same key combinations */
+	/** Other shortcuts that are on and bound to one of the same key combinations, if this one is on */
 	public get conflicts(): Shortcut[] {
-		return [...Shortcut.shortcuts.values()].filter((other) => other !== this && other.keys.some((keys) => this.keys.includes(keys)));
+		if (!this.enabled) return [];
+		return [...Shortcut.shortcuts.values()].filter(
+			(other) => other !== this && other.enabled && other.keys.some((keys) => this.keys.includes(keys)),
+		);
 	}
 	private warnConflicts() {
 		for (const other of this.conflicts) {
@@ -142,7 +159,7 @@ const onKeyDown = (event: KeyboardEvent) => {
 	const keys = Shortcut.fromEvent(event);
 	if (keys === undefined) return;
 	for (const shortcut of Shortcut.shortcuts.values()) {
-		if (!shortcut.keys.includes(keys)) continue;
+		if (!shortcut.enabled || !shortcut.keys.includes(keys)) continue;
 		const onError = Shortcut.trace.msg.err.withContext(shortcut.id);
 		try {
 			const result = shortcut.options.action(event);

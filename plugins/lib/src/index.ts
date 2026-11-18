@@ -21,10 +21,18 @@ export { errSignal } from "./index.safe";
 new StyleTag("MacOS-update-fix", unloads, `div div div[data-test="notification-update"]:first-of-type { display: none; }`);
 
 // Delete removes the selected tracks from the open playlist, if the user can edit it (luna-plugins#148).
-// Mac keyboards label Backspace as "delete", so it's bound there too.
+// Off until turned on in Luna Settings. Mac keyboards label Backspace as "delete", so it's bound there too.
+const isMac = navigator.userAgent.includes("Mac");
 Shortcut.register(unloads, {
 	id: "removeFromPlaylist",
-	keys: navigator.userAgent.includes("Mac") ? ["Delete", "Backspace"] : "Delete",
+	keys: isMac ? ["Delete", "Backspace"] : "Delete",
 	label: "Remove selected tracks from playlist",
+	enabled: false,
 	action: () => Playlist.removeSelected(),
+});
+Shortcut.register(unloads, {
+	id: "undoRemoveFromPlaylist",
+	keys: isMac ? "Meta+Z" : "Ctrl+Z",
+	label: "Undo removing tracks from playlist",
+	action: () => Playlist.undoRemove(),
 });

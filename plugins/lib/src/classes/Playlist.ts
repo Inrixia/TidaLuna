@@ -1,4 +1,4 @@
-import { asyncDebounce } from "@inrixia/helpers";
+import { asyncDebounce, sleep } from "@inrixia/helpers";
 
 import type { Tracer } from "@luna/core";
 
@@ -56,14 +56,76 @@ export class Playlist extends ContentBase implements MediaCollection {
 	/**
 	 * Remove entries from this playlist through TIDAL's API and refresh TIDAL's views of it.
 	 * @param items Entries as returned by `TidalApi.playlistItemRefs`
+	 * @returns Groups of the removed entries that `restoreItems` puts back where they were
 	 */
-	public async removeItems(items: TApiPlaylistItemRef[]) {
-		if (items.length === 0) return;
+	public async removeItems(items: TApiPlaylistItemRef[]): Promise<RemovedItems> {
+		if (items.length === 0) return [];
+		const removed = await this.removedItems(items);
 		await TidalApi.removePlaylistItems(this.uuid, items);
-		// Same refresh TIDAL does after its own "Remove from playlist"
+		this.refresh();
+		return removed;
+	}
+	/**
+	 * Add entries removed by `removeItems` back to their places, or at the end if the entry they were before is gone too.
+	 * They are new entries, so their "date added" is now.
+	 */
+	public async restoreItems(removed: RemovedItems) {
+		try {
+			for (const { items, before } of removed) {
+				await TidalApi.addPlaylistItems(this.uuid, items, before).catch(() => TidalApi.addPlaylistItems(this.uuid, items));
+			}
+		} finally {
+			this.refresh();
+		}
+	}
+	// Same refresh TIDAL does after its own changes to a playlist
+	private refresh() {
 		redux.store.dispatch({ type: "etag/REMOVE_PLAYLIST_ETAG", payload: { playlistId: this.uuid } });
 		redux.store.dispatch({ type: "content/INVALIDATE_TRACK_LIST", payload: { key: `playlists/${this.uuid}` } });
 		redux.store.dispatch({ type: "tidalOpenPlatformApi/invalidateTags", payload: ["playlists"] });
+	}
+	// Group the entries by the entry that follows them in playlist order, so they can be added back before it
+	private async removedItems(items: TApiPlaylistItemRef[]): Promise<RemovedItems> {
+		const itemIds = new Set(items.map(({ meta }) => meta.itemId));
+		// The list must hold all the entries and the one after the last of them
+		const covers = (list: TApiPlaylistItemRef[]) => {
+			const found = list.filter(({ meta }) => itemIds.has(meta.itemId)).length;
+			return found === itemIds.size && !itemIds.has(list.at(-1)!.meta.itemId);
+		};
+		let list = cachedItemRefs(this.uuid, null);
+		if (list === undefined || !covers(list)) list = await TidalApi.playlistItemRefs(this.uuid, { until: covers });
+
+		const removed: RemovedItems = [];
+		let group: TApiPlaylistItemRef[] = [];
+		for (const item of list) {
+			if (itemIds.has(item.meta.itemId)) group.push(item);
+			else if (group.length > 0) {
+				removed.push({ items: group, before: item.meta.itemId });
+				group = [];
+			}
+		}
+		if (group.length > 0) removed.push({ items: group });
+		return removed;
+	}
+
+	/** The last removal by `removeSelected`, for `undoRemove` */
+	private static lastRemoved?: { uuid: redux.ItemId; removed: RemovedItems };
+	/**
+	 * Put back the tracks/videos last removed by `removeSelected`, if their playlist is open.
+	 * @returns `false` if there is nothing to undo here
+	 */
+	public static undoRemove() {
+		const last = this.lastRemoved;
+		if (last === undefined || last.uuid !== Playlist.currentUUID) return false;
+		const tidalPlaylist = this.getItemFromStore("playlists", last.uuid);
+		if (tidalPlaylist === undefined) return false;
+		this.lastRemoved = undefined;
+		const playlist = new Playlist(last.uuid, tidalPlaylist);
+		return (async () => {
+			await playlist.restoreItems(last.removed);
+			const count = last.removed.reduce((sum, { items }) => sum + items.length, 0);
+			playlist.trace.msg.log(`Restored ${count} ${count === 1 ? "item" : "items"}`);
+		})();
 	}
 
 	/**
@@ -99,7 +161,7 @@ export class Playlist extends ContentBase implements MediaCollection {
 			if (sort !== undefined) {
 				selected = atRows(cachedItemRefs(uuid, sort) ?? []);
 				const count = Math.max(...wanted.map(({ index }) => index)) + 1;
-				selected ??= atRows(await TidalApi.playlistItemRefs(uuid, { sort: sort ?? undefined, count }));
+				selected ??= atRows(await TidalApi.playlistItemRefs(uuid, { sort: sort ?? undefined, until: (refs) => refs.length >= count }));
 			}
 			// Unknown sort order or the list changed, find the tracks by id instead
 			if (selected === undefined) {
@@ -115,8 +177,14 @@ export class Playlist extends ContentBase implements MediaCollection {
 				}
 			}
 			if (selected.length === 0) return playlist.trace.msg.warn("The selected tracks were not found in the playlist, reload it and try again.");
-			await playlist.removeItems(selected);
-			playlist.trace.msg.log(`Removed ${selected.length} ${selected.length === 1 ? "item" : "items"}`);
+			const removed = await playlist.removeItems(selected);
+			Playlist.lastRemoved = { uuid, removed };
+			const message = `Removed ${selected.length} ${selected.length === 1 ? "item" : "items"}`;
+			playlist.trace.msg.log(message);
+			addNotificationButton(message, "Undo", () => {
+				const undo = Playlist.undoRemove();
+				if (undo !== false) undo.catch(playlist.trace.msg.err.withContext("Undo"));
+			});
 		})();
 	}
 
@@ -143,6 +211,28 @@ type PlaylistEntity = { relationships?: Partial<Record<"owners" | "collaborators
 // TIDAL's openapi playlist data, it lists the owners and collaborators
 const getPlaylistEntity = (uuid: redux.ItemId) =>
 	(<{ entities?: { playlists?: { entities?: Record<string, PlaylistEntity> } } }>redux.store.getState()).entities?.playlists?.entities?.[uuid];
+
+/** Removed playlist entries grouped by the entry they were before, `before` is unset for entries that were at the end */
+export type RemovedItems = { items: TApiPlaylistItemRef[]; before?: string }[];
+
+// TIDAL's notifications can't have custom buttons, so add one to the newest notification showing `message`
+const addNotificationButton = async (message: string, label: string, onClick: () => unknown) => {
+	for (let tries = 0; tries < 20; tries++) {
+		const notification = [...document.querySelectorAll(`[data-test="notification"]`)].findLast((elem) => elem.textContent?.includes(message));
+		const close = notification?.querySelector<HTMLButtonElement>(`[data-test="notification-close"]`);
+		if (close) {
+			const button = <HTMLButtonElement>close.cloneNode();
+			button.removeAttribute("data-test");
+			button.textContent = label;
+			button.addEventListener("click", () => {
+				close.click();
+				onClick();
+			});
+			return close.before(button);
+		}
+		await sleep(50);
+	}
+};
 
 // The OpenAPI sort field TIDAL fetches each sorted playlist view with
 const sortFields: Partial<Record<redux.SortOrder, string>> = {

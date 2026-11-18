@@ -5,7 +5,7 @@ import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 
-import { LunaSetting, LunaSettings } from "../../components";
+import { LunaSetting, LunaSettings, LunaSwitch } from "../../components";
 
 // Not memoized, so conflicts update when another shortcut changes
 const ShortcutSetting = ({ shortcut }: { shortcut: Shortcut }) => {
@@ -17,10 +17,11 @@ const ShortcutSetting = ({ shortcut }: { shortcut: Shortcut }) => {
 			desc={conflicts.length > 0 ? `Also used by ${conflicts.join(", ")}, the one registered first wins` : undefined}
 			spacing={2}
 		>
-			<Stack direction="row" alignItems="center" spacing={1} sx={{ flexGrow: 1 }}>
+			<Stack direction="row" spacing={1} sx={{ flexGrow: 1, alignItems: "center", justifyContent: "flex-end" }}>
 				<TextField
 					size="small"
-					fullWidth
+					sx={{ width: 280 }}
+					disabled={!shortcut.enabled}
 					value={recording ? "Press the new keys, Esc to cancel" : shortcut.keys.join(" / ")}
 					error={conflicts.length > 0}
 					slotProps={{ htmlInput: { readOnly: true } }}
@@ -39,6 +40,7 @@ const ShortcutSetting = ({ shortcut }: { shortcut: Shortcut }) => {
 				<Button disabled={!shortcut.isRebound} onClick={() => shortcut.setKeys()} sx={{ flexShrink: 0 }}>
 					Reset
 				</Button>
+				<LunaSwitch checked={shortcut.enabled} onChange={(_, checked) => shortcut.setEnabled(checked)} tooltip={shortcut.enabled ? "On" : "Off"} />
 			</Stack>
 		</LunaSetting>
 	);
@@ -52,7 +54,7 @@ export const LunaShortcuts = React.memo(() => {
 	return (
 		<LunaSettings
 			title="Keyboard shortcuts"
-			desc="Click a shortcut and press the keys to rebind it. Shortcuts don't fire while typing in a text field"
+			desc="Turn shortcuts on or off, click one and press the keys to rebind it. Shortcuts don't fire while typing in a text field"
 		>
 			{shortcuts.map((shortcut) => (
 				<ShortcutSetting key={shortcut.id} shortcut={shortcut} />
