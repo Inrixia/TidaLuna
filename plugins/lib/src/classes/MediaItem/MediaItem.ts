@@ -204,7 +204,7 @@ export class MediaItem extends ContentBase {
 			// Lookup the recording from MusicBrainz by ISRC
 			const recording = await ftch
 				.json<{ recordings: IRecording[] }>(`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`)
-				.then(({ recordings }) => recordings[0])
+				.then(({ recordings }) => this.matchBrainzRecording(recordings))
 				.catch((err) => {
 					if (err.message !== "Status code is 404") this.trace.warn.withContext("brainzItem.getISRCRecordings");
 				});
@@ -226,6 +226,29 @@ export class MediaItem extends ContentBase {
 		}
 		return brainzItem;
 	});
+	/**
+	 * MusicBrainz can link unrelated recordings to the same ISRC (eg audiobook chapters) and returns them in no stable order.
+	 * Pick the recording whose title matches the Tidal title, otherwise the one closest in length, otherwise none.
+	 */
+	private matchBrainzRecording(recordings?: IRecording[]): IRecording | undefined {
+		const baseTitle = (title?: string) =>
+			ContentBase.normalizeQuotes(title ?? "")
+				.toLowerCase()
+				.replace(/\s*[([].*?[)\]]/g, "")
+				.trim();
+		const lengthDiff = (recording: IRecording) =>
+			this.tidalItem.duration && recording.length ? Math.abs(recording.length / 1000 - this.tidalItem.duration) : Infinity;
+		const byLength = (a: IRecording, b: IRecording) => lengthDiff(a) - lengthDiff(b);
+
+		const tidalTitle = baseTitle(this.tidalItem.title);
+		const titleMatches = recordings?.filter((recording) => baseTitle(recording.title) === tidalTitle) ?? [];
+		if (titleMatches.length !== 0) return titleMatches.sort(byLength)[0];
+
+		const closest = recordings?.slice().sort(byLength)[0];
+		if (closest !== undefined && lengthDiff(closest) <= MediaItem.brainzLengthTolerance) return closest;
+	}
+	private static readonly brainzLengthTolerance = 5;
+
 	public brainzId: () => Promise<string | undefined> = memoize(async () => {
 		const brainzItem = await this.brainzItem();
 		return brainzItem?.recording.id;
