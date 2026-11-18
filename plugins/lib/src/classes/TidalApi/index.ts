@@ -3,6 +3,7 @@ import { type Tracer } from "@luna/core";
 import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
 
 import type { TApiTrackWithLyrics } from "./types/Lyrics";
+import type { TApiPlaylistItemRef } from "./types/Playlist";
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
 
 import { getCredentials } from "../../helpers";
@@ -111,6 +112,57 @@ export class TidalApi {
 		return this.fetch<{ items: redux.MediaItem[]; totalNumberOfItems: number; offset: number; limit: -1 }>(
 			`https://desktop.tidal.com/v1/playlists/${playlistUUID}/items?${this.queryArgs()}&limit=-1`,
 		);
+	}
+
+	/**
+	 * Create a playlist owned by the user, the same request TIDAL's "Create playlist" dialog makes.
+	 * It is `UNLISTED` unless `accessType` is `PUBLIC`.
+	 * @returns The uuid of the new playlist
+	 */
+	public static async createPlaylist(
+		name: string,
+		{ description, accessType = "UNLISTED" }: { description?: string; accessType?: "PUBLIC" | "UNLISTED" } = {},
+	): Promise<string> {
+		const url = `https://openapi.tidal.com/v2/playlists?${this.queryArgs()}`;
+		const res = await fetch(url, {
+			method: "POST",
+			headers: { ...(await this.getAuthHeaders()), "Content-Type": "application/vnd.api+json" },
+			body: JSON.stringify({ data: { type: "playlists", attributes: { name, description, accessType } } }),
+		});
+		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+		const body: { data?: { id?: string } } = await res.json();
+		const uuid = body.data?.id;
+		if (uuid === undefined) return this.trace.err.withContext(url).throw("No playlist id in the response");
+		return uuid;
+	}
+
+	/** Most entries the openapi takes in one request to add or remove playlist items, more is rejected */
+	public static readonly maxPlaylistItemsPerRequest = 50;
+	/**
+	 * Add tracks/videos to a playlist, the same request TIDAL makes. They are added in order before the entry
+	 * with the `meta.itemId` `positionBefore`, or at the end. At most `maxPlaylistItemsPerRequest` items.
+	 * @returns The new entries, in the order of `items`
+	 * @throws An error with the response `status` if the request is rejected, nothing is added then
+	 */
+	public static async addPlaylistItems(
+		playlistUUID: redux.ItemId,
+		items: Pick<TApiPlaylistItemRef, "id" | "type">[],
+		positionBefore?: string,
+	): Promise<TApiPlaylistItemRef[]> {
+		const url = `https://openapi.tidal.com/v2/playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
+		const res = await fetch(url, {
+			method: "POST",
+			headers: { ...(await this.getAuthHeaders()), "Content-Type": "application/vnd.api+json" },
+			body: JSON.stringify({
+				data: items.map(({ id, type }) => ({ id, type })),
+				meta: positionBefore === undefined ? undefined : { positionBefore },
+			}),
+		});
+		if (!statusOK(res.status))
+			this.trace.err.withContext(url).throw(Object.assign(new Error(`${res.status} ${res.statusText}`), { status: res.status }));
+		// The entries are added at this point, so an unreadable body isn't an error
+		const body: { data?: TApiPlaylistItemRef[] } | undefined = await res.json().catch(() => undefined);
+		return body?.data ?? [];
 	}
 
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {
