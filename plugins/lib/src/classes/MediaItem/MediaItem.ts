@@ -210,7 +210,8 @@ export class MediaItem extends ContentBase {
 				.json<{ recordings: IRecording[] }>(`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`)
 				.then(({ recordings }) => this.matchBrainzRecording(recordings))
 				.catch((err) => {
-					if (err.message !== "Status code is 404") this.trace.warn.withContext("brainzItem.getISRCRecordings");
+					// 404 means MusicBrainz doesn't know the ISRC, not worth a warning
+					if (!err.message?.startsWith("404 ")) this.trace.warn.withContext("brainzItem.getISRCRecordings")(err);
 				});
 
 			const releaseTrack = recording && (await releaseTrackFromRecording(recording));
