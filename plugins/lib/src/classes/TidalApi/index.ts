@@ -3,6 +3,7 @@ import { type Tracer } from "@luna/core";
 import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
 
 import type { TApiTrackWithLyrics } from "./types/Lyrics";
+import type { TApiPlaylistItemRef } from "./types/Playlist";
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
 
 import { getCredentials } from "../../helpers";
@@ -111,6 +112,42 @@ export class TidalApi {
 		return this.fetch<{ items: redux.MediaItem[]; totalNumberOfItems: number; offset: number; limit: -1 }>(
 			`https://desktop.tidal.com/v1/playlists/${playlistUUID}/items?${this.queryArgs()}&limit=-1`,
 		);
+	}
+
+	/**
+	 * Items of a playlist with the `meta.itemId` that identifies each entry (duplicates have their own).
+	 * Not cached, always the current state. Fetched 20 per request, so pass `count` if only the first ones are needed.
+	 * @param options.sort OpenAPI sort field like TIDAL's sorted playlist views use, e.g. `"title"` or `"-addedAt"`. Playlist order if omitted
+	 * @param options.count Stop once at least this many items are fetched
+	 */
+	public static async playlistItemRefs(
+		playlistUUID: redux.ItemId,
+		{ sort, count = Infinity }: { sort?: string; count?: number } = {},
+	): Promise<TApiPlaylistItemRef[]> {
+		const headers = await this.getAuthHeaders();
+		const refs: TApiPlaylistItemRef[] = [];
+		const sortArg = sort === undefined ? "" : `&sort=${encodeURIComponent(sort)}`;
+		let path: string | undefined = `playlists/${playlistUUID}/relationships/items?${this.queryArgs()}${sortArg}`;
+		while (path !== undefined && refs.length < count) {
+			const res = await fetch(`https://openapi.tidal.com/v2/${path.replace(/^\//, "")}`, { headers });
+			if (!statusOK(res.status)) this.trace.err.withContext(path).throw(`${res.status} ${res.statusText}`);
+			const page: { data: TApiPlaylistItemRef[]; links: { next?: string } } = await res.json();
+			refs.push(...page.data);
+			path = page.links.next;
+		}
+		return refs;
+	}
+	/**
+	 * Remove items from a playlist, the same request TIDAL's "Remove from playlist" makes
+	 */
+	public static async removePlaylistItems(playlistUUID: redux.ItemId, items: TApiPlaylistItemRef[]) {
+		const url = `https://openapi.tidal.com/v2/playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
+		const res = await fetch(url, {
+			method: "DELETE",
+			headers: { ...(await this.getAuthHeaders()), "Content-Type": "application/vnd.api+json" },
+			body: JSON.stringify({ data: items.map(({ id, type, meta }) => ({ id, type, meta: { itemId: meta.itemId } })) }),
+		});
+		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
 	}
 
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {

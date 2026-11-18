@@ -20,10 +20,11 @@ export { errSignal } from "./index.safe";
 // Hide the update notification on MacOS as it breaks Luna for some reason
 new StyleTag("MacOS-update-fix", unloads, `div div div[data-test="notification-update"]:first-of-type { display: none; }`);
 
-// Delete removes the selected tracks from the open playlist, if it is the user's own (luna-plugins#148)
+// Delete removes the selected tracks from the open playlist, if the user can edit it (luna-plugins#148).
+// Mac keyboards label Backspace as "delete", so it's bound there too.
 Shortcut.register(unloads, {
 	id: "removeFromPlaylist",
-	keys: "Delete",
+	keys: navigator.userAgent.includes("Mac") ? ["Delete", "Backspace"] : "Delete",
 	label: "Remove selected tracks from playlist",
 	action: () => Playlist.removeSelected(),
 });
