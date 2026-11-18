@@ -2,6 +2,7 @@ import { registerEmitter, type AddReceiver, type MaybePromise, type VoidLike } f
 
 import { findModuleByProperty, type Tracer } from "@luna/core";
 
+import { listenerError } from "../helpers/listenerError";
 import { libTrace, unloads } from "../index.safe";
 import * as redux from "../redux";
 import { MediaItem } from "./MediaItem";
@@ -207,7 +208,7 @@ export class PlayState {
 
 			if (longerThan4min || moreThan50Percent) {
 				hasScrobbledCurrent = true;
-				onScrobble(mediaItem, this.trace.err.withContext("onScrobble"));
+				onScrobble(mediaItem, listenerError("PlayState.onScrobble", this.trace.err.withContext("onScrobble")));
 				return true;
 			}
 			return false;
@@ -234,7 +235,7 @@ export class PlayState {
 	/** Triggered on "playbackControls/SET_PLAYBACK_STATE" */
 	public static onState: AddReceiver<redux.PlaybackState> = registerEmitter((onState) =>
 		redux.intercept("playbackControls/SET_PLAYBACK_STATE", unloads, (playbackState) =>
-			onState(playbackState, this.trace.err.withContext("onState")),
+			onState(playbackState, listenerError("PlayState.onState", this.trace.err.withContext("onState"))),
 		),
 	);
 }

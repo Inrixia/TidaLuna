@@ -3,7 +3,7 @@ import type { IRecording, ITrack } from "musicbrainz-api";
 
 import { ftch, ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
-import { getPlaybackInfo, parseDate, type PlaybackInfo } from "../../helpers";
+import { getPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
 import { Album } from "../Album";
@@ -117,7 +117,7 @@ export class MediaItem extends ContentBase {
 			if (item?.productId === undefined) return MediaItem.trace.warn("player/PRELOAD_ITEM intercepted without productId!", item);
 			const mediaItem = await this.fromId(item.productId, item.productType);
 			if (mediaItem === undefined) return;
-			emit(mediaItem, mediaItem.trace.err.withContext("preloadItem.runListeners"));
+			emit(mediaItem, listenerError("MediaItem.onPreload", mediaItem.trace.err.withContext("preloadItem.runListeners")));
 		}),
 	);
 	/** Triggered on "playbackControls/MEDIA_PRODUCT_TRANSITION"*/
@@ -134,7 +134,7 @@ export class MediaItem extends ContentBase {
 					this._supportsSpatialAudio = playbackContext.actualAudioMode !== "STEREO";
 				}
 
-				await emit(mediaItem, mediaItem.trace.err.withContext("mediaProductTransition.runListeners"));
+				await emit(mediaItem, listenerError("MediaItem.onMediaTransition", mediaItem.trace.err.withContext("mediaProductTransition.runListeners")));
 			}),
 		),
 	);
@@ -150,7 +150,7 @@ export class MediaItem extends ContentBase {
 				async ({ mediaProduct: { productId, productType } }: redux.InterceptPayload<"playbackControls/PREFILL_MEDIA_PRODUCT_TRANSITION">) => {
 					const mediaItem = await this.fromId(productId, productType);
 					if (mediaItem === undefined) return;
-					await emit(mediaItem, mediaItem.trace.err.withContext("prefillMPT.runListeners"));
+					await emit(mediaItem, listenerError("MediaItem.onPreMediaTransition", mediaItem.trace.err.withContext("prefillMPT.runListeners")));
 				},
 			),
 		),
@@ -488,12 +488,12 @@ export class MediaItem extends ContentBase {
 		}
 
 		const [_, emitFormat] = this.formatEmitters[playbackInfo.audioQuality] ?? [];
-		emitFormat?.(format, this.trace.err.withContext("updateFormat.emitFormat"));
+		emitFormat?.(format, listenerError("MediaItem.withFormat", this.trace.err.withContext("updateFormat.emitFormat")));
 
 		// Emit to originally requested quality if different
 		if (requestedQuality && requestedQuality !== playbackInfo.audioQuality) {
 			const [_, emitRequested] = this.formatEmitters[requestedQuality] ?? [];
-			emitRequested?.(format, this.trace.err.withContext("updateFormat.emitFormat.requested"));
+			emitRequested?.(format, listenerError("MediaItem.withFormat", this.trace.err.withContext("updateFormat.emitFormat.requested")));
 		}
 
 		return format;
