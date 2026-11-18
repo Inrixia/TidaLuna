@@ -50,6 +50,14 @@ class ContextMenuButton {
 		return this.elem;
 	}
 
+	/**
+	 * Removes the button from the context menu it was shown in, it can be shown again later.
+	 * Use this rather than `elem.remove()` which only removes the label and leaves an empty item in the menu.
+	 */
+	public hide() {
+		this._element?.parentElement?.parentElement?.remove();
+	}
+
 	private _onClick?: OnClick;
 	public onClick(cb: OnClick) {
 		this._onClick = cb;
@@ -70,7 +78,7 @@ export class ContextMenu {
 		this.buttons.add(button);
 		unloads.add(() => {
 			this.buttons.delete(button);
-			button.elem?.remove();
+			button.hide();
 		});
 		return button;
 	}
