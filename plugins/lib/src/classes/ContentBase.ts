@@ -49,7 +49,7 @@ export class ContentBase {
 	 * Replace typographic quotes (used by MusicBrainz) with plain ones (used by Tidal).
 	 */
 	public static normalizeQuotes(text: string): string {
-		return text.replace(/[‘’‛′]/g, "'").replace(/[“”„″]/g, '"');
+		return text.replace(/[‘’‛]/g, "'").replace(/[“”„]/g, '"');
 	}
 
 	protected static formatTitle(tidalTitle?: string, tidalVersion?: string, brainzTitle?: string, brainzCredit?: IArtistCredit[]): string {

@@ -249,13 +249,15 @@ export class MediaItem extends ContentBase {
 	}
 	private static readonly brainzLengthTolerance = 5;
 	/**
-	 * Title for comparing Tidal and MusicBrainz titles, ignores case, quote style and anything in brackets.
+	 * Title for comparing Tidal and MusicBrainz titles, ignores case, quote and hyphen style and anything in brackets.
 	 */
 	private static baseTitle(title?: string): string {
-		return ContentBase.normalizeQuotes(title ?? "")
+		const normalized = ContentBase.normalizeQuotes(title ?? "")
+			.replace(/[‐‑‒–—]/g, "-")
 			.toLowerCase()
-			.replace(/\s*[([].*?[)\]]/g, "")
 			.trim();
+		// Keep the brackets if the whole title is in brackets
+		return normalized.replace(/\s*[([].*?[)\]]/g, "").trim() || normalized;
 	}
 
 	public brainzId: () => Promise<string | undefined> = memoize(async () => {
