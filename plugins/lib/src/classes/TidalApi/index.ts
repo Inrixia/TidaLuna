@@ -115,19 +115,17 @@ export class TidalApi {
 	}
 
 	/**
-	 * Items of a playlist with the `meta.itemId` that identifies each entry (duplicates have their own).
+	 * Items of a playlist in playlist order, with the `meta.itemId` that identifies each entry (duplicates have their own).
 	 * Not cached, always the current state. Fetched 20 per request, so pass `until` if only the first ones are needed.
-	 * @param options.sort OpenAPI sort field like TIDAL's sorted playlist views use, e.g. `"title"` or `"-addedAt"`. Playlist order if omitted
 	 * @param options.until Stop fetching once this returns true for the items fetched so far
 	 */
 	public static async playlistItemRefs(
 		playlistUUID: redux.ItemId,
-		{ sort, until }: { sort?: string; until?: (refs: TApiPlaylistItemRef[]) => boolean } = {},
+		{ until }: { until?: (refs: TApiPlaylistItemRef[]) => boolean } = {},
 	): Promise<TApiPlaylistItemRef[]> {
 		const headers = await this.getAuthHeaders();
 		const refs: TApiPlaylistItemRef[] = [];
-		const sortArg = sort === undefined ? "" : `&sort=${encodeURIComponent(sort)}`;
-		let path: string | undefined = `playlists/${playlistUUID}/relationships/items?${this.queryArgs()}${sortArg}`;
+		let path: string | undefined = `playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
 		while (path !== undefined && !until?.(refs)) {
 			const res = await fetch(`https://openapi.tidal.com/v2/${path.replace(/^\//, "")}`, { headers });
 			if (!statusOK(res.status)) this.trace.err.withContext(path).throw(`${res.status} ${res.statusText}`);
@@ -154,6 +152,7 @@ export class TidalApi {
 	 * Add tracks/videos to a playlist, the same request TIDAL makes. They are added in order before the entry
 	 * with the `meta.itemId` `positionBefore`, or at the end.
 	 * @returns The new entries
+	 * @throws An error with the response `status` if the request is rejected, nothing is added then
 	 */
 	public static async addPlaylistItems(
 		playlistUUID: redux.ItemId,
@@ -169,8 +168,11 @@ export class TidalApi {
 				meta: positionBefore === undefined ? undefined : { positionBefore },
 			}),
 		});
-		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
-		return (await res.json()).data;
+		if (!statusOK(res.status))
+			this.trace.err.withContext(url).throw(Object.assign(new Error(`${res.status} ${res.statusText}`), { status: res.status }));
+		// The entries are added at this point, so an unreadable body isn't an error
+		const body: { data?: TApiPlaylistItemRef[] } | undefined = await res.json().catch(() => undefined);
+		return body?.data ?? [];
 	}
 
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {

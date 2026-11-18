@@ -130,7 +130,12 @@ export class Shortcut {
 	public static fromEvent(event: KeyboardEvent): string | undefined {
 		if (modifierKeys.has(event.key)) return;
 		const mods = modifiers.filter((mod) => event[`${mod.toLowerCase() as Lowercase<typeof mod>}Key`]);
-		return this.normalize([...mods, event.key === " " ? "Space" : event.key].join("+"));
+		let key = event.key === " " ? "Space" : event.key;
+		// Letters of non-Latin layouts (e.g. "я" on the Z key of a Russian layout) count as the Latin letter of the same key,
+		// so shortcuts work whatever layout is active
+		const latin = /^Key([A-Z])$/.exec(event.code)?.[1];
+		if (latin !== undefined && key.length === 1 && !/[a-z]/i.test(key) && key.toLowerCase() !== key.toUpperCase()) key = latin;
+		return this.normalize([...mods, key].join("+"));
 	}
 
 	/**
