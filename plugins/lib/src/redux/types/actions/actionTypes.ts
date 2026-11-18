@@ -182,6 +182,7 @@ export const actionTypes = [
 	"contextMenu/OPEN_INPUT_FIELD_CLIPBOARD",
 	"contextMenu/OPEN_MEDIA_ITEM",
 	"contextMenu/OPEN_MULTI_MEDIA_ITEM",
+	"contextMenu/OPEN_PLAYLIST_ITEM_MULTI_SELECT",
 	"contextMenu/UPDATE_POSITION",
 	"creatorContent/FINISH_ARTWORK_UPLOAD",
 	"creatorContent/FINISH_TRACK_UPLOAD",

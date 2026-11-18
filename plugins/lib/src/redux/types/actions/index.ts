@@ -30,6 +30,7 @@ import type {
 	PlaybackState,
 	Player,
 	Playlist,
+	PlaylistItemMultiSelectContextMenu,
 	PlayQueueContext,
 	PlayQueueElement,
 	PlayQueuePosition,
@@ -725,6 +726,7 @@ export interface ActionPayloads {
 	"contextMenu/OPEN_INPUT_FIELD_CLIPBOARD": InputFieldClipboardContextMenu;
 	"contextMenu/OPEN_MEDIA_ITEM": MediaItemContextMenu;
 	"contextMenu/OPEN_MULTI_MEDIA_ITEM": MultiMediaItemContextMenu;
+	"contextMenu/OPEN_PLAYLIST_ITEM_MULTI_SELECT": PlaylistItemMultiSelectContextMenu;
 	"contextMenu/UPDATE_POSITION": {
 		time: number;
 	};
