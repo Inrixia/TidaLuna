@@ -24,6 +24,8 @@ const modifiers = ["Ctrl", "Alt", "Shift", "Meta"] as const;
 const modifierKeys = new Set<string>(["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"]);
 const textRoles = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
 const popupRoles = new Set(["menu", "menubar", "listbox", "dialog", "alertdialog"]);
+// TIDAL's dialogs are <dialog> elements opened without being modal, focus can be on the dialog itself or outside it
+const openDialogSelector = `dialog[open], [aria-modal="true"]`;
 
 // Keys the user rebound and shortcuts they turned on or off in Luna Settings, by shortcut id
 const store = ReactiveStore.getStore("@luna/shortcuts");
@@ -161,12 +163,12 @@ export class Shortcut {
 	}
 
 	/**
-	 * True if the event comes from a menu or dialog, e.g. TIDAL's context menu. Its keys belong to it, not to what's behind it.
+	 * True if a dialog is open or the event comes from a menu, e.g. TIDAL's context menu.
+	 * Their keys belong to them, not to the page behind them.
 	 */
 	public static isInPopup(event: Event): boolean {
-		return event
-			.composedPath()
-			.some((target) => target instanceof HTMLElement && (popupRoles.has(target.getAttribute("role") ?? "") || target.ariaModal === "true"));
+		if (document.querySelector(openDialogSelector) !== null) return true;
+		return event.composedPath().some((target) => target instanceof HTMLElement && popupRoles.has(target.getAttribute("role") ?? ""));
 	}
 }
 

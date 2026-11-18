@@ -58,6 +58,7 @@ export class Playlist extends ContentBase implements MediaCollection {
 	 * Remove entries from this playlist through TIDAL's API and refresh TIDAL's views of it.
 	 * @param items Entries with their `meta.itemId`, e.g. from TIDAL's selection of a playlist table
 	 * @returns Groups of the removed entries that `restoreItems` puts back where they were
+	 * Waits for earlier changes to this playlist through `removeItems`/`restoreItems` to finish first.
 	 * @throws If a request fails. When some of the entries were removed already, the error has those in `removed`
 	 */
 	public removeItems(items: TApiPlaylistItemRef[]): Promise<RemovedItems> {
@@ -91,6 +92,7 @@ export class Playlist extends ContentBase implements MediaCollection {
 	 * Add entries removed by `removeItems` back to their places, or at the end if the entry they were before is gone too.
 	 * They are new entries, so their "date added" is now. Groups that were added are taken out of `removed`,
 	 * so if this fails part way it can be called again with the same array.
+	 * Waits for earlier changes to this playlist through `removeItems`/`restoreItems` to finish first.
 	 */
 	public restoreItems(removed: RemovedItems): Promise<void> {
 		return this.change(() => this._restoreItems(removed));
@@ -108,7 +110,8 @@ export class Playlist extends ContentBase implements MediaCollection {
 				});
 				// The new entries come back in order, minus any the API skipped (e.g. a track no longer on TIDAL)
 				let next = 0;
-				for (const { id, meta } of items) if (added[next]?.id === id) restoredItemIds.set(meta.itemId, added[next++].meta.itemId);
+				for (const { id, type, meta } of items)
+					if (added[next]?.id === id && added[next].type === type) restoredItemIds.set(meta.itemId, added[next++].meta.itemId);
 				removed.shift();
 			}
 		} finally {
@@ -122,6 +125,9 @@ export class Playlist extends ContentBase implements MediaCollection {
 	private change<T>(fn: () => Promise<T>): Promise<T> {
 		const run = (changeQueues.get(this.uuid) ?? Promise.resolve()).catch(() => {}).then(fn);
 		changeQueues.set(this.uuid, run);
+		// Don't keep the finished change and its result around
+		const forget = () => changeQueues.get(this.uuid) === run && changeQueues.delete(this.uuid);
+		run.then(forget, forget);
 		return run;
 	}
 	// Same refresh TIDAL does after its own changes to a playlist
