@@ -60,7 +60,10 @@ export class Playlist extends ContentBase implements MediaCollection {
 	 * @returns Groups of the removed entries that `restoreItems` puts back where they were
 	 * @throws If a request fails. When some of the entries were removed already, the error has those in `removed`
 	 */
-	public async removeItems(items: TApiPlaylistItemRef[]): Promise<RemovedItems> {
+	public removeItems(items: TApiPlaylistItemRef[]): Promise<RemovedItems> {
+		return this.change(() => this._removeItems(items));
+	}
+	private async _removeItems(items: TApiPlaylistItemRef[]): Promise<RemovedItems> {
 		if (items.length === 0) return [];
 		const order = await this.itemOrder(items);
 		const done: TApiPlaylistItemRef[] = [];
@@ -89,7 +92,10 @@ export class Playlist extends ContentBase implements MediaCollection {
 	 * They are new entries, so their "date added" is now. Groups that were added are taken out of `removed`,
 	 * so if this fails part way it can be called again with the same array.
 	 */
-	public async restoreItems(removed: RemovedItems) {
+	public restoreItems(removed: RemovedItems): Promise<void> {
+		return this.change(() => this._restoreItems(removed));
+	}
+	private async _restoreItems(removed: RemovedItems) {
 		try {
 			while (removed.length > 0) {
 				const { items } = removed[0];
@@ -100,15 +106,27 @@ export class Playlist extends ContentBase implements MediaCollection {
 					if (before === undefined || err.status === undefined || err.status < 400 || err.status >= 500) throw err;
 					return TidalApi.addPlaylistItems(this.uuid, items);
 				});
-				if (added.length === items.length) items.forEach(({ meta }, i) => restoredItemIds.set(meta.itemId, added[i].meta.itemId));
+				// The new entries come back in order, minus any the API skipped (e.g. a track no longer on TIDAL)
+				let next = 0;
+				for (const { id, meta } of items) if (added[next]?.id === id) restoredItemIds.set(meta.itemId, added[next++].meta.itemId);
 				removed.shift();
 			}
 		} finally {
 			this.refresh();
 		}
 	}
+	/**
+	 * Run changes to this playlist one at a time, so each one reads the order the previous one left.
+	 * Shared by all `Playlist` objects of the same playlist.
+	 */
+	private change<T>(fn: () => Promise<T>): Promise<T> {
+		const run = (changeQueues.get(this.uuid) ?? Promise.resolve()).catch(() => {}).then(fn);
+		changeQueues.set(this.uuid, run);
+		return run;
+	}
 	// Same refresh TIDAL does after its own changes to a playlist
 	private refresh() {
+		lastChange.set(this.uuid, Date.now());
 		redux.store.dispatch({ type: "etag/REMOVE_PLAYLIST_ETAG", payload: { playlistId: this.uuid } });
 		redux.store.dispatch({ type: "content/INVALIDATE_TRACK_LIST", payload: { key: `playlists/${this.uuid}` } });
 		redux.store.dispatch({ type: "tidalOpenPlatformApi/invalidateTags", payload: ["playlists"] });
@@ -142,10 +160,10 @@ export class Playlist extends ContentBase implements MediaCollection {
 		try {
 			const playlist = await Playlist.fromId(removal.uuid);
 			if (playlist === undefined) throw new Error(`Playlist ${removal.uuid} not found`);
-			const count = removal.removed.reduce((sum, { items }) => sum + items.length, 0);
+			const count = countItems(removal.removed);
 			await playlist.restoreItems(removal.removed);
 			if (this.lastRemoval === removal) this.lastRemoval = undefined;
-			playlist.trace.msg.log(`Restored ${count} ${count === 1 ? "item" : "items"}`);
+			playlist.trace.msg.log(`Restored ${itemsText(count)}`);
 		} finally {
 			removal.restoring = false;
 		}
@@ -183,7 +201,7 @@ export class Playlist extends ContentBase implements MediaCollection {
 				removed = (<{ removed?: RemovedItems }>err).removed ?? [];
 				error = err;
 			}
-			const count = removed.reduce((sum, { items }) => sum + items.length, 0);
+			const count = countItems(removed);
 			if (count > 0) {
 				// Clear the removed entries' selection like TIDAL does on its own removal. Only if the selection is still the
 				// removed one: a selection made while this ran stays, and on a failure the user can try again
@@ -195,7 +213,7 @@ export class Playlist extends ContentBase implements MediaCollection {
 
 				const removal: Removal = { uuid, removed, restoring: false };
 				Playlist.lastRemoval = removal;
-				const message = `Removed ${count} ${count === 1 ? "item" : "items"}`;
+				const message = `Removed ${itemsText(count)}`;
 				// The notification's Undo restores this removal, wherever the user is by then
 				addNotificationButton(message, "Undo", () => Playlist.undo(removal).catch(playlist.trace.msg.err.withContext("Undo")));
 				playlist.trace.msg.log(message);
@@ -232,7 +250,13 @@ const getPlaylistEntity = (uuid: redux.ItemId) =>
 /** Removed playlist entries grouped by the entry they were before, `before` is unset for entries that were at the end */
 export type RemovedItems = { items: TApiPlaylistItemRef[]; before?: string }[];
 type Removal = { uuid: redux.ItemId; removed: RemovedItems; restoring: boolean };
-// Entries removed in this session, TIDAL's cached lists that still hold one of them are out of date
+const countItems = (removed: RemovedItems) => removed.reduce((sum, { items }) => sum + items.length, 0);
+const itemsText = (count: number) => `${count} ${count === 1 ? "item" : "items"}`;
+// The running and queued changes of each playlist, see `Playlist.change`
+const changeQueues = new Map<redux.ItemId, Promise<unknown>>();
+// When each playlist was last changed here, TIDAL's lists of it fetched before then are out of date
+const lastChange = new Map<redux.ItemId, number>();
+// Entries removed in this session, TIDAL's selection can still hold them until it has reloaded the list
 const removedItemIds = new Set<string>();
 // The new itemId of each entry put back by `restoreItems`, by its itemId before it was removed
 const restoredItemIds = new Map<string, string>();
@@ -305,11 +329,12 @@ type ItemsQuery = {
 	endpointName?: string;
 	originalArgs?: { id?: string; sort?: string[] };
 	status?: string;
+	startedTimeStamp?: number;
 	data?: { pages?: { data: TApiPlaylistItemRef[]; links?: { next?: string } }[] };
 };
 /**
  * The playlist entries TIDAL has loaded in playlist order, `complete` if that is the whole playlist.
- * `undefined` if it has none or its copy is out of date.
+ * `undefined` if it has none or it was fetched before the last change made here.
  */
 const cachedItemRefs = (uuid: redux.ItemId) => {
 	const queries = (<{ tidalOpenPlatformApi?: { queries?: Record<string, ItemsQuery | undefined> } }>redux.store.getState()).tidalOpenPlatformApi
@@ -322,10 +347,10 @@ const cachedItemRefs = (uuid: redux.ItemId) => {
 	);
 	// While it is being fetched again, e.g. right after a change, it still holds the old pages
 	if (query?.status !== "fulfilled") return undefined;
+	if ((query.startedTimeStamp ?? 0) < (lastChange.get(uuid) ?? 0)) return undefined;
 	const pages = query.data?.pages;
 	if (pages === undefined) return undefined;
 	const items = pages.flatMap((page) => page.data);
-	if (items.some(({ meta }) => removedItemIds.has(meta.itemId))) return undefined;
 	const lastLinks = pages.at(-1)?.links;
 	return { items, complete: lastLinks !== undefined && lastLinks.next === undefined };
 };

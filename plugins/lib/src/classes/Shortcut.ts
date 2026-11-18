@@ -23,6 +23,7 @@ export interface ShortcutOptions {
 const modifiers = ["Ctrl", "Alt", "Shift", "Meta"] as const;
 const modifierKeys = new Set<string>(["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"]);
 const textRoles = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
+const popupRoles = new Set(["menu", "menubar", "listbox", "dialog", "alertdialog"]);
 
 // Keys the user rebound and shortcuts they turned on or off in Luna Settings, by shortcut id
 const store = ReactiveStore.getStore("@luna/shortcuts");
@@ -93,7 +94,8 @@ export class Shortcut {
 
 	/**
 	 * Register a keyboard shortcut, it is removed again when `unloads` is run.
-	 * Warns if one of its keys is already used by another shortcut, the one registered first wins.
+	 * Warns if one of its keys is already used by another shortcut. The one registered first gets the keys first,
+	 * the next one only if its action returns `false`.
 	 */
 	public static register(unloads: LunaUnloads, options: ShortcutOptions): Shortcut {
 		const shortcut = new Shortcut(options);
@@ -157,10 +159,19 @@ export class Shortcut {
 		}
 		return false;
 	}
+
+	/**
+	 * True if the event comes from a menu or dialog, e.g. TIDAL's context menu. Its keys belong to it, not to what's behind it.
+	 */
+	public static isInPopup(event: Event): boolean {
+		return event
+			.composedPath()
+			.some((target) => target instanceof HTMLElement && (popupRoles.has(target.getAttribute("role") ?? "") || target.ariaModal === "true"));
+	}
 }
 
 const onKeyDown = (event: KeyboardEvent) => {
-	if (event.defaultPrevented || event.repeat || Shortcut.isTyping(event)) return;
+	if (event.defaultPrevented || event.repeat || Shortcut.isTyping(event) || Shortcut.isInPopup(event)) return;
 	const keys = Shortcut.fromEvent(event);
 	if (keys === undefined) return;
 	for (const shortcut of Shortcut.shortcuts.values()) {

@@ -14,7 +14,7 @@ const ShortcutSetting = ({ shortcut }: { shortcut: Shortcut }) => {
 	return (
 		<LunaSetting
 			title={shortcut.label}
-			desc={conflicts.length > 0 ? `Also used by ${conflicts.join(", ")}, the one registered first wins` : undefined}
+			desc={conflicts.length > 0 ? `Also used by ${conflicts.join(", ")}, the one registered first gets the keys first` : undefined}
 			spacing={2}
 		>
 			<Stack direction="row" spacing={1} sx={{ flexGrow: 1, alignItems: "center", justifyContent: "flex-end" }}>
