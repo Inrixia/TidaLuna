@@ -45,21 +45,34 @@ const saveTrustStore = () => {
 
 const fastCache = new WeakMap<object, boolean>();
 
-// Prompts needed while module code runs under the vm timeout (see secureLoad), to be asked once it has stopped
-let deferredPrompts: Map<string, () => boolean> | undefined;
+// Set while module code runs under the vm timeout (see secureLoad): prompts are collected and asked once it has stopped
+let deferred: { pending: Map<string, () => void>; answered: Map<string, boolean> } | undefined;
 
 /**
- * Runs `load` without showing trust prompts: a call that would prompt throws instead and its prompt is returned in `prompts`.
- * Calling a returned prompt shows the dialog and saves the answer.
+ * Runs `load` without showing trust prompts: a call that would prompt throws instead. Once `load` has stopped, the
+ * collected prompts are asked and `load` runs again, until it needs no new prompts. Answers are final for this call.
  */
-export const withDeferredPrompts = <T>(load: () => T) => {
-	const prompts = (deferredPrompts = new Map<string, () => boolean>());
-	try {
-		return { exports: load(), prompts: [...prompts.values()] };
-	} catch (error) {
-		return { error, prompts: [...prompts.values()] };
-	} finally {
-		deferredPrompts = undefined;
+export const loadWithDeferredPrompts = <T>(load: () => T): T => {
+	const answered = new Map<string, boolean>();
+	for (;;) {
+		const pending = new Map<string, () => void>();
+		deferred = { pending, answered };
+		let exports: T | undefined;
+		let error: unknown;
+		let failed = false;
+		try {
+			exports = load();
+		} catch (err) {
+			failed = true;
+			error = err;
+		} finally {
+			deferred = undefined;
+		}
+		if (pending.size === 0) {
+			if (failed) throw error;
+			return exports!;
+		}
+		for (const prompt of pending.values()) prompt();
 	}
 };
 
@@ -71,6 +84,9 @@ export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string, modu
 	getTrustStore();
 	const methodHash = `${hash}::${moduleName}`;
 
+	// Already answered during this load (a saved deny would otherwise prompt again on every retry)
+	if (deferred?.answered.has(methodHash)) return deferred.answered.get(methodHash)!;
+
 	if (trustStore.has(methodHash)) {
 		const decision = trustStore.get(methodHash)!;
 		// re-prompt on saved denies
@@ -81,8 +97,9 @@ export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string, modu
 		}
 	}
 
-	if (deferredPrompts !== undefined) {
-		deferredPrompts.set(methodHash, () => isTrusted(moduleInfo, moduleName, module));
+	if (deferred !== undefined) {
+		const { answered } = deferred;
+		deferred.pending.set(methodHash, () => answered.set(methodHash, isTrusted(moduleInfo, moduleName, module)));
 		throw new Error(`[🛑Security🛑] '${moduleName}' in '${fileName}' needs permission, asking after load`);
 	}
 

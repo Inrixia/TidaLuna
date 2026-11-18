@@ -2,7 +2,7 @@ import { objectify } from "@inrixia/helpers";
 import vm from "vm";
 
 import { nativeRequire, type NativeModuleInfo } from ".";
-import { isTrusted, withDeferredPrompts } from "./trust";
+import { isTrusted, loadWithDeferredPrompts } from "./trust";
 
 import type Module from "module";
 import { moduleWhitelist } from "./moduleWhitelist";
@@ -152,9 +152,6 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 
 	// 2. Setup Sandbox
 	const sandboxBase = {
-		module: { exports: {} },
-		exports: {},
-		global: {},
 		__filename: `luna://${fileName}`,
 		__dirname: process.resourcesPath,
 
@@ -216,11 +213,10 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 
 	// Each load attempt gets a fresh sandbox
 	const load = () => {
-		const sandbox = { ...sandboxBase, module: { exports: {} } };
-		sandbox.global = sandbox;
-
 		// Link exports so 'exports.foo =' works
-		sandbox.exports = sandbox.module.exports;
+		const module = { exports: {} };
+		const sandbox = { ...sandboxBase, module, exports: module.exports, global: {} };
+		sandbox.global = sandbox;
 
 		const context = vm.createContext(sandbox, {
 			name: fileName,
@@ -242,15 +238,8 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 	try {
 		// Trust prompts can't be shown while the code runs: the vm timeout counts the time a dialog is open, and once
 		// it has passed V8 stops the code as soon as the dialog returns, so the answer is lost and the load fails.
-		// Calls that need a prompt fail instead; ask them after the run, then load again with the answers saved.
-		for (;;) {
-			const result = withDeferredPrompts(load);
-			if (result.prompts.length === 0) {
-				if ("error" in result) throw result.error;
-				return result.exports;
-			}
-			for (const prompt of result.prompts) prompt();
-		}
+		// Calls that need a prompt fail instead; they are asked after the run and the code is loaded again.
+		return loadWithDeferredPrompts(load);
 	} catch (err) {
 		console.error(`Failed to load module ${fileName}:`, err);
 		throw err;
