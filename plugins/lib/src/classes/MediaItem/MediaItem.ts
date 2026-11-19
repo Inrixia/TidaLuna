@@ -57,21 +57,26 @@ export class MediaItem extends ContentBase {
 	}
 
 	// #region Static Construction
-	public static async fromId(itemId?: redux.ItemId, contentType: redux.ContentType = "track"): Promise<MediaItem | undefined> {
-		if (itemId === undefined) return;
-		// Prefetch mediaItemCache while constructing
-		const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
-		const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
-			mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
-			if (mediaItem === undefined) return;
-			const cache = await mediaItemCache;
-			// Prefer the type Tidal stored the item with, callers often default to "track" for videos
-			return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
-		});
-		// Fetch real quality for spatial tracks
-		if (item) await item.fetchBestQuality();
-		return item;
-	}
+	// Calls for the same item share one lookup. Items that are not in the redux store are loaded through
+	// interceptActionResp, which runs one LOAD_SINGLE_MEDIA_ITEM at a time, so repeated calls (e.g. a tracklist row
+	// that is reported again while scrolling) queued up thousands of loads and kept their callers waiting for minutes.
+	public static fromId: (itemId?: redux.ItemId, contentType?: redux.ContentType) => Promise<MediaItem | undefined> = asyncDebounce(
+		async (itemId?: redux.ItemId, contentType: redux.ContentType = "track") => {
+			if (itemId === undefined) return;
+			// Prefetch mediaItemCache while constructing
+			const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
+			const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
+				mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
+				if (mediaItem === undefined) return;
+				const cache = await mediaItemCache;
+				// Prefer the type Tidal stored the item with, callers often default to "track" for videos
+				return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
+			});
+			// Fetch real quality for spatial tracks
+			if (item) await item.fetchBestQuality();
+			return item;
+		},
+	);
 	public static fromIsrc: (isrc: string) => Promise<MediaItem | undefined> = memoize(async (isrc) => {
 		let bestMediaItem: MediaItem | undefined = undefined;
 		for await (const track of TidalApi.isrc(isrc)) {
