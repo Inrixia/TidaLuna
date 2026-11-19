@@ -194,7 +194,11 @@ export class MediaItem extends ContentBase {
 			const release = await brainzJson<IRecording>(
 				`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`,
 			)
-				.then(({ releases }) => releases?.filter((release) => release["text-representation"].language === "eng")[0] ?? releases?.[0])
+				.then(({ title, releases }) => {
+					// Release data can be wrong (eg a Japanese release tagged as English), only use releases where the track title matches the recording
+					releases = releases?.filter((release) => MediaItem.baseTitle(release.media?.[0]?.tracks?.[0]?.title) === MediaItem.baseTitle(title));
+					return releases?.filter((release) => release["text-representation"]?.language === "eng")[0] ?? releases?.[0];
+				})
 				.catch(this.trace.warn.withContext("brainzItem.getISRCRecordings"));
 			if (release === undefined) return undefined;
 
@@ -208,12 +212,14 @@ export class MediaItem extends ContentBase {
 			const recording = await brainzJson<{ recordings: IRecording[] }>(
 				`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`,
 			)
-				.then(({ recordings }) => recordings[0])
+				.then(({ recordings }) => this.matchBrainzRecording(recordings))
 				.catch((err) => {
-					if (err.message !== "Status code is 404") this.trace.warn.withContext("brainzItem.getISRCRecordings");
+					// 404 means MusicBrainz doesn't know the ISRC, not worth a warning
+					if (!err.message?.startsWith("404 ")) this.trace.warn.withContext("brainzItem.getISRCRecordings")(err);
 				});
 
-			if (recording !== undefined) return releaseTrackFromRecording(recording);
+			const releaseTrack = recording && (await releaseTrackFromRecording(recording));
+			if (releaseTrack !== undefined) return releaseTrack;
 		}
 
 		const album = await this.album();
@@ -230,6 +236,35 @@ export class MediaItem extends ContentBase {
 		}
 		return brainzItem;
 	});
+	/**
+	 * MusicBrainz can link unrelated recordings to the same ISRC (eg audiobook chapters) and returns them in no stable order.
+	 * Pick the recording whose title matches the Tidal title, otherwise the one closest in length, otherwise none.
+	 */
+	private matchBrainzRecording(recordings?: IRecording[]): IRecording | undefined {
+		const lengthDiff = (recording: IRecording) =>
+			this.tidalItem.duration && recording.length ? Math.abs(recording.length / 1000 - this.tidalItem.duration) : Infinity;
+		const byLength = (a: IRecording, b: IRecording) => lengthDiff(a) - lengthDiff(b);
+
+		const tidalTitle = MediaItem.baseTitle(this.tidalItem.title);
+		const titleMatches = recordings?.filter((recording) => MediaItem.baseTitle(recording.title) === tidalTitle) ?? [];
+		if (titleMatches.length !== 0) return titleMatches.sort(byLength)[0];
+
+		const closest = recordings?.slice().sort(byLength)[0];
+		if (closest !== undefined && lengthDiff(closest) <= MediaItem.brainzLengthTolerance) return closest;
+	}
+	private static readonly brainzLengthTolerance = 5;
+	/**
+	 * Title for comparing Tidal and MusicBrainz titles, ignores case, quote and hyphen style and anything in brackets.
+	 */
+	private static baseTitle(title?: string): string {
+		const normalized = ContentBase.normalizeQuotes(title ?? "")
+			.replace(/[‐‑‒–—]/g, "-")
+			.toLowerCase()
+			.trim();
+		// Keep the brackets if the whole title is in brackets
+		return normalized.replace(/\s*[([].*?[)\]]/g, "").trim() || normalized;
+	}
+
 	public brainzId: () => Promise<string | undefined> = memoize(async () => {
 		const brainzItem = await this.brainzItem();
 		return brainzItem?.recording.id;
