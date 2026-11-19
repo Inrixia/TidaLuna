@@ -100,14 +100,17 @@ export class MediaItem extends ContentBase {
 	public static async *fromIds(ids?: (redux.ItemId | undefined)[]) {
 		if (ids === undefined) return;
 		for (const itemId of ids.filter((id) => id !== undefined)) {
-			const mediaItem = await MediaItem.fromId(itemId);
+			// Skip items that fail to load so one bad item doesn't end iteration for the whole collection
+			const mediaItem = await MediaItem.fromId(itemId).catch(MediaItem.trace.err.withContext("fromIds", itemId));
 			if (mediaItem !== undefined) yield mediaItem;
 		}
 	}
 	public static async *fromTMediaItems(tMediaItems?: ({ item: { id: redux.ItemId }; type: redux.ContentType } | undefined)[]) {
 		if (tMediaItems === undefined) return;
 		for (const tMediaItem of tMediaItems.filter((tMediaItem) => tMediaItem !== undefined)) {
-			const mediaItem = await MediaItem.fromId(tMediaItem.item.id, tMediaItem.type);
+			const mediaItem = await MediaItem.fromId(tMediaItem.item.id, tMediaItem.type).catch(
+				MediaItem.trace.err.withContext("fromTMediaItems", tMediaItem.item.id),
+			);
 			if (mediaItem !== undefined) yield mediaItem;
 		}
 	}
