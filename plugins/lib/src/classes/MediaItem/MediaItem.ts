@@ -251,6 +251,8 @@ export class MediaItem extends ContentBase {
 	public async *isrcs(): AsyncIterable<string> {
 		if (this.contentType !== "track") return;
 		const seen = new Set<string>();
+		// Tracks loaded by some pages (eg album pages) have no isrc in the store, the API has it
+		if (!this.tidalItem.isrc) await this.fetchTidalMediaItem().catch(this.trace.warn.withContext("isrcs.fetchTidalMediaItem"));
 		if (this.tidalItem.isrc) {
 			yield this.tidalItem.isrc;
 			seen.add(this.tidalItem.isrc);
