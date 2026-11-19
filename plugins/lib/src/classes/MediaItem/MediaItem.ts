@@ -1,9 +1,10 @@
 import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver, type Emit } from "@inrixia/helpers";
 import type { IRecording, ITrack } from "musicbrainz-api";
 
-import { ftch, ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
+import { ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
-import { getPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
+import { getPlaybackInfo, getVideoPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
+import { brainzJson } from "../../helpers/brainzJson";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
 import { Album } from "../Album";
@@ -64,7 +65,8 @@ export class MediaItem extends ContentBase {
 			mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
 			if (mediaItem === undefined) return;
 			const cache = await mediaItemCache;
-			return new MediaItem(itemId, mediaItem, contentType, cache);
+			// Prefer the type Tidal stored the item with, callers often default to "track" for videos
+			return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
 		});
 		// Fetch real quality for spatial tracks
 		if (item) await item.fetchBestQuality();
@@ -189,8 +191,9 @@ export class MediaItem extends ContentBase {
 	public brainzItem: () => Promise<ITrack | undefined> = memoize(async () => {
 		const releaseTrackFromRecording = async (recording: IRecording) => {
 			// If a recording exists then fetch the full recording details including media for title resolution
-			const release = await ftch
-				.json<IRecording>(`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`)
+			const release = await brainzJson<IRecording>(
+				`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`,
+			)
 				.then(({ title, releases }) => {
 					// Release data can be wrong (eg a Japanese release tagged as English), only use releases where the track title matches the recording
 					releases = releases?.filter((release) => MediaItem.baseTitle(release.media?.[0]?.tracks?.[0]?.title) === MediaItem.baseTitle(title));
@@ -206,8 +209,9 @@ export class MediaItem extends ContentBase {
 
 		if (this.tidalItem.isrc !== undefined) {
 			// Lookup the recording from MusicBrainz by ISRC
-			const recording = await ftch
-				.json<{ recordings: IRecording[] }>(`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`)
+			const recording = await brainzJson<{ recordings: IRecording[] }>(
+				`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`,
+			)
 				.then(({ recordings }) => this.matchBrainzRecording(recordings))
 				.catch((err) => {
 					// 404 means MusicBrainz doesn't know the ISRC, not worth a warning
@@ -459,12 +463,18 @@ export class MediaItem extends ContentBase {
 	}
 	public download: (path: string | string[], audioQuality?: redux.AudioQuality) => Promise<void> = asyncDebounce(
 		async (path: string | string[], audioQuality?: redux.AudioQuality) => {
+			if (this.contentType === "video") {
+				const [playbackInfo, tags] = await Promise.all([getVideoPlaybackInfo(this.id), this.flacTags()]);
+				if (!playbackInfo) throw new Error(`Video ${this.id} is not available`);
+				return download(playbackInfo, path, tags);
+			}
 			const [playbackInfo, flagTags] = await Promise.all([this.playbackInfo(audioQuality), this.flacTags()]);
 			if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
 			return download(playbackInfo, path, flagTags);
 		},
 	);
 	public async fileExtension(audioQuality?: redux.AudioQuality): Promise<string> {
+		if (this.contentType === "video") return "mp4";
 		const playbackInfo = await this.playbackInfo(audioQuality);
 		if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
 		switch (playbackInfo.manifestMimeType) {

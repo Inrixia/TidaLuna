@@ -14,7 +14,7 @@ import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { pkg, relaunch, update, needsElevation, runElevatedInstall } from "plugins/lib.native/src/index.native";
+import { pkg, relaunch, update, needsElevation, runElevatedInstall } from "../../../../lib.native/src/index.native";
 
 export const version = (await pkg()).version;
 
@@ -66,8 +66,7 @@ export const LunaClientUpdate = React.memo(() => {
 			title="Client Updates"
 			titleChildren={<SpinningButton title="Fetch releases" loading={loading} onClick={updateReleases} />}
 			direction="row"
-			alignItems="center"
-			pb={4}
+			sx={{ alignItems: "center" }}
 		>
 			<Dialog open={!!busy}>
 				<DialogTitle>Operation in progress</DialogTitle>

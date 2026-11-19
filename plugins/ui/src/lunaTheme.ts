@@ -1,5 +1,12 @@
+import type { LunaUnloads } from "@luna/core";
+import { Signal } from "@inrixia/helpers";
 import { grey } from "@mui/material/colors";
-import { createTheme } from "@mui/material/styles";
+import { createTheme, ThemeProvider, type Theme, type ThemeOptions } from "@mui/material/styles";
+import React from "react";
+
+import type { LunaSettingProps } from "./components/settings/LunaSetting";
+import type { LunaStackProps } from "./components/LunaStack";
+import type { LunaTitleProps } from "./components/LunaTitle";
 
 declare module "@mui/material/styles" {
 	interface TypographyVariants {
@@ -13,6 +20,22 @@ declare module "@mui/material/styles" {
 		h7?: React.CSSProperties;
 		h8?: React.CSSProperties;
 		h9?: React.CSSProperties;
+	}
+}
+
+// Luna components that can be styled via theme.components.<Name>.styleOverrides/defaultProps
+declare module "@mui/material/styles" {
+	interface ComponentNameToClassKey {
+		LunaTitle: "root" | "title" | "desc";
+		LunaStack: "root" | "spacer" | "content";
+		LunaSettings: "root" | "spacer" | "content";
+		LunaSetting: "root" | "control";
+	}
+	interface ComponentsPropsList {
+		LunaTitle: LunaTitleProps;
+		LunaStack: LunaStackProps;
+		LunaSettings: LunaStackProps;
+		LunaSetting: LunaSettingProps;
 	}
 }
 
@@ -145,3 +168,58 @@ export const lunaMuiTheme = createTheme({
 		},
 	},
 });
+
+export type MuiThemeOverride = ThemeOptions | ((theme: Theme) => ThemeOptions);
+
+const overrides: { override: MuiThemeOverride }[] = [];
+const resolve = () =>
+	overrides.reduce<Theme>((theme, { override }) => {
+		try {
+			return createTheme(theme, typeof override === "function" ? override(theme) : override);
+		} catch (err) {
+			console.error("[@luna/ui] Failed to apply theme override", err);
+			return theme;
+		}
+	}, lunaMuiTheme);
+
+/** The current Luna theme, lunaMuiTheme with all overrides applied */
+const currentTheme = new Signal<Theme>(lunaMuiTheme);
+
+export const MuiTheme = {
+	/**
+	 * Extend the MUI theme used by Luna Settings and the Luna components (LunaSettings, LunaSwitchSetting...).
+	 * Merged on top of lunaMuiTheme in registration order, a function gets the theme built so far.
+	 * Applied live, reverted when unloads run.
+	 * @example
+	 * MuiTheme.override(unloads, {
+	 * 	components: {
+	 * 		LunaSettings: { styleOverrides: { content: { boxShadow: "none" } } },
+	 * 		LunaSetting: { styleOverrides: { root: { minHeight: 36 } } },
+	 * 	},
+	 * });
+	 */
+	override(unloads: LunaUnloads, override: MuiThemeOverride) {
+		const entry = { override };
+		overrides.push(entry);
+		currentTheme._ = resolve();
+		unloads.add(() => {
+			const index = overrides.indexOf(entry);
+			if (index === -1) return;
+			overrides.splice(index, 1);
+			currentTheme._ = resolve();
+		});
+	},
+	get current() {
+		return currentTheme._;
+	},
+	/** Called with the new theme whenever overrides change. Returns a function to stop listening. */
+	onChange(listener: (theme: Theme) => void) {
+		return currentTheme.onValue(listener);
+	},
+};
+
+/** ThemeProvider with the current Luna theme (lunaMuiTheme + MuiTheme overrides), updates live */
+export const LunaMuiThemeProvider = ({ children }: { children?: React.ReactNode }) => {
+	const theme = React.useSyncExternalStore(MuiTheme.onChange, () => currentTheme._);
+	return React.createElement(ThemeProvider, { theme }, children);
+};

@@ -1,4 +1,3 @@
-import type { FolderItemList } from "neptune-types/tidal";
 import type {
 	Album,
 	Artist,
@@ -15,6 +14,7 @@ import type {
 	Favorites,
 	FeatureFlag,
 	FeatureFlags,
+	FolderItem,
 	InputFieldClipboardContextMenu,
 	ItemId,
 	ItemType,
@@ -207,7 +207,7 @@ export interface ActionPayloads {
 		sortOrder?: SortOrder;
 	};
 	"artists/LOAD_ARTIST_ITEMS_SUCCESS": {
-		artistItems: FolderItemList;
+		artistItems: FolderItem[];
 		context: "artist_folder" | "artist_root";
 		contextId?: string;
 		cursor?: string | null;
@@ -218,7 +218,7 @@ export interface ActionPayloads {
 		totalNumberOfItems: number;
 	};
 	"artists/LOAD_SPECIFIC_ARTIST_ITEMS_SUCCESS": {
-		artistItems: FolderItemList;
+		artistItems: FolderItem[];
 		cursor: string | null | undefined;
 		eTag?: string | null;
 		includeOnly: string;

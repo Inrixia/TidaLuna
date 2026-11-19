@@ -2,8 +2,9 @@ import { memoize, type VoidLike } from "@inrixia/helpers";
 
 import type { IRelease, IReleaseMatch } from "musicbrainz-api";
 
-import { ftch, type Tracer } from "@luna/core";
+import type { Tracer } from "@luna/core";
 
+import { brainzJson } from "../helpers/brainzJson";
 import { libTrace } from "../index.safe";
 import { Artist } from "./Artist";
 import { ContentBase, type TCoverOpts } from "./ContentBase";
@@ -41,8 +42,7 @@ export class Album extends ContentBase implements MediaCollection {
 		if (this.tidalAlbum.upc === undefined) return;
 
 		const brainzUrl = `https://musicbrainz.org/ws/2/release/?query=barcode:${this.tidalAlbum.upc}&fmt=json`;
-		const brainzAlbum = await ftch
-			.json<{ releases: IReleaseMatch[] }>(brainzUrl)
+		const brainzAlbum = await brainzJson<{ releases: IReleaseMatch[] }>(brainzUrl)
 			.then(({ releases }) => releases[0])
 			.catch(this.trace.warn.withContext("getUPCReleases"));
 
@@ -65,9 +65,9 @@ export class Album extends ContentBase implements MediaCollection {
 	public brainzRelease: () => Promise<IRelease | VoidLike> = memoize(async () => {
 		const brainzAlbum = await this.brainzAlbum();
 		if (brainzAlbum === undefined) return;
-		return ftch
-			.json<IRelease>(`https://musicbrainz.org/ws/2/release/${brainzAlbum.id}?inc=recordings+isrcs+artist-credits&fmt=json`)
-			.catch(this.trace.warn.withContext("getReleaseAlbum"));
+		return brainzJson<IRelease>(`https://musicbrainz.org/ws/2/release/${brainzAlbum.id}?inc=recordings+isrcs+artist-credits&fmt=json`).catch(
+			this.trace.warn.withContext("getReleaseAlbum"),
+		);
 	});
 
 	public artist: () => Promise<Artist | undefined> = memoize(async () => {

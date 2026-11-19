@@ -10,10 +10,10 @@ import { libTrace } from "../../index.safe";
 import * as redux from "../../redux";
 
 import type { AlbumPage } from "./types/AlbumPage";
-import { PlaybackInfoResponse } from "./types/PlaybackInfo";
+import { PlaybackInfoResponse, VideoPlaybackInfoResponse, type VideoQuality } from "./types/PlaybackInfo";
 
 export type * from "./types";
-export type { PlaybackInfoResponse };
+export type { PlaybackInfoResponse, VideoPlaybackInfoResponse, VideoQuality };
 
 export class TidalApi {
 	public static trace: Tracer = libTrace.withSource("TidalApi").trace;
@@ -60,6 +60,14 @@ export class TidalApi {
 		);
 		if (result === undefined) this.unavailableTracks.add(trackId);
 		return result;
+	}
+
+	public static async videoPlaybackInfo(videoId: redux.ItemId, videoQuality: VideoQuality = "HIGH") {
+		return this.playbackInfoSemaphore.with(() =>
+			this.fetch<VideoPlaybackInfoResponse>(
+				`https://desktop.tidal.com/v1/videos/${videoId}/playbackinfo?videoquality=${videoQuality}&playbackmode=STREAM&assetpresentation=FULL`,
+			),
+		);
 	}
 
 	public static async lyrics(trackId: redux.ItemId): Promise<redux.Lyrics | undefined> {

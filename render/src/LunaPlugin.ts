@@ -464,7 +464,7 @@ export class LunaPlugin {
 		// Update persisted store with this plugin's URL so it loads on restart
 		const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(this.name);
 		persistedStore.url = this.url;
-		persistedStore.package = this.package;
+		persistedStore.package = this.store.package;
 		persistedStore.installed = true;
 		persistedStore.enabled = true;
 
