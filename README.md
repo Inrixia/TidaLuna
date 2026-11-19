@@ -98,3 +98,8 @@ To develop for the luna client follow these steps:
 
 Core plugins under `/plugins` can be reloaded via Luna Settings.  
 Changes to `/render` or `/native` code require a client restart.
+
+### Test instances
+
+To test dev builds or plugins without touching your daily client, you can run separate TIDAL instances side by side,
+each with its own profile, Luna build and DevTools port. See [docs/test-instances.md](docs/test-instances.md).

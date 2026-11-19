@@ -15,3 +15,14 @@ export type PlaybackInfoResponse = {
 	bitDepth: number;
 	sampleRate: number;
 };
+
+export type VideoQuality = "HIGH" | "MEDIUM" | "LOW";
+export type VideoPlaybackInfoResponse = {
+	videoId: number;
+	streamType: string;
+	assetPresentation: string;
+	videoQuality: VideoQuality;
+	manifestMimeType: "application/vnd.tidal.emu";
+	manifestHash: string;
+	manifest: string;
+};
