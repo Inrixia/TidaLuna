@@ -1,4 +1,4 @@
-import { asyncDebounce } from "@inrixia/helpers";
+import { asyncDebounce, chunkArray } from "@inrixia/helpers";
 
 import type { Tracer } from "@luna/core";
 
@@ -28,6 +28,30 @@ export class Playlist extends ContentBase implements MediaCollection {
 			if (playlist === undefined) return;
 			return new Playlist(playlistUUID, playlist);
 		});
+	}
+
+	/**
+	 * Create a playlist owned by the user with `mediaItems` in the given order.
+	 * It is `UNLISTED` unless `accessType` is `PUBLIC`.
+	 * @throws If the playlist can't be created, or some items can't be added (the playlist exists then)
+	 */
+	public static async create(
+		title: string,
+		{
+			description,
+			accessType,
+			mediaItems = [],
+		}: { description?: string; accessType?: "PUBLIC" | "UNLISTED"; mediaItems?: Pick<MediaItem, "id" | "contentType">[] } = {},
+	): Promise<Playlist | undefined> {
+		const uuid = await TidalApi.createPlaylist(title, { description, accessType });
+		try {
+			const items = mediaItems.map(({ id, contentType }) => ({ id: String(id), type: contentType === "video" ? "videos" : "tracks" }) as const);
+			for (const chunk of chunkArray(items, TidalApi.maxPlaylistItemsPerRequest)) await TidalApi.addPlaylistItems(uuid, chunk);
+		} finally {
+			// Show the new playlist in TIDAL's playlist lists, as TIDAL does after creating one
+			redux.actions["folders/LOAD_FOLDER_ITEMS"]({ context: "page", reset: true });
+		}
+		return Playlist.fromId(uuid);
 	}
 
 	/**
