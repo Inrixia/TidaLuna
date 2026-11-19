@@ -7,7 +7,7 @@ import FileUploadIcon from "@mui/icons-material/FileUpload";
 
 import { Messager, SettingsTransfer, type ExportData } from "@luna/core";
 import { downloadObject, redux, Tidal } from "@luna/lib";
-import { relaunch } from "plugins/lib.native/src/index.native";
+import { relaunch } from "../../../../lib.native/src/index.native";
 
 import { LunaButton, LunaSettings, LunaSwitchSetting } from "../../components";
 
