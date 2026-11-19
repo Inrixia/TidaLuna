@@ -1,8 +1,9 @@
 import sanitize from "sanitize-filename";
 
 import { createWriteStream } from "fs";
-import { access, constants, mkdir } from "fs/promises";
+import { access, constants, mkdir, rm } from "fs/promises";
 import { join, parse } from "path";
+import { pipeline } from "stream/promises";
 
 import { fetchMediaItemStream, type FetchProgress } from "../../../../lib.native/src/index.native";
 
@@ -37,7 +38,6 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 			const parsedPath = parse(path);
 			await mkdir(parsedPath.dir, { recursive: true });
 			const filePath = join(parsedPath.dir, sanitize(parsedPath.base));
-			const writeStream = createWriteStream(filePath);
 
 			const progress = { total: 0, downloaded: 0 };
 			const stream = await fetchMediaItemStream(playbackInfo, {
@@ -45,10 +45,13 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 				tags,
 			});
 
-			const { resolve, reject, promise } = Promise.withResolvers<void>();
+			// pipeline rejects on errors from either side and closes both streams
+			const promise = pipeline(stream, createWriteStream(filePath)).catch(async (err) => {
+				// Remove the partial file so the next attempt doesn't skip it as already downloaded
+				await rm(filePath, { force: true });
+				throw err;
+			});
 			downloads[itemId] = { progress, promise };
-
-			stream.pipe(writeStream).on("finish", resolve).on("error", reject);
 
 			await promise;
 
