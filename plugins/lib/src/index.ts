@@ -10,7 +10,7 @@ import { StyleTag } from "./classes";
 
 import { unloads } from "./index.safe";
 
-import "./windowTitle";
+export { setWindowTitle } from "./windowTitle";
 
 export { errSignal } from "./index.safe";
 
