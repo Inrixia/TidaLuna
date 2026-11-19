@@ -4,6 +4,7 @@ import {
 	BufferTarget,
 	Conversion,
 	FilePathSource,
+	FlacOutputFormat,
 	Input,
 	Mp4OutputFormat,
 	Output,
@@ -20,6 +21,7 @@ import type { MetaTags } from "./MediaItem.tags";
  * fragmented MP4 that most taggers (and some players) can't handle. This module remuxes
  * the download into a standard progressive MP4 - preserving the AAC encoder delay
  * (edit list) so the audio stays sample-identical - and then writes the tags.
+ * Lossless streams (FLAC in MP4) are remuxed into a native FLAC file instead.
  */
 
 // #region MP4 box helpers
@@ -220,7 +222,7 @@ const yearFrom = (tags: MetaTags["tags"]): number | undefined => {
 	return undefined;
 };
 
-const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<void> => {
+const writeTags = async (path: string, mimeType: string, { tags, coverUrl }: MetaTags): Promise<void> => {
 	// Fetch the cover before opening the file so a network failure can't interrupt the save
 	let cover: Picture | undefined;
 	if (coverUrl !== undefined) {
@@ -236,7 +238,8 @@ const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<vo
 
 	let file: TagFile | undefined;
 	try {
-		file = TagFile.createFromPath(path);
+		// Pick the reader by container, not by the file extension the caller chose
+		file = TagFile.createFromPath(path, mimeType);
 		const tag = file.tag;
 
 		const title = first(tags.title);
@@ -284,22 +287,24 @@ const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<vo
 };
 // #endregion
 
-/** Remux a raw DASH (fragmented MP4) download into a standard progressive MP4 and tag it */
+/** Remux a raw DASH (fragmented MP4) download into a standard progressive MP4 (or native FLAC) and tag it */
 export const finalizeDashDownload = async (path: string, tags?: MetaTags): Promise<void> => {
 	const source = await readFile(path);
 
 	const input = new Input({ formats: ALL_FORMATS, source: new BufferSource(source) });
-	const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });
+	const isFlac = (await input.getPrimaryAudioTrack())?.codec === "flac";
+	const output = new Output({ format: isFlac ? new FlacOutputFormat() : new Mp4OutputFormat(), target: new BufferTarget() });
 	await (await Conversion.init({ input, output })).execute();
 
-	const muxed = patchMoov(Buffer.from(output.target.buffer!), readMediaTime(source));
+	const remuxed = Buffer.from(output.target.buffer!);
+	const muxed = isFlac ? remuxed : patchMoov(remuxed, readMediaTime(source));
 
 	// Replace the raw download only once the remux fully succeeded
 	const tmpPath = `${path}.tmp`;
 	await writeFile(tmpPath, muxed);
 	await rename(tmpPath, path);
 
-	if (tags !== undefined) await writeTags(path, tags);
+	if (tags !== undefined) await writeTags(path, isFlac ? "taglib/flac" : "taglib/m4a", tags);
 };
 
 /** Tags written by mediabunny while remuxing, node-taglib-sharp can't tag its MP4 output (no udta box) */

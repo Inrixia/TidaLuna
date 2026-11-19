@@ -444,7 +444,8 @@ export class MediaItem extends ContentBase {
 		if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
 		switch (playbackInfo.manifestMimeType) {
 			case "application/dash+xml":
-				return "m4a";
+				// Lossless DASH streams carry FLAC in MP4, which is remuxed into a native FLAC file
+				return playbackInfo.manifest.tracks.audios[0]?.codec === "FLAC" ? "flac" : "m4a";
 			case "application/vnd.tidal.bts":
 				return "flac";
 		}
