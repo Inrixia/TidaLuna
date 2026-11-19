@@ -3,7 +3,7 @@ import { asyncDebounce } from "@inrixia/helpers";
 import type { Tracer } from "@luna/core";
 
 import { libTrace } from "../index.safe";
-import { ContentBase } from "./ContentBase";
+import { ContentBase, type TCoverOpts } from "./ContentBase";
 import type { MediaCollection } from "./MediaCollection";
 import { MediaItem } from "./MediaItem";
 import { TidalApi } from "./TidalApi";
@@ -45,5 +45,16 @@ export class Playlist extends ContentBase implements MediaCollection {
 
 	public async title() {
 		return this.tidalPlaylist.title;
+	}
+
+	/**
+	 * Tidal image ids of the playlist cover, the square one first (shown in grids and the player) then the wide one (shown in some headers)
+	 */
+	public get imageIds(): string[] {
+		return [this.tidalPlaylist.squareImage, this.tidalPlaylist.image].filter((id): id is string => typeof id === "string" && id.length > 0);
+	}
+
+	public coverUrl(opts?: Omit<TCoverOpts, "type">) {
+		return ContentBase.formatCoverUrl(this.imageIds[0], opts);
 	}
 }
