@@ -437,6 +437,10 @@ export class MediaItem extends ContentBase {
 				return "m4a";
 			case "application/vnd.tidal.bts":
 				return "flac";
+			default: {
+				const unsupported: never = playbackInfo;
+				throw new Error(`Unsupported Stream Info manifest mime type: ${(unsupported as PlaybackInfo).manifestMimeType}`);
+			}
 		}
 	}
 	// #endregion
