@@ -16,7 +16,7 @@ export type { SettingsTabContent, SettingsTabDefinition, SettingsTabOverride, Se
 import { storeUrls } from "./SettingsPage/PluginStoreTab";
 import { fetchReleases } from "./SettingsPage/SettingsTab/LunaClientUpdate";
 
-import { pkg } from "plugins/lib.native/src/index.native";
+import { pkg } from "../../lib.native/src/index.native";
 import { unloads } from "./index.safe";
 import "./logoutConfirm";
 
