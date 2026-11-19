@@ -133,6 +133,24 @@ export class TidalApi {
 		);
 	}
 
+	/**
+	 * Create a playlist owned by the user, the same request TIDAL's "Create playlist" dialog makes.
+	 * It is `UNLISTED` unless `accessType` is `PUBLIC`.
+	 * @returns The uuid of the new playlist
+	 */
+	public static async createPlaylist(
+		name: string,
+		{ description, accessType = "UNLISTED" }: { description?: string; accessType?: "PUBLIC" | "UNLISTED" } = {},
+	): Promise<string> {
+		const { data, response } = await this.openApi.POST("/playlists", {
+			body: { data: { type: "playlists", attributes: { name, description, accessType } } },
+		});
+		if (!response.ok) this.trace.err.withContext(response.url).throw(`${response.status} ${response.statusText}`);
+		const uuid = data?.data.id;
+		if (uuid === undefined) return this.trace.err.withContext(response.url).throw("No playlist id in the response");
+		return uuid;
+	}
+
 	/** Most entries TIDAL's OpenAPI takes in one request to add or remove playlist items (`maxItems` in its spec) */
 	public static readonly maxPlaylistItemsPerRequest = 50;
 	/**

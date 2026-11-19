@@ -493,6 +493,10 @@ export class MediaItem extends ContentBase {
 				return playbackInfo.manifest.tracks.audios[0]?.codec === "FLAC" ? "flac" : "m4a";
 			case "application/vnd.tidal.bts":
 				return "flac";
+			default: {
+				const unsupported: never = playbackInfo;
+				throw new Error(`Unsupported Stream Info manifest mime type: ${(unsupported as PlaybackInfo).manifestMimeType}`);
+			}
 		}
 	}
 	// #endregion
