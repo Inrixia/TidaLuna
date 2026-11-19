@@ -76,7 +76,7 @@ export class MediaItem extends ContentBase {
 		let bestMediaItem: MediaItem | undefined = undefined;
 		for await (const track of TidalApi.isrc(isrc)) {
 			// If quality is higher than current best, set as best
-			const maxTrackQuality = Quality.max(...Quality.fromMetaTags(track.attributes.mediaTags as redux.MediaMetadataTag[]));
+			const maxTrackQuality = Quality.max(...Quality.fromMetaTags((track.attributes?.mediaTags ?? []) as redux.MediaMetadataTag[]));
 			if (maxTrackQuality > (bestMediaItem?.bestQuality ?? Quality.Lowest)) {
 				bestMediaItem = (await MediaItem.fromId(track.id)) ?? bestMediaItem;
 				if ((bestMediaItem?.bestQuality ?? Quality.Lowest) >= Quality.Max) return bestMediaItem;

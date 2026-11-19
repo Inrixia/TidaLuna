@@ -4,7 +4,7 @@ import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, typ
 import { createAPIClient } from "@tidal-music/api";
 import type { CredentialsProvider } from "@tidal-music/common";
 
-import type { TApiTrackWithLyrics } from "./types/Lyrics";
+import type { TApiLyrics } from "./types/Lyrics";
 import type { TApiPlaylistItemRef } from "./types/Playlist";
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
 
@@ -36,7 +36,19 @@ export class TidalApi {
 	 * logged in user. Paths, parameters, bodies and responses are typed from TIDAL's spec, see https://tidal-music.github.io/tidal-api-reference/
 	 * @example const { data, response } = await TidalApi.openApi.GET("/tracks/{id}", { params: { path: { id }, query: { countryCode } } });
 	 */
-	public static readonly openApi = createAPIClient(<CredentialsProvider>{ bus: () => {}, getCredentials });
+	public static readonly openApi = createAPIClient(<CredentialsProvider>{ bus: () => {}, getCredentials }, undefined, {
+		// The client retries failed GETs on its own, by default up to 3 times on 429/5xx and 10 times on network errors,
+		// without looking at Retry-After. Retry once after ~1s instead, as `fetch` does, so a rate limit isn't hammered
+		status: { maxRetries: 1, baseDelayMs: 1000 },
+		network: { maxRetries: 1, baseDelayMs: 1000 },
+		timeout: { maxRetries: 1, baseDelayMs: 1000 },
+	});
+	/** The `data` of an `openApi` response, `undefined` on 403/404 like `fetch`, throws on other errors */
+	private static openApiData<T>({ data, response }: { data?: T; response: Response }): T | undefined {
+		if (response.ok) return data;
+		if (response.status === 403 || response.status === 404) return undefined;
+		return this.trace.err.withContext(response.url).throw(`${response.status} ${response.statusText}`);
+	}
 
 	public static readonly queryArgs: Memoized<() => string> = memoizeArgless(() => {
 		const store = redux.store.getState();
@@ -88,22 +100,26 @@ export class TidalApi {
 		return lyrics ?? this.openApiLyrics(trackId);
 	}
 	/** Lyrics from the OpenAPI, in the shape of the v1 API's lyrics */
-	private static async openApiLyrics(trackId: redux.ItemId): Promise<redux.Lyrics | undefined> {
-		const resp = await this.fetch<TApiTrackWithLyrics>(`https://openapi.tidal.com/v2/tracks/${trackId}?${this.queryArgs()}&include=lyrics`).catch(
-			() => undefined,
-		);
-		const lyrics = resp?.included?.find((item) => item.type === "lyrics")?.attributes;
+	private static openApiLyrics = memoize(async (trackId: redux.ItemId): Promise<redux.Lyrics | undefined> => {
+		const resp = await this.openApi
+			.GET("/tracks/{id}", {
+				params: { path: { id: String(trackId) }, query: { countryCode: redux.store.getState().session.countryCode, include: ["lyrics"] } },
+			})
+			.then((res) => this.openApiData(res))
+			.catch(() => undefined);
+		const lyrics = resp?.included?.find((item): item is TApiLyrics => item.type === "lyrics")?.attributes;
 		if (!lyrics?.text) return undefined;
+		const provider = lyrics.provider;
 		return {
 			trackId,
-			lyricsProvider: lyrics.provider?.name ?? lyrics.provider?.source ?? "",
-			providerCommontrackId: lyrics.provider?.commonTrackId ?? "",
-			providerLyricsId: lyrics.provider?.lyricsId ?? "",
+			lyricsProvider: provider?.name ?? provider?.source ?? "",
+			providerCommontrackId: provider?.source === "THIRD_PARTY" ? provider.commonTrackId : "",
+			providerLyricsId: provider?.source === "THIRD_PARTY" ? provider.lyricsId : "",
 			lyrics: lyrics.text,
 			subtitles: lyrics.lrcText || null,
 			isRightToLeft: lyrics.direction === "RIGHT_TO_LEFT",
 		};
-	}
+	});
 	public static async artist(artistId: redux.ItemId) {
 		return this.fetch<redux.Artist>(`https://desktop.tidal.com/v1/artists/${artistId}?${this.queryArgs()}`);
 	}
@@ -202,15 +218,22 @@ export class TidalApi {
 		return (data?.data ?? []).flatMap(({ id, type, meta }) => (meta === undefined ? [] : [{ id, type, meta: { itemId: meta.itemId } }]));
 	}
 
+	/** A page of the tracks with `isrc`, the page after `cursor` or the first one */
+	private static isrcPage = memoize((isrc: string, cursor: string | undefined) =>
+		this.openApi
+			.GET("/tracks", {
+				params: { query: { countryCode: redux.store.getState().session.countryCode, "filter[isrc]": [isrc], "page[cursor]": cursor } },
+			})
+			.then((res) => this.openApiData(res)),
+	);
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {
-		let resp = await this.fetch<TApiTracks | VoidLike>(`https://openapi.tidal.com/v2/tracks?${this.queryArgs()}&filter[isrc]=${isrc}`);
+		let resp: TApiTracks | VoidLike = await this.isrcPage(isrc, undefined);
 		while (true) {
 			if (resp?.data === undefined || resp.data.length === 0) break;
 			yield* resp.data;
-			if (resp.links.next === undefined) break;
-			resp = await this.fetch<TApiTracks>(`https://openapi.tidal.com/v2/${resp.links.next}`).catch(
-				this.trace.err.withContext(`Unexpected error when fetching Tidal ISRC ${isrc}`),
-			);
+			const cursor = resp.links.meta?.nextCursor;
+			if (cursor === undefined) break;
+			resp = await this.isrcPage(isrc, cursor).catch(this.trace.err.withContext(`Unexpected error when fetching Tidal ISRC ${isrc}`));
 		}
 	}
 }
