@@ -56,8 +56,21 @@ export class MediaItem extends ContentBase {
 	}
 
 	// #region Static Construction
-	public static async fromId(itemId?: redux.ItemId, contentType: redux.ContentType = "track"): Promise<MediaItem | undefined> {
-		if (itemId === undefined) return;
+	// Calls for the same item share one lookup. Items that are not in the redux store are loaded through
+	// interceptActionResp, which runs one LOAD_SINGLE_MEDIA_ITEM at a time, so repeated calls (e.g. a tracklist row
+	// that is reported again while scrolling) queued up thousands of loads and kept their callers waiting for minutes.
+	private static readonly pendingFromId = new Map<string, Promise<MediaItem | undefined>>();
+	public static fromId(itemId?: redux.ItemId, contentType: redux.ContentType = "track"): Promise<MediaItem | undefined> {
+		if (itemId === undefined) return Promise.resolve(undefined);
+		const key = `${contentType}/${itemId}`;
+		let pending = MediaItem.pendingFromId.get(key);
+		if (pending === undefined) {
+			pending = MediaItem.loadFromId(itemId, contentType).finally(() => MediaItem.pendingFromId.delete(key));
+			MediaItem.pendingFromId.set(key, pending);
+		}
+		return pending;
+	}
+	private static async loadFromId(itemId: redux.ItemId, contentType: redux.ContentType): Promise<MediaItem | undefined> {
 		// Prefetch mediaItemCache while constructing
 		const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
 		const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
