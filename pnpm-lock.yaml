@@ -76,6 +76,9 @@ importers:
 
   plugins/lib:
     dependencies:
+      '@tidal-music/api':
+        specifier: 0.56.0
+        version: 0.56.0
       dasha:
         specifier: 3.2.0
         version: 3.2.0
@@ -92,6 +95,9 @@ importers:
         specifier: ^1.6.4
         version: 1.6.4
     devDependencies:
+      '@tidal-music/common':
+        specifier: 0.2.1
+        version: 0.2.1
       musicbrainz-api:
         specifier: ^1.2.1
         version: 1.2.1
@@ -543,6 +549,12 @@ packages:
 
   '@popperjs/core@2.11.8':
     resolution: {integrity: sha512-P1st0aksCrn9sGZhp8GMYwBnQsbvAWsZAX44oXNNvLHGqAOcoVxmjZiohstwQ7SqKnbR47akdNi+uleWD8+g6A==}
+
+  '@tidal-music/api@0.56.0':
+    resolution: {integrity: sha512-Yo6RPQlKdiogA9/p9yJe6p0Cie0jfkPSQG089o17LVt9adXuDLwNyUlbA7ZBSwEK+5+koLu6xkMw/77iXGaLdA==}
+
+  '@tidal-music/common@0.2.1':
+    resolution: {integrity: sha512-23o83gxyXsXYNIydOsupO4+6MkW1ZZfnLFyxphoSCYuS6jXWulbOhiKTz3w8mqZP5+vHeXj6ZQ92gtWmDXCTZg==}
 
   '@tokenizer/inflate@0.4.1':
     resolution: {integrity: sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==}
@@ -1018,6 +1030,12 @@ packages:
 
   oby@15.1.2:
     resolution: {integrity: sha512-6QD9iEoPzV+pMDdcg3RtFWhgDX8pS5hZouVHvgXGDy3Q9RxFfnI3CYv9i62keeuX+qk6iN2z5E9FD3q3OckZ6A==}
+
+  openapi-fetch@0.17.0:
+    resolution: {integrity: sha512-PsbZR1wAPcG91eEthKhN+Zn92FMHxv+/faECIwjXdxfTODGSGegYv0sc1Olz+HYPvKOuoXfp+0pA2XVt2cI0Ig==}
+
+  openapi-typescript-helpers@0.1.0:
+    resolution: {integrity: sha512-OKTGPthhivLw/fHz6c3OPtg72vi86qaMlqbJuVJ23qOvQ+53uw1n7HdmkJFibloF7QEjDrDkzJiOJuockM/ljw==}
 
   os-locale@6.0.2:
     resolution: {integrity: sha512-qIb8bzRqaN/vVqEYZ7lTAg6PonskO7xOmM7OClD28F6eFa4s5XGe4bGpHUHMoCHbNNuR0pDYFeSLiW5bnjWXIA==}
@@ -1611,6 +1629,12 @@ snapshots:
 
   '@popperjs/core@2.11.8': {}
 
+  '@tidal-music/api@0.56.0':
+    dependencies:
+      openapi-fetch: 0.17.0
+
+  '@tidal-music/common@0.2.1': {}
+
   '@tokenizer/inflate@0.4.1':
     dependencies:
       debug: 4.4.3
@@ -2046,6 +2070,12 @@ snapshots:
   object-assign@4.1.1: {}
 
   oby@15.1.2: {}
+
+  openapi-fetch@0.17.0:
+    dependencies:
+      openapi-typescript-helpers: 0.1.0
+
+  openapi-typescript-helpers@0.1.0: {}
 
   os-locale@6.0.2:
     dependencies:

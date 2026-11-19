@@ -2,7 +2,6 @@ import { asyncDebounce } from "@inrixia/helpers";
 
 import type { Tracer } from "@luna/core";
 
-import { addNotificationButton } from "../helpers/notificationButton";
 import { trackTableProps, trackTableRows } from "../helpers/trackTable";
 import { libTrace } from "../index.safe";
 import { ContentBase, type TCoverOpts } from "./ContentBase";
@@ -73,7 +72,6 @@ export class Playlist extends ContentBase implements MediaCollection {
 			for (let i = 0; i < items.length; i += TidalApi.maxPlaylistItemsPerRequest) {
 				const batch = items.slice(i, i + TidalApi.maxPlaylistItemsPerRequest);
 				await TidalApi.removePlaylistItems(this.uuid, batch);
-				for (const { meta } of batch) removedItemIds.add(meta.itemId);
 				done.push(...batch);
 			}
 		} catch (err) {
@@ -150,85 +148,20 @@ export class Playlist extends ContentBase implements MediaCollection {
 		return covers ? cachedIds : TidalApi.playlistItemIds(this.uuid);
 	}
 
-	/** The last removal by `removeSelected`, for `undoRemove` */
-	private static lastRemoval?: Removal;
 	/**
-	 * Put back the tracks/videos last removed by `removeSelected`, if their playlist is open.
-	 * @returns `false` if there is nothing to undo here
+	 * TIDAL's selection in the open playlist page's track table, the same its "Remove from playlist" uses: exact for
+	 * duplicates, sorted or filtered views and rows scrolled out of view. `undefined` if no playlist's track table is shown.
 	 */
-	public static undoRemove() {
-		const last = this.lastRemoval;
-		if (last === undefined || last.restoring || last.uuid !== Playlist.currentUUID) return false;
-		return this.undo(last);
-	}
-	private static async undo(removal: Removal) {
-		if (removal.restoring || removal.removed.length === 0) return;
-		removal.restoring = true;
-		try {
-			const playlist = await Playlist.fromId(removal.uuid);
-			if (playlist === undefined) throw new Error(`Playlist ${removal.uuid} not found`);
-			const count = countItems(removal.removed);
-			await playlist.restoreItems(removal.removed);
-			if (this.lastRemoval === removal) this.lastRemoval = undefined;
-			playlist.trace.msg.log(`Restored ${itemsText(count)}`);
-		} finally {
-			removal.restoring = false;
+	public static selection(): PlaylistSelection | undefined {
+		const row = trackTableRows(`[data-test="playlist-page"]`)[0];
+		if (row === undefined) return undefined;
+		const selection = trackTableProps<TidalPlaylistSelection>(row, "getSelectedPlaylistItems");
+		if (selection === undefined) {
+			libTrace.warn("Couldn't find TIDAL's playlist selection, the playlist page may have changed");
+			return undefined;
 		}
+		return { items: selection.getSelectedPlaylistItems(), clear: () => selection.clearSelection?.() };
 	}
-
-	/**
-	 * Remove the tracks/videos selected on the open playlist page, if the user can edit the playlist.
-	 * The selection is TIDAL's own, the same its "Remove from playlist" uses, so it is exact for duplicates, sorted or
-	 * filtered views and rows scrolled out of view.
-	 * @returns `false` if there is nothing to remove here
-	 */
-	public static removeSelected() {
-		const uuid = Playlist.currentUUID;
-		if (uuid === undefined) return false;
-		const tidalPlaylist = this.getItemFromStore("playlists", uuid);
-		if (tidalPlaylist === undefined) return false;
-		const playlist = new Playlist(uuid, tidalPlaylist);
-		if (!playlist.canEdit) return false;
-
-		const selection = getPlaylistSelection();
-		// Entries removed a moment ago can still be selected until TIDAL has reloaded the list
-		const selected = selection?.getSelectedPlaylistItems().filter(({ meta }) => !removedItemIds.has(meta.itemId));
-		if (selected === undefined || selected.length === 0) return false;
-		// Still removing the previous selection, swallow the key rather than remove anything twice
-		if (this.removing) return;
-		this.removing = true;
-
-		return (async () => {
-			let removed: RemovedItems;
-			let error: unknown;
-			try {
-				removed = await playlist.removeItems(selected);
-			} catch (err) {
-				// Part may have been removed before the error, that part can still be undone
-				removed = (<{ removed?: RemovedItems }>err).removed ?? [];
-				error = err;
-			}
-			const count = countItems(removed);
-			if (count > 0) {
-				// Clear the removed entries' selection like TIDAL does on its own removal. Only if the selection is still the
-				// removed one: a selection made while this ran stays, and on a failure the user can try again
-				const current = getPlaylistSelection();
-				const currentIds = current?.getSelectedPlaylistItems().map(({ meta }) => meta.itemId) ?? [];
-				const selectedIds = new Set(selected.map(({ meta }) => meta.itemId));
-				if (error === undefined && currentIds.length === selectedIds.size && currentIds.every((itemId) => selectedIds.has(itemId)))
-					current!.clearSelection?.();
-
-				const removal: Removal = { uuid, removed, restoring: false };
-				Playlist.lastRemoval = removal;
-				const message = `Removed ${itemsText(count)}`;
-				// The notification's Undo restores this removal, wherever the user is by then
-				addNotificationButton(message, "Undo", () => Playlist.undo(removal).catch(playlist.trace.msg.err.withContext("Undo")));
-				playlist.trace.msg.log(message);
-			}
-			if (error !== undefined) throw error;
-		})().finally(() => (this.removing = false));
-	}
-	private static removing = false;
 
 	public async count() {
 		return this.tidalPlaylist.numberOfTracks!;
@@ -267,15 +200,10 @@ const getPlaylistEntity = (uuid: redux.ItemId) =>
 
 /** Removed playlist entries grouped by the entry they were before, `before` is unset for entries that were at the end */
 export type RemovedItems = { items: TApiPlaylistItemRef[]; before?: string }[];
-type Removal = { uuid: redux.ItemId; removed: RemovedItems; restoring: boolean };
-const countItems = (removed: RemovedItems) => removed.reduce((sum, { items }) => sum + items.length, 0);
-const itemsText = (count: number) => `${count} ${count === 1 ? "item" : "items"}`;
 // The running and queued changes of each playlist, see `Playlist.change`
 const changeQueues = new Map<redux.ItemId, Promise<unknown>>();
 // When each playlist was last changed here, TIDAL's lists of it fetched before then are out of date
 const lastChange = new Map<redux.ItemId, number>();
-// Entries removed in this session, TIDAL's selection can still hold them until it has reloaded the list
-const removedItemIds = new Set<string>();
 // The new itemId of each entry put back by `restoreItems`, by its itemId before it was removed
 const restoredItemIds = new Map<string, string>();
 const currentItemId = (itemId?: string) => {
@@ -309,17 +237,9 @@ const groupRemoved = (order: string[], items: TApiPlaylistItemRef[]): RemovedIte
 	);
 };
 
-type PlaylistSelection = { getSelectedPlaylistItems: () => TApiPlaylistItemRef[]; clearSelection?: () => void };
-/**
- * The selection of the open playlist page's track table, `undefined` if there is none. Read from the first row rendered.
- */
-const getPlaylistSelection = (): PlaylistSelection | undefined => {
-	const row = trackTableRows(`[data-test="playlist-page"]`)[0];
-	if (row === undefined) return undefined;
-	const selection = trackTableProps<PlaylistSelection>(row, "getSelectedPlaylistItems");
-	if (selection === undefined) libTrace.warn("Couldn't find TIDAL's playlist selection, the playlist page may have changed");
-	return selection;
-};
+/** The selected entries of a playlist's track table and a way to unselect them, like TIDAL does after its own removal */
+export type PlaylistSelection = { items: TApiPlaylistItemRef[]; clear: () => void };
+type TidalPlaylistSelection = { getSelectedPlaylistItems: () => TApiPlaylistItemRef[]; clearSelection?: () => void };
 
 type ItemsQuery = {
 	endpointName?: string;

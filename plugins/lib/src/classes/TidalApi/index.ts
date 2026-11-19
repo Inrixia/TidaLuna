@@ -1,6 +1,8 @@
 import { type Tracer } from "@luna/core";
 
 import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
+import { createAPIClient } from "@tidal-music/api";
+import type { CredentialsProvider } from "@tidal-music/common";
 
 import type { TApiTrackWithLyrics } from "./types/Lyrics";
 import type { TApiPlaylistItemRef } from "./types/Playlist";
@@ -14,6 +16,8 @@ import type { AlbumPage } from "./types/AlbumPage";
 import { PlaybackInfoResponse } from "./types/PlaybackInfo";
 
 export type * from "./types";
+/** TIDAL's OpenAPI types from `@tidal-music/api`, e.g. `TApiComponents["schemas"]["Tracks_Attributes"]` */
+export type { components as TApiComponents, paths as TApiPaths } from "@tidal-music/api";
 export type { PlaybackInfoResponse };
 
 export class TidalApi {
@@ -27,6 +31,13 @@ export class TidalApi {
 			"x-tidal-token": clientId,
 		};
 	}
+	/**
+	 * TIDAL's own typed client for its OpenAPI (https://openapi.tidal.com/v2) from `@tidal-music/api`, signed in as the
+	 * logged in user. Paths, parameters, bodies and responses are typed from TIDAL's spec, see https://tidal-music.github.io/tidal-api-reference/
+	 * @example const { data, response } = await TidalApi.openApi.GET("/tracks/{id}", { params: { path: { id }, query: { countryCode } } });
+	 */
+	public static readonly openApi = createAPIClient(<CredentialsProvider>{ bus: () => {}, getCredentials });
+
 	public static readonly queryArgs: Memoized<() => string> = memoizeArgless(() => {
 		const store = redux.store.getState();
 		return `countryCode=${store.session.countryCode}&deviceType=DESKTOP&locale=${store.settings.language}`;
@@ -114,7 +125,7 @@ export class TidalApi {
 		);
 	}
 
-	/** Most entries the openapi takes in one request to add or remove playlist items, more is rejected */
+	/** Most entries TIDAL's OpenAPI takes in one request to add or remove playlist items (`maxItems` in its spec) */
 	public static readonly maxPlaylistItemsPerRequest = 50;
 	/**
 	 * The `meta.itemId` of each entry of a playlist in playlist order, from a single request.
@@ -133,13 +144,11 @@ export class TidalApi {
 	 * At most `maxPlaylistItemsPerRequest` items.
 	 */
 	public static async removePlaylistItems(playlistUUID: redux.ItemId, items: TApiPlaylistItemRef[]) {
-		const url = `https://openapi.tidal.com/v2/playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
-		const res = await fetch(url, {
-			method: "DELETE",
-			headers: { ...(await this.getAuthHeaders()), "Content-Type": "application/vnd.api+json" },
-			body: JSON.stringify({ data: items.map(({ id, type, meta }) => ({ id, type, meta: { itemId: meta.itemId } })) }),
+		const { response } = await this.openApi.DELETE("/playlists/{id}/relationships/items", {
+			params: { path: { id: String(playlistUUID) } },
+			body: { data: items.map(({ id, type, meta }) => ({ id, type, meta: { itemId: meta.itemId } })) },
 		});
-		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+		if (!response.ok) this.trace.err.withContext(response.url).throw(`${response.status} ${response.statusText}`);
 	}
 
 	/**
@@ -153,20 +162,18 @@ export class TidalApi {
 		items: Pick<TApiPlaylistItemRef, "id" | "type">[],
 		positionBefore?: string,
 	): Promise<TApiPlaylistItemRef[]> {
-		const url = `https://openapi.tidal.com/v2/playlists/${playlistUUID}/relationships/items?${this.queryArgs()}`;
-		const res = await fetch(url, {
-			method: "POST",
-			headers: { ...(await this.getAuthHeaders()), "Content-Type": "application/vnd.api+json" },
-			body: JSON.stringify({
+		const { data, response } = await this.openApi.POST("/playlists/{id}/relationships/items", {
+			params: { path: { id: String(playlistUUID) } },
+			body: {
 				data: items.map(({ id, type }) => ({ id, type })),
-				meta: positionBefore === undefined ? undefined : { positionBefore },
-			}),
+				meta: positionBefore === undefined ? undefined : { onDuplicates: "ADD", positionBefore },
+			},
 		});
-		if (!statusOK(res.status))
-			this.trace.err.withContext(url).throw(Object.assign(new Error(`${res.status} ${res.statusText}`), { status: res.status }));
-		// The entries are added at this point, so an unreadable body isn't an error
-		const body: { data?: TApiPlaylistItemRef[] } | undefined = await res.json().catch(() => undefined);
-		return body?.data ?? [];
+		if (!response.ok)
+			this.trace.err
+				.withContext(response.url)
+				.throw(Object.assign(new Error(`${response.status} ${response.statusText}`), { status: response.status }));
+		return (data?.data ?? []).flatMap(({ id, type, meta }) => (meta === undefined ? [] : [{ id, type, meta: { itemId: meta.itemId } }]));
 	}
 
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {
