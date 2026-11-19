@@ -10,24 +10,33 @@ const observables = new Set<ObserveEntry>();
 const observer = new MutationObserver((records) => {
 	if (observables.size === 0) return;
 
-	const seenElems = new Set<Node>();
-
+	// Only scan nodes added in this batch. Elements that were already in the DOM were reported when they were added,
+	// re-scanning the whole subtree of every mutation target re-fired callbacks for them on any unrelated change.
+	const added: Element[] = [];
 	for (const record of records) {
-		const elem = record.target;
-		if (elem.nodeType !== Node.ELEMENT_NODE || seenElems.has(elem)) continue;
-		seenElems.add(elem);
-		for (const obs of observables) {
-			const sel = obs[0];
-			const cb = obs[1];
-			// Cast to elem as we are save checking nodeType === Node.ELEMENT_NODE
-			if ((<Element>elem).matches(sel)) cb(<Element>elem);
-			for (const el of (<Element>elem).querySelectorAll(sel)) cb(el);
+		for (const node of record.addedNodes) {
+			// Skip nodes that were removed again in the same batch
+			if (node.nodeType === Node.ELEMENT_NODE && node.isConnected) added.push(<Element>node);
 		}
+	}
+	if (added.length === 0) return;
+
+	for (const obs of observables) {
+		const sel = obs[0];
+		const cb = obs[1];
+		// A Set so an element added with one of its ancestors in the same batch is only reported once
+		const matched = new Set<Element>();
+		for (const elem of added) {
+			if (elem.matches(sel)) matched.add(elem);
+			if (elem.firstElementChild !== null) for (const el of elem.querySelectorAll(sel)) matched.add(el);
+		}
+		for (const el of matched) cb(el);
 	}
 });
 
 /**
  * Observes the DOM for elements matching the given selector and calls the callback when they appear.
+ * Elements already in the DOM are reported once, right after this call.
  * @param selector The CSS selector to observe.
  * @param cb The callback function to execute when a matching element is found cast to type T.
  * @returns An `Unload` function that, when called, will stop observing for this selector and callback pair.
@@ -40,6 +49,13 @@ export const observe = <T extends Element = Element>(unloads: LunaUnloads, selec
 		});
 	const entry: ObserveEntry = [selector, cb as ObserveCallback<Element>];
 	observables.add(entry);
+	// Report elements that are already in the DOM, as they will not show up as added nodes
+	queueMicrotask(() => {
+		for (const el of document.querySelectorAll(selector)) {
+			if (!observables.has(entry)) return;
+			entry[1](el);
+		}
+	});
 	const unload = () => {
 		observables.delete(entry);
 		if (observables.size === 0) observer.disconnect();

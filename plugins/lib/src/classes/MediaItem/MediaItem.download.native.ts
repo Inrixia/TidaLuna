@@ -4,7 +4,7 @@ import { createWriteStream } from "fs";
 import { access, constants, mkdir } from "fs/promises";
 import { join, parse } from "path";
 
-import { fetchMediaItemStream, type FetchProgress } from "plugins/lib.native/src/index.native";
+import { fetchMediaItemStream, type FetchProgress } from "../../../../lib.native/src/index.native";
 
 // Type import & native space so not a issue
 import type { redux } from "@luna/lib";
