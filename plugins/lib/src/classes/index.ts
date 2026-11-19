@@ -2,6 +2,7 @@ export * from "./Album";
 export * from "./Artist";
 export * from "./ContentBase";
 export * from "./ContextMenu";
+export * from "./ImageOverrides";
 export * from "./MediaCollection";
 export * from "./MediaItem";
 export * from "./Playlist";

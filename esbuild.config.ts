@@ -44,5 +44,5 @@ const buildConfigs: BuildOptions[] = [
 	},
 ];
 
-import "build/buildPlugins";
+import "./build/buildPlugins";
 listen(buildConfigs);

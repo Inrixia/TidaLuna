@@ -1,4 +1,3 @@
-import type { ItemId } from "neptune-types/tidal";
 import { trackTableProps, trackTableRows } from "../../helpers/trackTable";
 import type { MediaCollection } from "../MediaCollection";
 import { MediaItem } from "./MediaItem";
@@ -10,7 +9,7 @@ export type MediaItemBase = { item: { id: redux.ItemId }; type: redux.ContentTyp
 export class MediaItems implements MediaCollection {
 	private constructor(public readonly tMediaItems: MediaItemBase[]) {}
 
-	public static fromIds(itemIds: ItemId[], type: redux.ContentType = "track") {
+	public static fromIds(itemIds: redux.ItemId[], type: redux.ContentType = "track") {
 		return new this(itemIds.map((id) => ({ item: { id }, type })));
 	}
 	public static fromTMediaItems(tMediaItems: MediaItemBase[]) {
@@ -21,9 +20,12 @@ export class MediaItems implements MediaCollection {
 	 * lists them. `undefined` if nothing is selected. The selection is TIDAL's own, the one its context menu uses.
 	 */
 	public static fromSelection(): MediaItems | undefined {
-		const getters = new Set<() => ItemId[]>();
+		const getters = new Set<() => redux.ItemId[]>();
 		for (const row of trackTableRows()) {
-			const getSelected = trackTableProps<{ getSelectedMediaItemIds: () => ItemId[] }>(row, "getSelectedMediaItemIds")?.getSelectedMediaItemIds;
+			const getSelected = trackTableProps<{ getSelectedMediaItemIds: () => redux.ItemId[] }>(
+				row,
+				"getSelectedMediaItemIds",
+			)?.getSelectedMediaItemIds;
 			// Every row of a table passes down the same getter, ask each table once
 			if (getSelected === undefined || getters.has(getSelected)) continue;
 			getters.add(getSelected);
