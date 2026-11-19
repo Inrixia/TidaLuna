@@ -1,6 +1,4 @@
-import type { FolderItem } from "neptune-types/tidal";
-
-import type { ItemId } from "../store";
+import type { FolderItem, ItemId } from "../store";
 import type { SortDirection, SortOrder } from "./SortOrders";
 
 export type FolderItemContext = "all" | "folder" | "page" | "sidebar";

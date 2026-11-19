@@ -29,7 +29,7 @@ declare global {
 			// Throw lib, ui & core here for ease of use
 			core?: typeof import("@luna/core");
 			lib?: typeof import("@luna/lib");
-			native?: typeof import("plugins/lib.native/src/index.native");
+			native?: typeof import("../../plugins/lib.native/src/index.native");
 			ui?: typeof import("@luna/ui");
 			dev?: typeof import("@luna/dev");
 		};

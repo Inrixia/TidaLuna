@@ -30,6 +30,7 @@ export const LunaNumber = React.memo((props: LunaNumberProps) => {
 		<TextField
 			variant="outlined"
 			slotProps={{
+				htmlInput: { style: { textAlign: "center" } },
 				input: {
 					startAdornment: (
 						<InputAdornment position="start">
@@ -56,9 +57,6 @@ export const LunaNumber = React.memo((props: LunaNumberProps) => {
 				},
 			}}
 			onChange={(e) => onNumber(e.target.value)}
-			inputProps={{
-				style: { textAlign: "center" },
-			}}
 			value={number}
 			{...props}
 			sx={{

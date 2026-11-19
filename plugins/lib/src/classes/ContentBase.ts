@@ -45,8 +45,15 @@ export class ContentBase {
 		return storeContent[contentType][itemId as keyof redux.Content[K]] as ContentItem<K>;
 	}
 
+	/**
+	 * Replace typographic quotes (used by MusicBrainz) with plain ones (used by Tidal).
+	 */
+	public static normalizeQuotes(text: string): string {
+		return text.replace(/[‘’‛]/g, "'").replace(/[“”„]/g, '"');
+	}
+
 	protected static formatTitle(tidalTitle?: string, tidalVersion?: string, brainzTitle?: string, brainzCredit?: IArtistCredit[]): string {
-		brainzTitle = brainzTitle?.replaceAll("’", "'");
+		brainzTitle = brainzTitle && ContentBase.normalizeQuotes(brainzTitle);
 
 		let title = brainzTitle ?? tidalTitle;
 		if (title === undefined) throw new Error("Title is undefined");
@@ -58,7 +65,9 @@ export class ContentBase {
 		}
 
 		// Dont use musicBrainz disambiguation as its not the same as the tidal version!
-		if (tidalVersion && !title.toLowerCase().includes(tidalVersion.toLowerCase())) title += ` (${tidalVersion})`;
+		if (tidalVersion && !ContentBase.normalizeQuotes(title).toLowerCase().includes(ContentBase.normalizeQuotes(tidalVersion).toLowerCase())) {
+			title += ` (${tidalVersion})`;
+		}
 
 		return title;
 	}
