@@ -12,6 +12,7 @@ export * from "./Album";
 export * from "./Article";
 export * from "./Artist";
 export * from "./BaseMediaItem";
+export * from "./Folder";
 export * from "./Lists";
 export * from "./Mix";
 export * from "./Playlist";

@@ -8,6 +8,7 @@
 	},
 	"exports": "./src/index.ts",
 	"dependencies": {
+		"@tidal-music/api": "0.56.0",
 		"dasha": "3.2.0",
 		"mediabunny": "^1.53.1",
 		"music-metadata": "^11.14.0",
@@ -15,8 +16,8 @@
 		"sanitize-filename": "^1.6.4"
 	},
 	"devDependencies": {
+		"@tidal-music/common": "0.2.1",
 		"musicbrainz-api": "^1.2.1",
-		"neptune-types": "^1.0.1",
 		"oby": "^15.1.2",
 		"redux": "^5.0.1"
 	}

@@ -1,9 +1,10 @@
 import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver, type Emit } from "@inrixia/helpers";
 import type { IRecording, ITrack } from "musicbrainz-api";
 
-import { ftch, ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
+import { ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
-import { getPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
+import { getPlaybackInfo, getVideoPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
+import { brainzJson } from "../../helpers/brainzJson";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
 import { Album } from "../Album";
@@ -64,7 +65,8 @@ export class MediaItem extends ContentBase {
 			mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
 			if (mediaItem === undefined) return;
 			const cache = await mediaItemCache;
-			return new MediaItem(itemId, mediaItem, contentType, cache);
+			// Prefer the type Tidal stored the item with, callers often default to "track" for videos
+			return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
 		});
 		// Fetch real quality for spatial tracks
 		if (item) await item.fetchBestQuality();
@@ -98,14 +100,17 @@ export class MediaItem extends ContentBase {
 	public static async *fromIds(ids?: (redux.ItemId | undefined)[]) {
 		if (ids === undefined) return;
 		for (const itemId of ids.filter((id) => id !== undefined)) {
-			const mediaItem = await MediaItem.fromId(itemId);
+			// Skip items that fail to load so one bad item doesn't end iteration for the whole collection
+			const mediaItem = await MediaItem.fromId(itemId).catch(MediaItem.trace.err.withContext("fromIds", itemId));
 			if (mediaItem !== undefined) yield mediaItem;
 		}
 	}
 	public static async *fromTMediaItems(tMediaItems?: ({ item: { id: redux.ItemId }; type: redux.ContentType } | undefined)[]) {
 		if (tMediaItems === undefined) return;
 		for (const tMediaItem of tMediaItems.filter((tMediaItem) => tMediaItem !== undefined)) {
-			const mediaItem = await MediaItem.fromId(tMediaItem.item.id, tMediaItem.type);
+			const mediaItem = await MediaItem.fromId(tMediaItem.item.id, tMediaItem.type).catch(
+				MediaItem.trace.err.withContext("fromTMediaItems", tMediaItem.item.id),
+			);
 			if (mediaItem !== undefined) yield mediaItem;
 		}
 	}
@@ -189,9 +194,14 @@ export class MediaItem extends ContentBase {
 	public brainzItem: () => Promise<ITrack | undefined> = memoize(async () => {
 		const releaseTrackFromRecording = async (recording: IRecording) => {
 			// If a recording exists then fetch the full recording details including media for title resolution
-			const release = await ftch
-				.json<IRecording>(`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`)
-				.then(({ releases }) => releases?.filter((release) => release["text-representation"].language === "eng")[0] ?? releases?.[0])
+			const release = await brainzJson<IRecording>(
+				`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`,
+			)
+				.then(({ title, releases }) => {
+					// Release data can be wrong (eg a Japanese release tagged as English), only use releases where the track title matches the recording
+					releases = releases?.filter((release) => MediaItem.baseTitle(release.media?.[0]?.tracks?.[0]?.title) === MediaItem.baseTitle(title));
+					return releases?.filter((release) => release["text-representation"]?.language === "eng")[0] ?? releases?.[0];
+				})
 				.catch(this.trace.warn.withContext("brainzItem.getISRCRecordings"));
 			if (release === undefined) return undefined;
 
@@ -202,14 +212,17 @@ export class MediaItem extends ContentBase {
 
 		if (this.tidalItem.isrc !== undefined) {
 			// Lookup the recording from MusicBrainz by ISRC
-			const recording = await ftch
-				.json<{ recordings: IRecording[] }>(`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`)
-				.then(({ recordings }) => recordings[0])
+			const recording = await brainzJson<{ recordings: IRecording[] }>(
+				`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`,
+			)
+				.then(({ recordings }) => this.matchBrainzRecording(recordings))
 				.catch((err) => {
-					if (err.message !== "Status code is 404") this.trace.warn.withContext("brainzItem.getISRCRecordings");
+					// 404 means MusicBrainz doesn't know the ISRC, not worth a warning
+					if (!err.message?.startsWith("404 ")) this.trace.warn.withContext("brainzItem.getISRCRecordings")(err);
 				});
 
-			if (recording !== undefined) return releaseTrackFromRecording(recording);
+			const releaseTrack = recording && (await releaseTrackFromRecording(recording));
+			if (releaseTrack !== undefined) return releaseTrack;
 		}
 
 		const album = await this.album();
@@ -226,6 +239,35 @@ export class MediaItem extends ContentBase {
 		}
 		return brainzItem;
 	});
+	/**
+	 * MusicBrainz can link unrelated recordings to the same ISRC (eg audiobook chapters) and returns them in no stable order.
+	 * Pick the recording whose title matches the Tidal title, otherwise the one closest in length, otherwise none.
+	 */
+	private matchBrainzRecording(recordings?: IRecording[]): IRecording | undefined {
+		const lengthDiff = (recording: IRecording) =>
+			this.tidalItem.duration && recording.length ? Math.abs(recording.length / 1000 - this.tidalItem.duration) : Infinity;
+		const byLength = (a: IRecording, b: IRecording) => lengthDiff(a) - lengthDiff(b);
+
+		const tidalTitle = MediaItem.baseTitle(this.tidalItem.title);
+		const titleMatches = recordings?.filter((recording) => MediaItem.baseTitle(recording.title) === tidalTitle) ?? [];
+		if (titleMatches.length !== 0) return titleMatches.sort(byLength)[0];
+
+		const closest = recordings?.slice().sort(byLength)[0];
+		if (closest !== undefined && lengthDiff(closest) <= MediaItem.brainzLengthTolerance) return closest;
+	}
+	private static readonly brainzLengthTolerance = 5;
+	/**
+	 * Title for comparing Tidal and MusicBrainz titles, ignores case, quote and hyphen style and anything in brackets.
+	 */
+	private static baseTitle(title?: string): string {
+		const normalized = ContentBase.normalizeQuotes(title ?? "")
+			.replace(/[‐‑‒–—]/g, "-")
+			.toLowerCase()
+			.trim();
+		// Keep the brackets if the whole title is in brackets
+		return normalized.replace(/\s*[([].*?[)\]]/g, "").trim() || normalized;
+	}
+
 	public brainzId: () => Promise<string | undefined> = memoize(async () => {
 		const brainzItem = await this.brainzItem();
 		return brainzItem?.recording.id;
@@ -251,6 +293,8 @@ export class MediaItem extends ContentBase {
 	public async *isrcs(): AsyncIterable<string> {
 		if (this.contentType !== "track") return;
 		const seen = new Set<string>();
+		// Tracks loaded by some pages (eg album pages) have no isrc in the store, the API has it
+		if (!this.tidalItem.isrc) await this.fetchTidalMediaItem().catch(this.trace.warn.withContext("isrcs.fetchTidalMediaItem"));
 		if (this.tidalItem.isrc) {
 			yield this.tidalItem.isrc;
 			seen.add(this.tidalItem.isrc);
@@ -424,17 +468,24 @@ export class MediaItem extends ContentBase {
 	}
 	public download: (path: string | string[], audioQuality?: redux.AudioQuality) => Promise<void> = asyncDebounce(
 		async (path: string | string[], audioQuality?: redux.AudioQuality) => {
+			if (this.contentType === "video") {
+				const [playbackInfo, tags] = await Promise.all([getVideoPlaybackInfo(this.id), this.flacTags()]);
+				if (!playbackInfo) throw new Error(`Video ${this.id} is not available`);
+				return download(playbackInfo, path, tags);
+			}
 			const [playbackInfo, flagTags] = await Promise.all([this.playbackInfo(audioQuality), this.flacTags()]);
 			if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
 			return download(playbackInfo, path, flagTags);
 		},
 	);
 	public async fileExtension(audioQuality?: redux.AudioQuality): Promise<string> {
+		if (this.contentType === "video") return "mp4";
 		const playbackInfo = await this.playbackInfo(audioQuality);
 		if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
 		switch (playbackInfo.manifestMimeType) {
 			case "application/dash+xml":
-				return "m4a";
+				// Lossless DASH streams carry FLAC in MP4, which is remuxed into a native FLAC file
+				return playbackInfo.manifest.tracks.audios[0]?.codec === "FLAC" ? "flac" : "m4a";
 			case "application/vnd.tidal.bts":
 				return "flac";
 		}

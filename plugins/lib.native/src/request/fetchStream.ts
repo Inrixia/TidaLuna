@@ -1,4 +1,4 @@
-import { rejectNotOk } from "@inrixia/helpers";
+import { rejectNotOk, sleep } from "@inrixia/helpers";
 import type { Decipheriv } from "crypto";
 
 export type FetchProgress = { readonly total?: number; readonly downloaded?: number };
@@ -38,7 +38,13 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 
 	try {
 		for (const url of urls) {
-			const res = await fetch(url, reqInit).then(rejectNotOk);
+			let res = await fetch(url, reqInit);
+			// Retry once on server errors (e.g. CDN 504 Gateway Time-out), after giving the server a moment
+			if (res.status >= 500) {
+				await sleep(5000);
+				res = await fetch(url, reqInit);
+			}
+			rejectNotOk(res);
 			(progress.total as number) += parseTotal(res.headers);
 			const reader = res.body?.getReader();
 			if (!reader) continue;

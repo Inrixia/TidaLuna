@@ -19,7 +19,7 @@ export interface LunaPluginComponentProps extends PropsWithChildren {
 }
 export const LunaPluginHeader = React.memo(({ name, version, loadError, author, desc, children, sx, link }: LunaPluginComponentProps) => (
 	<Box sx={sx}>
-		<Stack direction="row" alignItems="center" spacing={1}>
+		<Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
 			<Typography variant="h6">
 				<LunaLink href={link}>{name}</LunaLink>
 				{version && <Typography variant="caption" style={{ opacity: 0.7, marginLeft: 6 }} children={version} />}
