@@ -1,9 +1,10 @@
 import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver, type Emit } from "@inrixia/helpers";
 import type { IRecording, ITrack } from "musicbrainz-api";
 
-import { ftch, ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
+import { ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
 import { getPlaybackInfo, getVideoPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
+import { brainzJson } from "../../helpers/brainzJson";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
 import { Album } from "../Album";
@@ -190,8 +191,9 @@ export class MediaItem extends ContentBase {
 	public brainzItem: () => Promise<ITrack | undefined> = memoize(async () => {
 		const releaseTrackFromRecording = async (recording: IRecording) => {
 			// If a recording exists then fetch the full recording details including media for title resolution
-			const release = await ftch
-				.json<IRecording>(`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`)
+			const release = await brainzJson<IRecording>(
+				`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`,
+			)
 				.then(({ releases }) => releases?.filter((release) => release["text-representation"].language === "eng")[0] ?? releases?.[0])
 				.catch(this.trace.warn.withContext("brainzItem.getISRCRecordings"));
 			if (release === undefined) return undefined;
@@ -203,8 +205,9 @@ export class MediaItem extends ContentBase {
 
 		if (this.tidalItem.isrc !== undefined) {
 			// Lookup the recording from MusicBrainz by ISRC
-			const recording = await ftch
-				.json<{ recordings: IRecording[] }>(`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`)
+			const recording = await brainzJson<{ recordings: IRecording[] }>(
+				`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`,
+			)
 				.then(({ recordings }) => recordings[0])
 				.catch((err) => {
 					if (err.message !== "Status code is 404") this.trace.warn.withContext("brainzItem.getISRCRecordings");
