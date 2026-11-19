@@ -54,7 +54,7 @@ let deferred: { pending: Map<string, () => void>; answered: Map<string, boolean>
  */
 export const loadWithDeferredPrompts = <T>(load: () => T): T => {
 	const answered = new Map<string, boolean>();
-	for (;;) {
+	while (true) {
 		const pending = new Map<string, () => void>();
 		deferred = { pending, answered };
 		let exports: T | undefined;
