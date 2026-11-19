@@ -1,8 +1,11 @@
 import { type Tracer } from "@luna/core";
 
 import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
+import { createAPIClient } from "@tidal-music/api";
+import type { CredentialsProvider } from "@tidal-music/common";
 
 import type { TApiTrackWithLyrics } from "./types/Lyrics";
+import type { TApiPlaylistItemRef } from "./types/Playlist";
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
 
 import { getCredentials } from "../../helpers";
@@ -13,6 +16,8 @@ import type { AlbumPage } from "./types/AlbumPage";
 import { PlaybackInfoResponse, VideoPlaybackInfoResponse, type VideoQuality } from "./types/PlaybackInfo";
 
 export type * from "./types";
+/** TIDAL's OpenAPI types from `@tidal-music/api`, e.g. `TApiComponents["schemas"]["Tracks_Attributes"]` */
+export type { components as TApiComponents, paths as TApiPaths } from "@tidal-music/api";
 export type { PlaybackInfoResponse, VideoPlaybackInfoResponse, VideoQuality };
 
 export class TidalApi {
@@ -26,6 +31,13 @@ export class TidalApi {
 			"x-tidal-token": clientId,
 		};
 	}
+	/**
+	 * TIDAL's own typed client for its OpenAPI (https://openapi.tidal.com/v2) from `@tidal-music/api`, signed in as the
+	 * logged in user. Paths, parameters, bodies and responses are typed from TIDAL's spec, see https://tidal-music.github.io/tidal-api-reference/
+	 * @example const { data, response } = await TidalApi.openApi.GET("/tracks/{id}", { params: { path: { id }, query: { countryCode } } });
+	 */
+	public static readonly openApi = createAPIClient(<CredentialsProvider>{ bus: () => {}, getCredentials });
+
 	public static readonly queryArgs: Memoized<() => string> = memoizeArgless(() => {
 		const store = redux.store.getState();
 		return `countryCode=${store.session.countryCode}&deviceType=DESKTOP&locale=${store.settings.language}`;
@@ -119,6 +131,57 @@ export class TidalApi {
 		return this.fetch<{ items: redux.MediaItem[]; totalNumberOfItems: number; offset: number; limit: -1 }>(
 			`https://desktop.tidal.com/v1/playlists/${playlistUUID}/items?${this.queryArgs()}&limit=-1`,
 		);
+	}
+
+	/** Most entries TIDAL's OpenAPI takes in one request to add or remove playlist items (`maxItems` in its spec) */
+	public static readonly maxPlaylistItemsPerRequest = 50;
+	/**
+	 * The `meta.itemId` of each entry of a playlist in playlist order, from a single request.
+	 * Not cached, always the current state.
+	 */
+	public static async playlistItemIds(playlistUUID: redux.ItemId): Promise<string[]> {
+		// The server caches this list by URL for a while after changes, a unique URL gets the current one
+		const url = `https://desktop.tidal.com/v1/playlists/${playlistUUID}/items?${this.queryArgs()}&limit=-1&_=${Date.now()}`;
+		const res = await fetch(url, { headers: await this.getAuthHeaders() });
+		if (!statusOK(res.status)) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+		const body: { items: { item: { itemUuid: string } }[] } = await res.json();
+		return body.items.map(({ item }) => item.itemUuid);
+	}
+	/**
+	 * Remove items from a playlist, the same request TIDAL's "Remove from playlist" makes.
+	 * At most `maxPlaylistItemsPerRequest` items.
+	 */
+	public static async removePlaylistItems(playlistUUID: redux.ItemId, items: TApiPlaylistItemRef[]) {
+		const { response } = await this.openApi.DELETE("/playlists/{id}/relationships/items", {
+			params: { path: { id: String(playlistUUID) } },
+			body: { data: items.map(({ id, type, meta }) => ({ id, type, meta: { itemId: meta.itemId } })) },
+		});
+		if (!response.ok) this.trace.err.withContext(response.url).throw(`${response.status} ${response.statusText}`);
+	}
+
+	/**
+	 * Add tracks/videos to a playlist, the same request TIDAL makes. They are added in order before the entry
+	 * with the `meta.itemId` `positionBefore`, or at the end. At most `maxPlaylistItemsPerRequest` items.
+	 * @returns The new entries, in the order of `items`
+	 * @throws An error with the response `status` if the request is rejected, nothing is added then
+	 */
+	public static async addPlaylistItems(
+		playlistUUID: redux.ItemId,
+		items: Pick<TApiPlaylistItemRef, "id" | "type">[],
+		positionBefore?: string,
+	): Promise<TApiPlaylistItemRef[]> {
+		const { data, response } = await this.openApi.POST("/playlists/{id}/relationships/items", {
+			params: { path: { id: String(playlistUUID) } },
+			body: {
+				data: items.map(({ id, type }) => ({ id, type })),
+				meta: positionBefore === undefined ? undefined : { onDuplicates: "ADD", positionBefore },
+			},
+		});
+		if (!response.ok)
+			this.trace.err
+				.withContext(response.url)
+				.throw(Object.assign(new Error(`${response.status} ${response.statusText}`), { status: response.status }));
+		return (data?.data ?? []).flatMap(({ id, type, meta }) => (meta === undefined ? [] : [{ id, type, meta: { itemId: meta.itemId } }]));
 	}
 
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {

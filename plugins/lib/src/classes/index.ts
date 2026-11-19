@@ -8,6 +8,7 @@ export * from "./MediaItem";
 export * from "./Playlist";
 export * from "./PlayState";
 export * from "./Quality";
+export * from "./Shortcut";
 export * from "./StyleTag";
 export * from "./Tidal";
 export * from "./TidalApi";
