@@ -38,10 +38,10 @@ export class TidalApi {
 	 */
 	public static readonly openApi = createAPIClient(<CredentialsProvider>{ bus: () => {}, getCredentials }, undefined, {
 		// The client retries failed GETs on its own, by default up to 3 times on 429/5xx and 10 times on network errors,
-		// without looking at Retry-After. Retry once after ~1s instead, as `fetch` does, so a rate limit isn't hammered
-		status: { maxRetries: 1, baseDelayMs: 1000 },
-		network: { maxRetries: 1, baseDelayMs: 1000 },
-		timeout: { maxRetries: 1, baseDelayMs: 1000 },
+		// without looking at Retry-After. Retry once after ~500ms (the client's default delay for 429/5xx) so a rate limit isn't hammered
+		status: { maxRetries: 1, baseDelayMs: 500 },
+		network: { maxRetries: 1, baseDelayMs: 500 },
+		timeout: { maxRetries: 1, baseDelayMs: 500 },
 	});
 	/** The `data` of an `openApi` response, `undefined` on 403/404 like `fetch`, throws on other errors */
 	private static openApiData<T>({ data, response }: { data?: T; response: Response }): T | undefined {
