@@ -9,4 +9,6 @@ export const settingsSx = {
 	paddingBottom: 1,
 };
 
-export const LunaSettings = React.memo((props: LunaStackProps) => <LunaStack {...props} variant="h7" sx={settingsSx} />);
+export const LunaSettings = React.memo(({ sx, ...props }: LunaStackProps) => (
+	<LunaStack {...props} variant="h7" sx={[settingsSx, ...(Array.isArray(sx) ? sx : [sx])]} />
+));

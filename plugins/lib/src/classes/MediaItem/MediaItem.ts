@@ -3,7 +3,7 @@ import type { IRecording, ITrack } from "musicbrainz-api";
 
 import { ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
-import { getPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
+import { getPlaybackInfo, getVideoPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
 import { brainzJson } from "../../helpers/brainzJson";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
@@ -65,7 +65,8 @@ export class MediaItem extends ContentBase {
 			mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
 			if (mediaItem === undefined) return;
 			const cache = await mediaItemCache;
-			return new MediaItem(itemId, mediaItem, contentType, cache);
+			// Prefer the type Tidal stored the item with, callers often default to "track" for videos
+			return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
 		});
 		// Fetch real quality for spatial tracks
 		if (item) await item.fetchBestQuality();
@@ -427,12 +428,18 @@ export class MediaItem extends ContentBase {
 	}
 	public download: (path: string | string[], audioQuality?: redux.AudioQuality) => Promise<void> = asyncDebounce(
 		async (path: string | string[], audioQuality?: redux.AudioQuality) => {
+			if (this.contentType === "video") {
+				const [playbackInfo, tags] = await Promise.all([getVideoPlaybackInfo(this.id), this.flacTags()]);
+				if (!playbackInfo) throw new Error(`Video ${this.id} is not available`);
+				return download(playbackInfo, path, tags);
+			}
 			const [playbackInfo, flagTags] = await Promise.all([this.playbackInfo(audioQuality), this.flacTags()]);
 			if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
 			return download(playbackInfo, path, flagTags);
 		},
 	);
 	public async fileExtension(audioQuality?: redux.AudioQuality): Promise<string> {
+		if (this.contentType === "video") return "mp4";
 		const playbackInfo = await this.playbackInfo(audioQuality);
 		if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
 		switch (playbackInfo.manifestMimeType) {

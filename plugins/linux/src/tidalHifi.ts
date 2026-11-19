@@ -28,7 +28,7 @@ linuxTrace.log("tidal-hifi bridge enabled");
 // #region Utilities
 
 const getTidalHifiSetting = <T = unknown>(key: string): Promise<T | undefined> =>
-	window.__ipcRenderer.invoke("__Luna.getTidalHifiSetting", key).catch(() => undefined);
+	__ipcRenderer.invoke("__Luna.getTidalHifiSetting", key).catch(() => undefined);
 
 const safeNum = (v: unknown): number => {
 	const n = Number(v);
@@ -42,8 +42,7 @@ const formatTime = (seconds: number): string => {
 	return `${m}:${sec.toString().padStart(2, "0")}`;
 };
 
-const mapRepeat = (mode: string) =>
-	mode === "REPEAT_ONE" ? "single" : mode === "REPEAT_ALL" ? "all" : "off";
+const mapRepeat = (mode: redux.RepeatMode) => (mode === redux.RepeatMode.One ? "single" : mode === redux.RepeatMode.All ? "all" : "off");
 
 const injectCSS = (css: string) => {
 	const style = document.createElement("style");
@@ -52,9 +51,8 @@ const injectCSS = (css: string) => {
 };
 
 const cycleRepeatMode = () => {
-	const modes = ["REPEAT_OFF", "REPEAT_ALL", "REPEAT_ONE"] as const;
-	const i = modes.indexOf(PlayState.repeatMode as typeof modes[number]);
-	PlayState.setRepeatMode(modes[(i + 1) % 3] as Parameters<typeof PlayState.setRepeatMode>[0]);
+	const modes = [redux.RepeatMode.Off, redux.RepeatMode.All, redux.RepeatMode.One];
+	PlayState.setRepeatMode(modes[(modes.indexOf(PlayState.repeatMode) + 1) % modes.length]);
 };
 
 // "Now playing" notifications share a tag, so each track's one replaces the previous one instead of piling up (#210)
@@ -81,7 +79,7 @@ const sendNotification = (title: string, body: string, icon?: string, replacesTr
 	try {
 		const theme = await getTidalHifiSetting<string>("theme");
 		if (theme && theme !== "none") {
-			const themeCSS = await window.__ipcRenderer.invoke("__Luna.getTidalHifiThemeCSS", theme).catch(() => undefined);
+			const themeCSS = await __ipcRenderer.invoke("__Luna.getTidalHifiThemeCSS", theme).catch(() => undefined);
 			if (themeCSS) {
 				injectCSS(themeCSS);
 				linuxTrace.log("Injected theme:", theme);
@@ -107,7 +105,7 @@ let lastInfo: Record<string, unknown> = {};
 
 const sendUpdateInfo = (status: string) => {
 	const currentSec = safeNum(PlayState.currentTime);
-	window.__ipcRenderer.send("update-info", {
+	__ipcRenderer.send("update-info", {
 		...lastInfo,
 		status,
 		currentInSeconds: currentSec,
@@ -125,7 +123,7 @@ MediaItem.onMediaTransition(unloads, async (item) => {
 			item.title(),
 			item.artists().then((a) => Promise.all(a)),
 			item.album(),
-			item.coverUrl({ width: 640, height: 640 }),
+			item.coverUrl({ res: "640" }),
 		]);
 
 		const artistStr = artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
@@ -154,7 +152,7 @@ MediaItem.onMediaTransition(unloads, async (item) => {
 			},
 		};
 
-		window.__ipcRenderer.send("update-info", lastInfo);
+		__ipcRenderer.send("update-info", lastInfo);
 		linuxTrace.log("Sent update-info:", title);
 
 		// Window title
@@ -198,7 +196,7 @@ unloads.add(() => clearInterval(updateInterval));
 // #region Playback Controls (IPC)
 
 unloads.add(
-	window.__ipcRenderer.on("globalEvent", (action: string, payload?: unknown) => {
+	__ipcRenderer.on("globalEvent", (action: string, payload?: unknown) => {
 		linuxTrace.log("globalEvent:", action);
 		switch (action) {
 			case "play": PlayState.play(); break;
@@ -206,7 +204,7 @@ unloads.add(
 			case "playPause": PlayState.playing ? PlayState.pause() : PlayState.play(); break;
 			case "next": PlayState.next(); break;
 			case "previous": PlayState.previous(); break;
-			case "toggleShuffle": PlayState.setShuffle(!PlayState.shuffle, true); break;
+			case "toggleShuffle": PlayState.shuffle ? PlayState.setShuffle(false, true) : PlayState.setShuffle(true, true); break;
 			case "toggleRepeat": cycleRepeatMode(); break;
 			case "seek": if (typeof payload === "number") PlayState.seek(payload); break;
 		}
@@ -258,8 +256,8 @@ unloads.add(
 		},
 		goBack: () => history.back(),
 		goForward: () => history.forward(),
-		openSettings1: () => window.__ipcRenderer.send("showSettings"),
-		openSettings2: () => window.__ipcRenderer.send("showSettings"),
+		openSettings1: () => __ipcRenderer.send("showSettings"),
+		openSettings2: () => __ipcRenderer.send("showSettings"),
 		deleteDisabled: () => {},
 		volumeUp: () => redux.actions["playbackControls/INCREASE_VOLUME"](undefined as never),
 		volumeDown: () => redux.actions["playbackControls/DECREASE_VOLUME"](undefined as never),
@@ -301,9 +299,9 @@ unloads.add(
 // #region Settings API
 
 /** Open tidal-hifi Settings window */
-export const showSettings = () => window.__ipcRenderer.send("showSettings");
+export const showSettings = () => __ipcRenderer.send("showSettings");
 
 /** Hide tidal-hifi Settings window */
-export const hideSettings = () => window.__ipcRenderer.send("hideSettings");
+export const hideSettings = () => __ipcRenderer.send("hideSettings");
 
 // #endregion

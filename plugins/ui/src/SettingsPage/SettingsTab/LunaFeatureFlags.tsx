@@ -22,7 +22,7 @@ export const LunaFeatureFlags = React.memo(() => {
 			titleChildren={
 				<SpinningButton title={hide ? "Show flags" : "Hide flags"} onClick={() => setHidden(!hide)} icon={SettingsIcon} sxColor={grey.A400} />
 			}
-			display={hide ? "none" : "flex"}
+			sx={{ display: hide ? "none" : "flex" }}
 		>
 			{!hide && (
 				<Grid spacing={2} container>

@@ -1,6 +1,6 @@
 import { parseDasha, type DashManifest } from "./getPlaybackInfo.dasha.native";
 
-import type { PlaybackInfoResponse } from "../classes/TidalApi";
+import type { PlaybackInfoResponse, VideoPlaybackInfoResponse, VideoQuality } from "../classes/TidalApi";
 import { TidalApi } from "../classes/TidalApi";
 
 import type { AudioQuality, ItemId } from "../redux";
@@ -43,4 +43,23 @@ export const getPlaybackInfo = async (mediaItemId: ItemId, audioQuality: AudioQu
 			throw new Error(`Unsupported Stream Info manifest mime type: ${playbackInfo.manifestMimeType}`);
 		}
 	}
+};
+
+export type HlsManifest = {
+	mimeType: string;
+	urls: string[];
+};
+export interface VideoPlaybackInfo extends Omit<VideoPlaybackInfoResponse, "manifest"> {
+	manifest: HlsManifest;
+	mimeType: string;
+}
+
+export const getVideoPlaybackInfo = async (videoId: ItemId, videoQuality?: VideoQuality): Promise<VideoPlaybackInfo | undefined> => {
+	const playbackInfo = await TidalApi.videoPlaybackInfo(videoId, videoQuality);
+	if (playbackInfo === undefined) return undefined;
+	if (playbackInfo.manifestMimeType !== "application/vnd.tidal.emu") {
+		throw new Error(`Unsupported Video Stream Info manifest mime type: ${playbackInfo.manifestMimeType}`);
+	}
+	const manifest: HlsManifest = JSON.parse(atob(playbackInfo.manifest));
+	return { ...playbackInfo, manifest, mimeType: "video/mp4" };
 };
