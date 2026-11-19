@@ -1,4 +1,4 @@
-import type { PlaybackInfo } from "@luna/lib";
+import type { PlaybackInfo, VideoPlaybackInfo } from "@luna/lib";
 import { pipeline, Readable } from "stream";
 
 import { makeDecipher } from "./decrypt";
@@ -17,9 +17,41 @@ interface FetchOptions extends Omit<TrackStreamOptions, "deciper"> {
 }
 
 export { FetchProgress } from "./fetchStream";
+
+const fetchLines = async (url: string) => {
+	const text = await (await fetch(url).then(rejectNotOk)).text();
+	return text
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line !== "");
+};
+
+/** Resolves a HLS playlist to the segment urls of its highest bandwidth variant */
+const hlsSegmentUrls = async (playlistUrl: string): Promise<string[]> => {
+	let lines = await fetchLines(playlistUrl);
+	// Master playlist, pick the variant with the highest bandwidth
+	if (lines.some((line) => line.startsWith("#EXT-X-STREAM-INF"))) {
+		let best: { bandwidth: number; url: string } | undefined;
+		for (let i = 0; i < lines.length - 1; i++) {
+			if (!lines[i].startsWith("#EXT-X-STREAM-INF")) continue;
+			const bandwidth = parseInt(/[:,]BANDWIDTH=(\d+)/.exec(lines[i])?.[1] ?? "0", 10);
+			if (best === undefined || bandwidth > best.bandwidth) best = { bandwidth, url: new URL(lines[i + 1], playlistUrl).href };
+		}
+		if (best === undefined) throw new Error("HLS master playlist has no variants");
+		playlistUrl = best.url;
+		lines = await fetchLines(playlistUrl);
+	}
+	if (lines.some((line) => line.startsWith("#EXT-X-KEY") && !line.includes("METHOD=NONE")))
+		throw new Error("Encrypted HLS streams are not supported");
+	return lines.filter((line) => !line.startsWith("#")).map((line) => new URL(line, playlistUrl).href);
+};
+
 // Lock to 2 concurrent streams
 const fetchMediaItemStremaSemaphore = new Semaphore(2);
-export const fetchMediaItemStream = ({ manifestMimeType, manifest }: PlaybackInfo, options: FetchOptions = {}): Promise<Readable> =>
+export const fetchMediaItemStream = (
+	{ manifestMimeType, manifest }: PlaybackInfo | VideoPlaybackInfo,
+	options: FetchOptions = {},
+): Promise<Readable> =>
 	fetchMediaItemStremaSemaphore.with(async () => {
 		switch (manifestMimeType) {
 			case "application/vnd.tidal.bts": {
@@ -61,6 +93,10 @@ export const fetchMediaItemStream = ({ manifestMimeType, manifest }: PlaybackInf
 					),
 					{ objectMode: false },
 				);
+			}
+			case "application/vnd.tidal.emu": {
+				const segmentUrls = await hlsSegmentUrls(manifest.urls[0]);
+				return Readable.from(fetchStream(segmentUrls, options), { objectMode: false });
 			}
 			default: {
 				throw new Error(`Unsupported Stream Info manifest mime type: ${manifestMimeType}`);

@@ -11,8 +11,8 @@ import { fetchMediaItemStream, type FetchProgress } from "../../../../lib.native
 import type { redux } from "@luna/lib";
 
 import { Semaphore } from "@inrixia/helpers";
-import type { PlaybackInfo } from "../../helpers";
-import { finalizeDashDownload } from "./MediaItem.finalizeDash.native";
+import type { PlaybackInfo, VideoPlaybackInfo } from "../../helpers";
+import { finalizeDashDownload, finalizeHlsDownload } from "./MediaItem.finalizeDash.native";
 import type { MetaTags } from "./MediaItem.tags";
 
 const fileExists = async (path: string): Promise<boolean> => {
@@ -27,9 +27,10 @@ const fileExists = async (path: string): Promise<boolean> => {
 const downloads: Record<redux.ItemId, { progress: FetchProgress; promise: Promise<void> } | undefined> = {};
 export const downloadProgress = async (trackId: redux.ItemId) => downloads[trackId]?.progress;
 const downloadSema = new Semaphore(1);
-export const download = async (playbackInfo: PlaybackInfo, path: string | string[], tags?: MetaTags): Promise<void> =>
+export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, path: string | string[], tags?: MetaTags): Promise<void> =>
 	downloadSema.with(async () => {
-		if (downloads[playbackInfo.trackId] !== undefined) return downloads[playbackInfo.trackId]!.promise;
+		const itemId = "videoId" in playbackInfo ? playbackInfo.videoId : playbackInfo.trackId;
+		if (downloads[itemId] !== undefined) return downloads[itemId]!.promise;
 		try {
 			if (Array.isArray(path)) path = join(...path);
 			// Dont download if file already exists
@@ -50,14 +51,16 @@ export const download = async (playbackInfo: PlaybackInfo, path: string | string
 				await rm(filePath, { force: true });
 				throw err;
 			});
-			downloads[playbackInfo.trackId] = { progress, promise };
+			downloads[itemId] = { progress, promise };
 
 			await promise;
 
 			// FLAC streams are tagged in-flight, but DASH streams are written as raw
 			// fragmented MP4: remux to a standard MP4 and write the tags post-download
 			if (playbackInfo.manifestMimeType === "application/dash+xml") await finalizeDashDownload(filePath, tags);
+			// HLS video streams are MPEG-TS segments: remux to a standard MP4 and write the tags post-download
+			if (playbackInfo.manifestMimeType === "application/vnd.tidal.emu") await finalizeHlsDownload(filePath, tags);
 		} finally {
-			delete downloads[playbackInfo.trackId];
+			delete downloads[itemId];
 		}
 	});
