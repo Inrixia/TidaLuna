@@ -43,7 +43,14 @@ const saveTrustStore = () => {
 	}
 };
 
-const fastCache = new WeakMap<object, boolean>();
+// Decisions made this session, per plugin code hash and module name.
+// Never key this by the function being called: e.g. require("os").hostname is the same object for every plugin.
+const fastCache = new Map<string, Map<string, boolean>>();
+const setFastCache = (hash: string, moduleName: string, decision: boolean) => {
+	let decisions = fastCache.get(hash);
+	if (decisions === undefined) fastCache.set(hash, (decisions = new Map()));
+	decisions.set(moduleName, decision);
+};
 
 // Set while module code runs under the vm timeout (see secureLoad): prompts are collected and asked once it has stopped
 let deferred: { pending: Map<string, () => void>; answered: Map<string, boolean> } | undefined;
@@ -76,10 +83,11 @@ export const loadWithDeferredPrompts = <T>(load: () => T): T => {
 	}
 };
 
-export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string, module: object): boolean => {
+export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string): boolean => {
 	const { hash, fileName } = moduleInfo;
-	// If we have already verified this exact object, return immediately. Cost: O(1) lookup. Zero garbage generation.
-	if (fastCache.has(module)) return fastCache.get(module)!;
+	// If this plugin was already allowed/blocked for this module, return immediately. Cost: two O(1) lookups. Zero garbage generation.
+	const cached = fastCache.get(hash)?.get(moduleName);
+	if (cached !== undefined) return cached;
 
 	getTrustStore();
 	const methodHash = `${hash}::${moduleName}`;
@@ -92,14 +100,14 @@ export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string, modu
 		// re-prompt on saved denies
 		if (decision === true) {
 			// Backfill fastCache so next time we skip the string build/map lookup
-			fastCache.set(module, decision);
+			setFastCache(hash, moduleName, decision);
 			return decision;
 		}
 	}
 
 	if (deferred !== undefined) {
 		const { answered } = deferred;
-		deferred.pending.set(methodHash, () => answered.set(methodHash, isTrusted(moduleInfo, moduleName, module)));
+		deferred.pending.set(methodHash, () => answered.set(methodHash, isTrusted(moduleInfo, moduleName)));
 		throw new Error(`[🛑Security🛑] '${moduleName}' in '${fileName}' needs permission, asking after load`);
 	}
 
@@ -121,7 +129,7 @@ Only click "Allow" if you trust this!`,
 	const isAllowed = responseIndex === 1;
 
 	trustStore.set(methodHash, isAllowed); // Save to Map
-	fastCache.set(module, isAllowed); // Save to WeakMap
+	setFastCache(hash, moduleName, isAllowed); // Save to session cache
 	saveTrustStore(); // Write to Disk
 
 	return isAllowed;
