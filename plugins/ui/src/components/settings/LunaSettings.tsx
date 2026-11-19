@@ -1,5 +1,4 @@
-import React from "react";
-import { LunaStack, type LunaStackProps } from "../LunaStack";
+import { createLunaStack } from "../createLunaStack";
 
 export const settingsSx = {
 	borderRadius: 2,
@@ -9,6 +8,11 @@ export const settingsSx = {
 	paddingBottom: 1,
 };
 
-export const LunaSettings = React.memo(({ sx, ...props }: LunaStackProps) => (
-	<LunaStack {...props} variant="h7" sx={[settingsSx, ...(Array.isArray(sx) ? sx : [sx])]} />
-));
+// Same as settingsSx, but as base styles so theme styleOverrides can change them
+export const LunaSettings = createLunaStack("LunaSettings", "h7", (theme) => ({
+	borderRadius: Number(theme.shape.borderRadius) * 2,
+	backgroundColor: "rgba(0, 0, 0, 0.20)",
+	boxShadow: theme.shadows[5],
+	padding: theme.spacing(2),
+	paddingBottom: theme.spacing(1),
+}));

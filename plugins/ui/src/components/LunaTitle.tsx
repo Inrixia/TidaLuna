@@ -1,4 +1,5 @@
 import Box from "@mui/material/Box";
+import { styled, useThemeProps } from "@mui/material/styles";
 import Typography, { type TypographyProps } from "@mui/material/Typography";
 import React from "react";
 
@@ -8,17 +9,24 @@ export type LunaTitleValues = {
 	variant?: TypographyProps["variant"];
 };
 export type LunaTitleProps = Omit<TypographyProps, "title"> & LunaTitleValues;
-export const LunaTitle = React.memo((props: LunaTitleProps) => {
-	const { title, desc, variant = "h6", children, ...typographyProps } = props;
+
+// Themeable via theme.components.LunaTitle, stable classes LunaTitle-root/-title/-desc
+const TitleRoot = styled(Box, { name: "LunaTitle", slot: "Root" })({});
+const TitleText = styled(Typography, { name: "LunaTitle", slot: "Title" })({});
+const TitleDesc = styled(Typography, { name: "LunaTitle", slot: "Desc" })({});
+
+export const LunaTitle = React.memo((inProps: LunaTitleProps) => {
+	const props = useThemeProps({ props: inProps, name: "LunaTitle" });
+	const { title, desc, variant = "h6", children, className, ...typographyProps } = props;
 	return (
-		<Box>
-			<Typography {...typographyProps} variant={variant}>
+		<TitleRoot className="LunaTitle-root">
+			<TitleText {...typographyProps} className={className ? `LunaTitle-title ${className}` : "LunaTitle-title"} variant={variant}>
 				<Box component="span" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
 					{title}
 					{children}
 				</Box>
-			</Typography>
-			{desc && <Typography variant="subtitle2" gutterBottom children={desc} />}
-		</Box>
+			</TitleText>
+			{desc && <TitleDesc className="LunaTitle-desc" variant="subtitle2" gutterBottom children={desc} />}
+		</TitleRoot>
 	);
 });
