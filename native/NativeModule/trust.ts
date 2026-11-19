@@ -52,13 +52,48 @@ const setFastCache = (hash: string, moduleName: string, decision: boolean) => {
 	decisions.set(moduleName, decision);
 };
 
-export const isTrusted = ({ hash, fileName }: NativeModuleInfo, moduleName: string): boolean => {
+// Set while module code runs under the vm timeout (see secureLoad): prompts are collected and asked once it has stopped
+let deferred: { pending: Map<string, () => void>; answered: Map<string, boolean> } | undefined;
+
+/**
+ * Runs `load` without showing trust prompts: a call that would prompt throws instead. Once `load` has stopped, the
+ * collected prompts are asked and `load` runs again, until it needs no new prompts. Answers are final for this call.
+ */
+export const loadWithDeferredPrompts = <T>(load: () => T): T => {
+	const answered = new Map<string, boolean>();
+	while (true) {
+		const pending = new Map<string, () => void>();
+		deferred = { pending, answered };
+		let exports: T | undefined;
+		let error: unknown;
+		let failed = false;
+		try {
+			exports = load();
+		} catch (err) {
+			failed = true;
+			error = err;
+		} finally {
+			deferred = undefined;
+		}
+		if (pending.size === 0) {
+			if (failed) throw error;
+			return exports!;
+		}
+		for (const prompt of pending.values()) prompt();
+	}
+};
+
+export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string): boolean => {
+	const { hash, fileName } = moduleInfo;
 	// If this plugin was already allowed/blocked for this module, return immediately. Cost: two O(1) lookups. Zero garbage generation.
 	const cached = fastCache.get(hash)?.get(moduleName);
 	if (cached !== undefined) return cached;
 
 	getTrustStore();
 	const methodHash = `${hash}::${moduleName}`;
+
+	// Already answered during this load (a saved deny would otherwise prompt again on every retry)
+	if (deferred?.answered.has(methodHash)) return deferred.answered.get(methodHash)!;
 
 	if (trustStore.has(methodHash)) {
 		const decision = trustStore.get(methodHash)!;
@@ -68,6 +103,12 @@ export const isTrusted = ({ hash, fileName }: NativeModuleInfo, moduleName: stri
 			setFastCache(hash, moduleName, decision);
 			return decision;
 		}
+	}
+
+	if (deferred !== undefined) {
+		const { answered } = deferred;
+		deferred.pending.set(methodHash, () => answered.set(methodHash, isTrusted(moduleInfo, moduleName)));
+		throw new Error(`[🛑Security🛑] '${moduleName}' in '${fileName}' needs permission, asking after load`);
 	}
 
 	const win = BrowserWindow.getFocusedWindow();
