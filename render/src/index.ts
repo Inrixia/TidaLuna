@@ -1,3 +1,4 @@
+/// <reference path="../../luna.d.ts" />
 // Always expose internals first
 export { tidalModules } from "./exposeTidalInternals";
 export { buildActions, interceptors } from "./exposeTidalInternals.patchAction";

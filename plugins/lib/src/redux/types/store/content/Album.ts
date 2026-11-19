@@ -1,8 +1,7 @@
-import type { AudioQuality } from "neptune-types/tidal";
 import type { ItemId } from "..";
 import type { ArtistInline } from "./Artist";
 import type { StreamingFlags } from "./StreamingFlags";
-import type { AudioMode, MediaMetadataTag } from "./Track";
+import type { AudioMode, AudioQuality, MediaMetadataTag } from "./Track";
 
 export interface AlbumInline {
 	id: ItemId;

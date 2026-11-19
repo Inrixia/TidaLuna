@@ -1,4 +1,15 @@
-import { ALL_FORMATS, BufferSource, BufferTarget, Conversion, FlacOutputFormat, Input, Mp4OutputFormat, Output } from "mediabunny";
+import {
+	ALL_FORMATS,
+	BufferSource,
+	BufferTarget,
+	Conversion,
+	FilePathSource,
+	FlacOutputFormat,
+	Input,
+	Mp4OutputFormat,
+	Output,
+	type MetadataTags,
+} from "mediabunny";
 import { ByteVector, File as TagFile, Picture, PictureType } from "node-taglib-sharp";
 
 import { readFile, rename, writeFile } from "fs/promises";
@@ -294,4 +305,43 @@ export const finalizeDashDownload = async (path: string, tags?: MetaTags): Promi
 	await rename(tmpPath, path);
 
 	if (tags !== undefined) await writeTags(path, isFlac ? "taglib/flac" : "taglib/m4a", tags);
+};
+
+/** Tags written by mediabunny while remuxing, node-taglib-sharp can't tag its MP4 output (no udta box) */
+const toMetadataTags = async ({ tags, coverUrl }: MetaTags): Promise<MetadataTags> => {
+	const metadata: MetadataTags = {};
+	const title = first(tags.title);
+	if (title !== undefined) metadata.title = title;
+	const artists = asArray(tags.artist);
+	if (artists.length > 0) metadata.artist = artists.join(", ");
+	const date = first(tags.date);
+	if (date !== undefined && !isNaN(Date.parse(date))) metadata.date = new Date(date);
+	if (coverUrl !== undefined) {
+		try {
+			const res = await fetch(coverUrl);
+			if (res.ok) {
+				const mimeType = res.headers.get("content-type") ?? "image/jpeg";
+				metadata.images = [{ data: new Uint8Array(await res.arrayBuffer()), mimeType, kind: "coverFront" }];
+			}
+		} catch {}
+	}
+	return metadata;
+};
+
+/** Remux a raw HLS (MPEG-TS) video download into a standard MP4 with tags */
+export const finalizeHlsDownload = async (path: string, tags?: MetaTags): Promise<void> => {
+	const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
+	// Native code has no WritableStream, so FilePathTarget can't be used here
+	const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });
+	try {
+		const metadataTags = tags !== undefined ? await toMetadataTags(tags) : undefined;
+		await (await Conversion.init({ input, output, tags: metadataTags })).execute();
+	} finally {
+		input.dispose();
+	}
+
+	// Replace the raw download only once the remux fully succeeded
+	const tmpPath = `${path}.tmp`;
+	await writeFile(tmpPath, Buffer.from(output.target.buffer!));
+	await rename(tmpPath, path);
 };
