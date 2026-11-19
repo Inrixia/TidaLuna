@@ -1,10 +1,9 @@
-import { ThemeProvider } from "@mui/material/styles";
 import { ConfirmProvider, useConfirm, type ConfirmOptions, type ConfirmResult } from "material-ui-confirm";
 
 import React, { useEffect } from "react";
 
 import { Page } from "../classes/Page";
-import { lunaMuiTheme } from "../lunaTheme";
+import { LunaMuiThemeProvider } from "../lunaTheme";
 
 import { unloads } from "../index.safe";
 
@@ -21,11 +20,11 @@ const ExfilConfirm = () => {
 Page.register(
 	"@luna/ui-confirm",
 	unloads,
-	<ThemeProvider theme={lunaMuiTheme}>
+	<LunaMuiThemeProvider>
 		<ConfirmProvider>
 			<ExfilConfirm />
 		</ConfirmProvider>
-	</ThemeProvider>,
+	</LunaMuiThemeProvider>,
 ).render();
 
 export const confirm = (options: ConfirmOptions) => confirmImpl(options);
