@@ -12,21 +12,20 @@ import { LunaStore } from "./LunaStore";
 
 const pluginStores = ReactiveStore.getStore("@luna/pluginStores");
 export const storeUrls = await pluginStores.getReactive<string[]>("storeUrls", []);
-const normalizeStoreUrl = (url: string) => (url.endsWith("/store.json") ? url.slice(0, -11) : url);
 export const addToStores = (url: string) => {
-	url = normalizeStoreUrl(url);
+	url = LunaPlugin.normalizeStoreUrl(url);
 	if (storeUrls.includes(url)) return false;
 	return storeUrls.push(url);
 };
 
 // Swaps old store urls for the new one <3 (call addToStores after to add)
 export const replaceStore = async (legacyUrls: string[], newUrl: string) => {
-	newUrl = normalizeStoreUrl(newUrl);
+	newUrl = LunaPlugin.normalizeStoreUrl(newUrl);
 	// Ignore case.. tidaluna:// links lowercase urls <3
-	const legacy = new Set(legacyUrls.map((url) => normalizeStoreUrl(url).toLowerCase()));
+	const legacy = new Set(legacyUrls.map((url) => LunaPlugin.normalizeStoreUrl(url).toLowerCase()));
 	for (const legacyUrl of legacy) await LunaPlugin.migrateBaseUrl(legacyUrl, newUrl);
 	for (let i = 0; i < storeUrls.length; i++) {
-		if (!legacy.has(normalizeStoreUrl(storeUrls[i]).toLowerCase())) continue;
+		if (!legacy.has(LunaPlugin.normalizeStoreUrl(storeUrls[i]).toLowerCase())) continue;
 		if (storeUrls.includes(newUrl)) storeUrls.splice(i--, 1);
 		else storeUrls[i] = newUrl;
 	}
