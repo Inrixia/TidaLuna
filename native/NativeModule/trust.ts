@@ -82,7 +82,9 @@ export const loadWithDeferredPrompts = <T>(load: () => T): T => {
 };
 
 export const isTrusted = (moduleInfo: NativeModuleInfo, moduleName: string): boolean => {
-	const { hash, fileName } = moduleInfo;
+	const { hash, fileName, isCore } = moduleInfo;
+	// Luna's own code, built together with this injector: still sandboxed, just no prompt
+	if (isCore) return true;
 	// If this plugin was already allowed/blocked for this module, return immediately. Cost: two O(1) lookups. Zero garbage generation.
 	const cached = fastCache.get(hash)?.get(moduleName);
 	if (cached !== undefined) return cached;

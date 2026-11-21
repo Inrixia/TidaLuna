@@ -17,7 +17,7 @@ Luna (TidaLuna) = client mod for TIDAL desktop app (Electron). Takes over TIDAL'
 Three runtimes, all built by `esbuild.config.ts` into `dist/`:
 
 - **`native/` → `injector.mjs`**, Electron main-process entry (package.json `main`). Luna's `dist` installed as TIDAL's `resources/app`; TIDAL's own `app.asar` renamed `original.asar`, which injector boots. Wraps `BrowserWindow` (adds Luna's preload, forces sandbox + contextIsolation on TIDAL's window) and handles `https` protocol: strips TIDAL's CSP, marks TIDAL's module scripts `type="luna/quartz"`, serves `https://luna/*` from bundle folder (`TIDALUNA_DIST_PATH` overrides folder).
-  - `native/NativeModule/` runs plugin native code (`__Luna.registerNative`) in `vm` sandbox. Node modules outside `moduleWhitelist.ts` prompt user; answers saved in encrypted trust store. Security boundary.
+  - `native/NativeModule/` runs plugin native code (`__Luna.registerNative`) in `vm` sandbox. Node modules outside `moduleWhitelist.ts` prompt user; answers saved in encrypted trust store. Core plugins' native code whose sha256 is in `luna.natives.json` next to `injector.mjs` skips prompts (still sandboxed), see `coreNatives.ts`. Security boundary.
 - **`native/preload.ts` → `preload.mjs`** exposes `__ipcRenderer` and `__platform` to page, imports `luna.mjs`.
 - **`render/` → `luna.mjs`** is `@luna/core`:
   - `exposeTidalInternals*.ts` re-runs TIDAL's module scripts through `@uwu/quartz` to capture its modules, Redux store, action creators. This layer breaks when TIDAL updates.
@@ -38,7 +38,7 @@ Three runtimes, all built by `esbuild.config.ts` into `dist/`:
   - `writeBundlePlugin` writes each bundle plus `<name>.json` (plugin's package.json with `hash`; loader refetches code when hash changes).
   - `lunaNativePlugin` handles `*.native.*` imports (see below).
   - `fileUrl` makes `import css from "file://styles.css?minify"` give file contents as string (`?base64`; `?minify` works for .css and .html).
-  - `buildPlugins.ts` builds every folder in `./plugins`, writes `dist/store.json`.
+  - `buildPlugins.ts` builds every folder in `./plugins`, writes `dist/store.json`. For Luna's own build also writes `dist/luna.natives.json` (sha256 of core plugins' native code).
 - **`nix/` and `flake.nix`** package Luna for tidal-hifi (Linux) and TIDAL.app (macOS).
 
 Reload core plugin changes from Luna Settings; changes to `native/` or `render/` need client restart.
