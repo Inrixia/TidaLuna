@@ -7,6 +7,7 @@ import { ipcHandle } from "../ipc";
 
 import { createHash } from "crypto";
 import * as expose from "../expose";
+import { isCoreNative } from "./coreNatives";
 import { secureLoad } from "./secureLoad";
 
 declare global {
@@ -25,6 +26,8 @@ export type NativeModuleInfo = {
 	fileName: string;
 	code: string;
 	hash: string;
+	/** Luna's own core native code, trusted without prompts (see coreNatives.ts) */
+	isCore: boolean;
 };
 
 ipcHandle("__Luna.registerNative", async (_, fileName: string, code: string) => {
@@ -34,6 +37,7 @@ ipcHandle("__Luna.registerNative", async (_, fileName: string, code: string) => 
 		hash,
 		fileName,
 		code,
+		isCore: await isCoreNative(hash),
 	};
 
 	let exports;
