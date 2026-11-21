@@ -12,6 +12,14 @@ import type { NativeModuleInfo } from ".";
 // (or of another plugin naming the same url) can still be running
 const live = new Set<WeakRef<NativeTrust>>();
 
+// Every module of a category, also those the code did not use (old per-module answers for them must not outlive it)
+const categoryModules = (category: string, used: Iterable<string>) => new Set([...used, ...categoryInfo(category).modules]);
+
+// The file whose code runs under the vm timeout right now (vm runs are synchronous, so one at a time). Its code can
+// call into other loaded files (e.g. luna.lib.native): their calls that need an answer are asked after its run too
+let running: NativeTrust | undefined;
+const waiting = new Set<NativeTrust>();
+
 /**
  * Permissions of one load of a native file. Node modules are asked for by category (see permissions/categories.ts),
  * all categories a file requires while it loads in one window.
@@ -27,9 +35,11 @@ export class NativeTrust {
 	private readonly modules = new Map<string, Set<string>>();
 	/** While true (the code runs under the vm timeout, see secureLoad) a call that needs an answer throws instead of asking */
 	public loading = false;
-	/** Set when a call threw because it needed an answer while loading: the code may have caught it, so it is loaded again */
+	/**
+	 * Set when a call threw because it needed an answer, while loading or while the window was open (the code's timers
+	 * and promises still run then). The code may have caught it, so it is loaded again once answered
+	 */
 	public deferred = false;
-	// While the window is open the code's timers and promises still run: their calls wait for the window's answers
 	private asking = false;
 	private active = false;
 
@@ -110,8 +120,13 @@ export class NativeTrust {
 		const decision = this.decide(moduleName);
 		if (decision !== undefined) return decision;
 		this.seen(moduleName);
-		if (this.loading || this.asking) {
-			if (this.loading) this.deferred = true;
+		if (this.loading || this.asking || running !== undefined) {
+			if (this.loading || this.asking) this.deferred = true;
+			else {
+				// Called from another file's run: asked after it, and that file is loaded again
+				waiting.add(this);
+				running!.deferred = true;
+			}
 			throw new Error(`[🛑Security🛑] '${moduleName}' in '${this.fileName}' needs permission, asking after load`);
 		}
 		return this.askNow(moduleName);
@@ -144,7 +159,7 @@ export class NativeTrust {
 			const answer = answers[i];
 			record.categories[category] = { answer, hashes: [hash], modules, at: Date.now() };
 			this.decided.set(category, answer !== "deny");
-			migrateLegacy(hash, modules);
+			migrateLegacy(hash, categoryModules(category, modules));
 		});
 		saveStore();
 	}
@@ -243,6 +258,7 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 		let failed = false;
 		trust.loading = true;
 		trust.deferred = false;
+		running = trust;
 		try {
 			exports = load();
 		} catch (err) {
@@ -250,17 +266,20 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 			error = err;
 		} finally {
 			trust.loading = false;
+			running = undefined;
 		}
-		// A call that needed an answer threw, even if the code caught it
-		const deferred = trust.deferred;
-		if (trust.pending().length === 0) {
+		const others = [...waiting];
+		waiting.clear();
+		for (const other of others) await other.ask();
+		if (trust.pending().length === 0 && !trust.deferred) {
 			if (failed) throw error;
 			trust.adoptLegacy();
 			trust.activate();
 			return exports!;
 		}
 		await trust.ask();
-		if (!failed && !deferred) {
+		// A call that needed an answer threw, even if the code caught it
+		if (!failed && !trust.deferred) {
 			trust.adoptLegacy();
 			trust.activate();
 			return exports!;
@@ -303,14 +322,25 @@ const resetLive = () => {
 
 // Revoking never grants anything, so the renderer may ask for it: the next use asks again. (A revoked denial is asked
 // again too; any plugin can already open permission windows with native code of its own.)
+const removeCategory = (key: string, record: NativeRecord, category: string) => {
+	const answer = record.categories[category];
+	if (answer === undefined) return;
+	// Old per-module answers for the same code would allow it again
+	for (const hash of answer.hashes) migrateLegacy(hash, categoryModules(category, answer.modules));
+	delete record.categories[category];
+	if (Object.keys(record.categories).length === 0) delete getStore().natives[key];
+};
+const hashesOf = (record: NativeRecord) => new Set(Object.values(record.categories).flatMap(({ hashes }) => hashes));
+
 ipcHandle("__Luna.nativePermissions.revoke", (_, key: string, category?: string) => {
 	const { natives } = getStore();
 	const record: NativeRecord | undefined = natives[key];
 	if (record === undefined) return;
-	if (category === undefined) delete natives[key];
-	else {
-		delete record.categories[category];
-		if (Object.keys(record.categories).length === 0) delete natives[key];
+	// Answers of other entries for the same code (e.g. given while its url could not be checked) would still allow it
+	const hashes = hashesOf(record);
+	for (const [otherKey, other] of Object.entries(natives)) {
+		if (otherKey !== key && (other.fileName !== record.fileName || ![...hashesOf(other)].some((hash) => hashes.has(hash)))) continue;
+		for (const name of category === undefined ? Object.keys(other.categories) : [category]) removeCategory(otherKey, other, name);
 	}
 	saveStore();
 	resetLive();
@@ -322,7 +352,7 @@ ipcHandle("__Luna.nativePermissions.forget", (_, url: string) => {
 	let changed = false;
 	for (const [key, record] of Object.entries(natives)) {
 		if (record.url !== url && record.claimedUrl !== url) continue;
-		delete natives[key];
+		for (const category of Object.keys(record.categories)) removeCategory(key, record, category);
 		changed = true;
 	}
 	if (!changed) return;

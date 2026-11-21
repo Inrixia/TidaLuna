@@ -1,3 +1,5 @@
+import path from "path";
+
 /** What a plugin's native code can be allowed to do. Node modules outside moduleWhitelist.ts are asked for by category. */
 export type PermissionCategory = {
 	id: string;
@@ -23,7 +25,7 @@ export const permissionCategories: PermissionCategory[] = [
 		id: "filesystem",
 		label: "Filesystem",
 		description: "Read, write, and delete files on your computer.",
-		modules: ["fs"],
+		modules: ["fs", "original-fs"],
 	},
 	{
 		id: "system",
@@ -64,8 +66,8 @@ const byId = new Map(permissionCategories.map((category) => [category.id, catego
 export const categoryOf = (moduleName: string): string => {
 	const category = byModule.get(moduleName);
 	if (category !== undefined) return category.id;
-	// TIDAL's own files, resolved from the resources folder (see nativeRequire)
-	if (/^\.\/(original\.asar|app)\//.test(moduleName)) return "tidal";
+	// TIDAL's own files, resolved from the resources folder (see nativeRequire). Normalized, so "./app/../../x" is not one
+	if (/^\.[\\/]/.test(moduleName) && /^(original\.asar|app)\//.test(path.posix.normalize(moduleName.replaceAll("\\", "/")))) return "tidal";
 	return `module:${moduleName}`;
 };
 

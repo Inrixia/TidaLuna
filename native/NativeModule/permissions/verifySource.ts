@@ -31,7 +31,8 @@ const sha256 = (code: string) => createHash("sha256").update(code, "utf8").diges
 /** The native files the bundle registers (see build/plugins/lunaNativePlugin.ts): fileName -> code hash */
 export const nativeFilesOf = (bundle: string): Map<string, string> => {
 	const files = new Map<string, string>();
-	for (const match of bundle.matchAll(/(["'`])__Luna\.registerNative\1\s*,/g)) {
+	// The call build/plugins/lunaNativePlugin.ts emits (as LunaPlugin.loadExports finds it)
+	for (const match of bundle.matchAll(/__ipcRenderer\.invoke\(\s*(["'`])__Luna\.registerNative\1\s*,/g)) {
 		const fileName = readLiteral(bundle, match.index + match[0].length);
 		if (fileName === undefined || bundle.slice(fileName.end).trimStart()[0] !== ",") continue;
 		const code = readLiteral(bundle, bundle.indexOf(",", fileName.end) + 1);

@@ -539,7 +539,11 @@ export class LunaPlugin {
 			await this.unload();
 
 			// Name this plugin's url when its native code registers, so its permissions are kept per plugin (see native/NativeModule/trust.ts)
-			const code = this.code.replace(/(["'`])__Luna\.registerNative\1\s*,/g, () => `"__Luna.registerNativeFrom",${JSON.stringify(this.url)},`);
+			// Only the call build/plugins/lunaNativePlugin.ts emits, not the same text inside a native file's code string
+			const code = this.code.replace(
+				/(__ipcRenderer\.invoke\(\s*)(["'`])__Luna\.registerNative\2\s*,/g,
+				(_, call) => `${call}"__Luna.registerNativeFrom",${JSON.stringify(this.url)},`,
+			);
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
 			try {
 				this.exports = await import(blobURL);

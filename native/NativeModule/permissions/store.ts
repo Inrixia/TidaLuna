@@ -49,25 +49,29 @@ const readEncrypted = (name: string): string | undefined => {
 
 // Answers saved before permissions had categories: `${hash}::${moduleName}` -> true. Read only, so a Luna downgrade still finds them
 let legacy: Map<string, boolean> | undefined;
-export const legacyAllowed = (hash: string, moduleName: string): boolean => {
-	if (legacy === undefined) {
-		try {
-			const json = readEncrypted("luna-trust-store.enc");
-			legacy = new Map(json === undefined ? [] : JSON.parse(json));
-		} catch (err) {
-			console.error("[🛑Security🛑] Failed to read the old trust store.", err);
-			legacy = new Map();
-		}
+const getLegacy = (): Map<string, boolean> => {
+	if (legacy !== undefined) return legacy;
+	try {
+		const json = readEncrypted("luna-trust-store.enc");
+		return (legacy = new Map(json === undefined ? [] : JSON.parse(json)));
+	} catch (err) {
+		console.error("[🛑Security🛑] Failed to read the old trust store.", err);
+		return (legacy = new Map());
 	}
-	const key = `${hash}::${moduleName}`;
-	return legacy.get(key) === true && !getStore().legacyMigrated.includes(key);
 };
-/** Called once an answer for these modules is in the new store */
-export const migrateLegacy = (hash: string, modules: string[]) => {
+export const legacyAllowed = (hash: string, moduleName: string): boolean => {
+	const key = `${hash}::${moduleName}`;
+	return getLegacy().get(key) === true && !getStore().legacyMigrated.includes(key);
+};
+/**
+ * Called once an answer for these modules is in the new store, or was revoked or forgotten: old answers for them no
+ * longer count. Given every module of the category, also those this build did not use, so none stays allowed unseen
+ */
+export const migrateLegacy = (hash: string, modules: Iterable<string>) => {
 	const { legacyMigrated } = getStore();
 	for (const moduleName of modules) {
 		const key = `${hash}::${moduleName}`;
-		if (legacy?.get(key) === true && !legacyMigrated.includes(key)) legacyMigrated.push(key);
+		if (getLegacy().get(key) === true && !legacyMigrated.includes(key)) legacyMigrated.push(key);
 	}
 };
 
