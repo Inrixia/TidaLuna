@@ -62,6 +62,15 @@ export class LunaPlugin {
 		});
 	}
 
+	// Store urls are saved without the trailing /store.json
+	public static normalizeStoreUrl(url: string): string {
+		return url.endsWith("/store.json") ? url.slice(0, -11) : url;
+	}
+	// Url of a plugin listed in a store's store.json (spaces become dots, except in the local dev store)
+	public static storePluginUrl(storeUrl: string, entry: string): string {
+		return `${storeUrl}/${storeUrl === "http://127.0.0.1:3000" ? entry : entry.replace(" ", ".")}`;
+	}
+
 	// Storage backing for persisting plugin url/enabled/code etc... See LunaPluginStorage
 	public static readonly pluginStorage: ReactiveStore = ReactiveStore.getStore("@luna/plugins");
 	// Static store for all loaded plugins indexed by URL (allows multiple instances for display)

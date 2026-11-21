@@ -5,6 +5,8 @@ import { ReactiveStore } from "../ReactiveStore";
 import { coreTrace } from "../trace";
 
 const { trace } = coreTrace.withSource(".applySeedSettings");
+// Remembers declared ids that weren't found, see installPlugins
+const seedCache = ReactiveStore.getStore("@luna/seedSettings");
 
 /**
  * Shape of luna-settings.json (written by nix/home-manager.nix).
@@ -19,11 +21,6 @@ export type SeedSettings = {
 	pluginSettings?: Record<string, Record<string, unknown>>;
 };
 
-// Same as normalizeStoreUrl in plugins/ui/src/SettingsPage/PluginStoreTab/index.tsx
-const normalizeStoreUrl = (url: string) => (url.endsWith("/store.json") ? url.slice(0, -11) : url);
-// Same url LunaStore.tsx builds for a store.json entry
-const storePluginUrl = (storeUrl: string, file: string) =>
-	`${storeUrl}/${storeUrl === "http://127.0.0.1:3000" ? file : file.replace(" ", ".")}`.replace(/\.mjs$/, "");
 const urlName = (url?: string) => url?.slice(url.lastIndexOf("/") + 1);
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -44,7 +41,7 @@ export async function applySeedSettings(): Promise<void> {
 	try {
 		let storeUrls: string[] | undefined;
 		if (Array.isArray(seed.stores)) {
-			storeUrls = [...new Set(seed.stores.filter((url) => typeof url === "string").map(normalizeStoreUrl))];
+			storeUrls = [...new Set(seed.stores.filter((url) => typeof url === "string").map((url) => LunaPlugin.normalizeStoreUrl(url)))];
 			await ReactiveStore.getStore("@luna/pluginStores").set("storeUrls", storeUrls);
 		}
 
@@ -108,7 +105,7 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 			try {
 				const manifest = await ftch.json<{ plugins?: unknown }>(`${storeUrl}/store.json`);
 				const files = Array.isArray(manifest.plugins) ? manifest.plugins.filter((file) => typeof file === "string") : [];
-				return files.map((file) => ({ url: storePluginUrl(storeUrl, file), entry: file.replace(/\.mjs$/, "") }));
+				return files.map((file) => ({ url: LunaPlugin.storePluginUrl(storeUrl, file).replace(/\.mjs$/, ""), entry: file.replace(/\.mjs$/, "") }));
 			} catch (err) {
 				trace.err.withContext("Failed to fetch store", storeUrl)(err);
 				return [];
@@ -123,14 +120,23 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 		if (id !== undefined) await install(id, url).catch(trace.msg.err.withContext("Failed to install plugin", url));
 	}
 
-	// By package name, only fetched when a name didn't match a store entry
-	if (missing.size !== 0) {
+	// By package name, only fetched when a name didn't match a store entry.
+	// Skipped when the same ids weren't found in the same stores last start, so a typo doesn't fetch every package.json on every start
+	const notFoundKey = () => JSON.stringify({ ids: [...missing.keys()].sort(), storeUrls });
+	if (missing.size !== 0 && (await seedCache.get<string>("notFound")) !== notFoundKey()) {
+		const installedUrls = new Set(
+			Object.values(LunaPlugin.plugins)
+				.filter((plugin) => plugin.installed)
+				.map((plugin) => plugin.url),
+		);
 		const packages = await Promise.all(
-			entries.map(({ url }) =>
-				LunaPlugin.fetchPackage(url)
-					.then((pkg) => ({ url, pkg }))
-					.catch(() => undefined),
-			),
+			entries
+				.filter(({ url }) => !installedUrls.has(url))
+				.map(({ url }) =>
+					LunaPlugin.fetchPackage(url)
+						.then((pkg) => ({ url, pkg }))
+						.catch(() => undefined),
+				),
 		);
 		for (const found of packages) {
 			const id = found?.pkg.name?.toLowerCase();
@@ -139,7 +145,9 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 		}
 	}
 
-	if (missing.size !== 0) {
+	if (missing.size === 0) await seedCache.del("notFound");
+	else {
+		await seedCache.set("notFound", notFoundKey());
 		trace.msg.err(
 			`luna-settings.json: plugin(s) ${[...missing.values()].join(", ")} not found in any store. Use the name shown in the Plugin Store and declare its store.`,
 		);

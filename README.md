@@ -118,7 +118,7 @@ programs.tidaluna = {
 ##### Plugins and their settings
 
 When `plugins` is set, every plugin not in the list is uninstalled on startup and missing ones are installed from the stores.
-Settings of plugins you uninstall are kept.
+Settings of plugins you uninstall are kept. Enabling or disabling an installed plugin is still up to you in the UI.
 
 ```nix
 programs.tidaluna = {
@@ -145,7 +145,8 @@ A plugin entry has these keys:
 - `name`: the plugin's name as listed in the Plugin Store (e.g. `DiscordRPC`, `Song Downloader`, `meowarex.radiant-lyrics`) or its package name. Case is ignored.
   If a plugin is not found in any store, TidaLuna shows an error on startup.
 - `settings` (optional): settings to apply. Only the keys you declare are overwritten, other settings of the plugin are kept.
-- `settingsName` (optional): the key the plugin stores its settings under. Defaults to `name`, set it when they differ.
+- `settingsName` (optional): the key the plugin stores its settings under. It is case sensitive and defaults to `name` exactly as written,
+  so set it when the key differs (e.g. `Tidal Tags` stores its settings as `TidalTags`).
 
 To see the `settingsName` and `settings` of your installed plugins, run this in TIDAL's developer console:
 `console.log(JSON.stringify(await luna.core.ReactiveStore.getStore("@luna/pluginStorage").dump(), null, 2));`
