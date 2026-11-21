@@ -37,7 +37,7 @@ ipcHandle("__Luna.registerNative", async (_, fileName: string, code: string) => 
 		hash,
 		fileName,
 		code,
-		isCore: isCoreNative(hash),
+		isCore: await isCoreNative(hash),
 	};
 
 	let exports;

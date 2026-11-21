@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -7,10 +7,10 @@ import { fileURLToPath } from "url";
 const listPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "luna.natives.json");
 
 /** Whether `hash` is the hash of one of Luna's own core native modules, built together with this injector */
-export const isCoreNative = (hash: string): boolean => {
+export const isCoreNative = async (hash: string): Promise<boolean> => {
 	try {
 		// Read on every registration (rare) so a watch rebuild's new hashes apply
-		const hashes: unknown = JSON.parse(readFileSync(listPath, "utf8"));
+		const hashes: unknown = JSON.parse(await readFile(listPath, "utf8"));
 		return Array.isArray(hashes) && hashes.includes(hash);
 	} catch {
 		return false;
