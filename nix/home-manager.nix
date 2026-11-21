@@ -72,6 +72,11 @@ let
               ${cfg.package}/*) ln -sfn "$out''${target#${cfg.package}}" "$f" ;;
             esac
           elif [ -f "$f" ] && grep -qF ${cfg.package} "$f"; then
+            # Only scripts can be patched as text, a binary wrapper would break
+            if [ "$(head -c 2 "$f")" != "#!" ]; then
+              echo "tidaluna: can't point $f at the patched copy, it is not a script" >&2
+              exit 1
+            fi
             substituteInPlace "$f" --replace-fail ${cfg.package} $out
           fi
         done
