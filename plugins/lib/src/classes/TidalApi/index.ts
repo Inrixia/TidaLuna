@@ -75,9 +75,15 @@ export class TidalApi {
 
 	// Lock to two concurrent requests
 	private static readonly playbackInfoSemaphore = new Semaphore(2);
+	// The playing item skips ahead of queued requests (eg tracklist rows)
+	private static withPlaybackInfoSlot<T>(itemId: redux.ItemId, fn: () => Promise<T>) {
+		const playingId = redux.store.getState().playbackControls.playbackContext?.actualProductId;
+		if (playingId !== undefined && String(playingId) === String(itemId)) return this.playbackInfoSemaphore.withFirst(fn);
+		return this.playbackInfoSemaphore.with(fn);
+	}
 	public static async playbackInfo(trackId: redux.ItemId, audioQuality: redux.AudioQuality) {
 		if (this.unavailableTracks.has(trackId)) return undefined;
-		const result = await this.playbackInfoSemaphore.with(() =>
+		const result = await this.withPlaybackInfoSlot(trackId, () =>
 			this.fetch<PlaybackInfoResponse>(
 				`https://desktop.tidal.com/v1/tracks/${trackId}/playbackinfo?audioquality=${audioQuality}&playbackmode=STREAM&assetpresentation=FULL`,
 			),
@@ -87,7 +93,7 @@ export class TidalApi {
 	}
 
 	public static async videoPlaybackInfo(videoId: redux.ItemId, videoQuality: VideoQuality = "HIGH") {
-		return this.playbackInfoSemaphore.with(() =>
+		return this.withPlaybackInfoSlot(videoId, () =>
 			this.fetch<VideoPlaybackInfoResponse>(
 				`https://desktop.tidal.com/v1/videos/${videoId}/playbackinfo?videoquality=${videoQuality}&playbackmode=STREAM&assetpresentation=FULL`,
 			),
