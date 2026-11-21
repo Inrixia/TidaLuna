@@ -87,7 +87,7 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 			/>
 			<Grid columns={2} spacing={2} container>
 				{filteredPlugins?.map((plugin) => (
-					<Grid size={1} children={<LunaStorePlugin url={`${url}/${isLocalDevStore ? plugin : plugin.replace(" ", ".")}`} key={plugin} />} />
+					<Grid size={1} children={<LunaStorePlugin url={`${url}/${isLocalDevStore ? plugin : plugin.replaceAll(" ", ".")}`} key={plugin} />} />
 				))}
 			</Grid>
 		</Stack>
