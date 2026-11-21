@@ -216,7 +216,8 @@ electron.app.whenReady().then(async () => {
 // #region Proxied BrowserWindow
 const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 	construct(target, args) {
-		const options = args[0];
+		const options = (args[0] ??= {});
+		options.webPreferences ??= {};
 
 		// Improve memory limits
 		options.webPreferences.nodeOptions = "--max-old-space-size=8192";
@@ -256,6 +257,17 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		}
 
 		const window = new target(options);
+
+		// Allow opening dev tools with F12 without interfering with Tidal's own shortcuts (e.g., Ctrl+Shift+I)
+		window.webContents.on("before-input-event", (event, input) => {
+			if (input.key === "F12") {
+				window.webContents.toggleDevTools();
+				event.preventDefault();
+			}
+		});
+
+		// Everything below is shared main-process state (render target, app listeners, console): only the TIDAL window may own it
+		if (!isTidalWindow) return window;
 
 		globalThis.luna.sendToRender = window.webContents.send.bind(window.webContents);
 
@@ -316,14 +328,6 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 				});
 			});
 		}
-
-		// Allow opening dev tools with F12 without interfering with Tidal's own shortcuts (e.g., Ctrl+Shift+I)
-		window.webContents.on("before-input-event", (event, input) => {
-			if (input.key === "F12") {
-				window.webContents.toggleDevTools();
-				event.preventDefault();
-			}
-		});
 
 		// Notify renderer to unload plugins before window closes (but not when minimizing to tray)
 		window.on("close", (event) => {
