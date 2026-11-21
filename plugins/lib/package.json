@@ -8,16 +8,16 @@
 	},
 	"exports": "./src/index.ts",
 	"dependencies": {
-		"@tidal-music/api": "0.56.0",
+		"@tidal-music/api": "0.57.0",
 		"dasha": "3.2.0",
-		"mediabunny": "^1.53.1",
-		"music-metadata": "^11.14.0",
+		"mediabunny": "^1.66.2",
+		"music-metadata": "^12.7.0",
 		"node-taglib-sharp": "^6.0.3",
-		"sanitize-filename": "^1.6.4"
+		"sanitize-filename": "^1.6.5"
 	},
 	"devDependencies": {
 		"@tidal-music/common": "0.2.1",
-		"musicbrainz-api": "^1.2.1",
+		"musicbrainz-api": "^2.0.1",
 		"oby": "^15.1.2",
 		"redux": "^5.0.1"
 	}
