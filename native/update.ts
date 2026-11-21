@@ -1,4 +1,4 @@
-import { access, mkdir, rm, unlink, writeFile } from "fs/promises";
+import { access, mkdir, rename, rm, unlink, writeFile } from "fs/promises";
 import { constants } from "fs";
 import { execFile } from "child_process";
 import { randomBytes } from "crypto";
@@ -64,6 +64,7 @@ const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
 			throw new Error(`[UPDATER] Zip Slip blocked: unsafe entry "${filename}"`);
 		}
 	}
+	return zip;
 };
 
 const elevatedUpdate = async (zipBuffer: Buffer) => {
@@ -73,7 +74,8 @@ const elevatedUpdate = async (zipBuffer: Buffer) => {
 	try {
 		await writeFile(tmpZip, zipBuffer);
 		// Use positional parameters to avoid shell injection — $1 and $2 are never interpreted as shell code
-		const shScript = 'rm -rf -- "$1" && mkdir -p -- "$1" && unzip -o "$2" -d "$1"';
+		// Unzip next to the app folder first, so a failed unzip leaves the current install untouched
+		const shScript = 'rm -rf -- "$1.new" && mkdir -p -- "$1.new" && unzip -o "$2" -d "$1.new" && rm -rf -- "$1" && mv -- "$1.new" "$1"';
 		const shellEscape = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 		for (const tool of elevationTools) {
@@ -111,34 +113,39 @@ export const update = async (version: string): Promise<string> => {
 		return "elevation_required";
 	}
 
-	// Load zip purely from buffer (no internal fs usage by the library)
-	const zip = await JSZip.loadAsync(zipBuffer);
+	// Load zip purely from buffer (no internal fs usage by the library), rejecting unsafe entries before touching disk
+	const zip = await validateZipEntries(zipBuffer, appFolder);
 
-	await rm(appFolder, { recursive: true, force: true });
-	await mkdir(appFolder, { recursive: true });
-
-	// Manually write files to disk
-	const entries = Object.keys(zip.files);
-	for (const filename of entries) {
-		const file = zip.files[filename];
-		const destPath = path.join(appFolder, filename);
-
-		// Security: Prevent Zip Slip (directory traversal attacks)
-		if (!destPath.startsWith(appFolder)) {
-			throw new Error(`[UPDATER] Zip Slip blocked: unsafe path "${filename}"`);
+	// Extract next to the app folder and swap it in once complete, so a failed update leaves the current install working
+	const newFolder = `${appFolder}.new`;
+	const oldFolder = `${appFolder}.old`;
+	await rm(newFolder, { recursive: true, force: true });
+	await rm(oldFolder, { recursive: true, force: true });
+	try {
+		await mkdir(newFolder, { recursive: true });
+		for (const [filename, file] of Object.entries(zip.files)) {
+			const destPath = path.join(newFolder, filename);
+			if (file.dir) {
+				await mkdir(destPath, { recursive: true });
+			} else {
+				// Ensure parent directory exists (zip entries aren't always sorted)
+				await mkdir(path.dirname(destPath), { recursive: true });
+				await writeFile(destPath, await file.async("nodebuffer"));
+			}
 		}
-
-		if (file.dir) {
-			await mkdir(destPath, { recursive: true });
-		} else {
-			// Ensure parent directory exists (zip entries aren't always sorted)
-			await mkdir(path.dirname(destPath), { recursive: true });
-
-			// Convert to Node Buffer and write
-			const content = await file.async("nodebuffer");
-			await writeFile(destPath, content);
-		}
+	} catch (err) {
+		await rm(newFolder, { recursive: true, force: true }).catch(() => {});
+		throw err;
 	}
+
+	await rename(appFolder, oldFolder);
+	try {
+		await rename(newFolder, appFolder);
+	} catch (err) {
+		await rename(oldFolder, appFolder);
+		throw err;
+	}
+	await rm(oldFolder, { recursive: true, force: true }).catch(() => {});
 
 	return "done";
 };
