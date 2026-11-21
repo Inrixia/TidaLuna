@@ -39,7 +39,7 @@ export const LunaNativePermissions = React.memo(() => {
 			title="Native permissions"
 			desc="What plugins' native code may do, as you answered when it asked. Revoke an answer to be asked again the next time the plugin uses it"
 		>
-			{entries
+			{[...entries]
 				.sort((a, b) => a.fileName.localeCompare(b.fileName))
 				.map(({ key, fileName, url, claimedUrl, categories }) => (
 					<Stack key={key} spacing={0.5}>
@@ -48,7 +48,7 @@ export const LunaNativePermissions = React.memo(() => {
 								<LunaTrashButton title="Revoke all answers of this file" onClick={() => revoke(key)} />
 							</Stack>
 						</LunaSetting>
-						{categories
+						{[...categories]
 							.sort((a, b) => a.label.localeCompare(b.label))
 							.map(({ category, label, answer, modules }) => (
 								<LunaSetting key={category} sx={{ paddingLeft: 3 }} title={label} desc={modules.join(", ")}>

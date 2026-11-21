@@ -104,7 +104,7 @@ ${keptHtml}
 	<ul>
 		<li>Allow: until an update changes this file, or the plugin is reinstalled</li>
 		${url !== undefined ? "<li>Allow, also for updates: until the plugin is reinstalled</li>" : ""}
-		<li>Deny: until the plugin is reinstalled</li>
+		<li>Deny: ${url !== undefined ? "until the plugin is reinstalled" : "until an update changes this file, or the plugin is reinstalled"}</li>
 	</ul>
 	<div style="margin-top:6px">Answers can be revoked in Luna Settings. Closing this window answers nothing: you will be asked again next time.</div>
 </div>
@@ -143,9 +143,11 @@ let queue: Promise<unknown> = Promise.resolve();
 export const askPermissions = (request: PermissionRequest, parent?: BrowserWindow): Promise<PermissionAnswer[] | undefined> => {
 	const ask = () =>
 		new Promise<PermissionAnswer[] | undefined>((resolve) => {
+			// Not owned by a minimized or hidden TIDAL window: it would be hidden with it, and the plugin would wait unseen
+			const owner = parent !== undefined && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized() ? parent : undefined;
 			const win = new BrowserWindow({
-				parent: parent?.isDestroyed() === false ? parent : undefined,
-				modal: parent?.isDestroyed() === false,
+				parent: owner,
+				modal: owner !== undefined,
 				width: 640,
 				// Rows scroll past this, Validate stays in view
 				height: Math.min(420 + request.rows.length * 100 + (request.kept.length > 0 ? 80 : 0), 900),

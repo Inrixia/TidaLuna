@@ -8,8 +8,9 @@ import { askPermissions } from "./permissions/window";
 
 import type { NativeModuleInfo } from ".";
 
-// The trust of every loaded native file, so a revoke takes effect at once. By plugin url and file name: a reload replaces it
-const live = new Map<string, NativeTrust>();
+// The trust of every load of a native file, so a revoke takes effect at once. Every load: code of an earlier load
+// (or of another plugin naming the same url) can still be running
+const live = new Set<WeakRef<NativeTrust>>();
 
 /**
  * Permissions of one load of a native file. Node modules are asked for by category (see permissions/categories.ts),
@@ -26,15 +27,24 @@ export class NativeTrust {
 	private readonly modules = new Map<string, Set<string>>();
 	/** While true (the code runs under the vm timeout, see secureLoad) a call that needs an answer throws instead of asking */
 	public loading = false;
+	/** Set when a call threw because it needed an answer while loading: the code may have caught it, so it is loaded again */
+	public deferred = false;
+	// While the window is open the code's timers and promises still run: their calls wait for the window's answers
+	private asking = false;
+	private active = false;
 
 	constructor(
 		private readonly info: NativeModuleInfo,
 		private readonly parent?: BrowserWindow,
 	) {}
 
-	/** Called once the code has loaded, replacing the trust of an earlier load of the same file */
+	/** Called once the code has loaded */
 	public activate() {
-		live.set(`${this.info.url}::${this.info.fileName}`, this);
+		if (this.active) return;
+		this.active = true;
+		live.add(new WeakRef(this));
+		// So a module first used later can be allowed for updates (see askNow)
+		void this.verify();
 	}
 
 	private get fileName() {
@@ -100,7 +110,10 @@ export class NativeTrust {
 		const decision = this.decide(moduleName);
 		if (decision !== undefined) return decision;
 		this.seen(moduleName);
-		if (this.loading) throw new Error(`[🛑Security🛑] '${moduleName}' in '${this.fileName}' needs permission, asking after load`);
+		if (this.loading || this.asking) {
+			if (this.loading) this.deferred = true;
+			throw new Error(`[🛑Security🛑] '${moduleName}' in '${this.fileName}' needs permission, asking after load`);
+		}
 		return this.askNow(moduleName);
 	}
 
@@ -149,6 +162,15 @@ export class NativeTrust {
 	/** Asks for every pending category in one window */
 	public async ask(): Promise<void> {
 		if (this.pending().length === 0) return;
+		this.asking = true;
+		try {
+			await this.askWindow();
+		} finally {
+			this.asking = false;
+		}
+	}
+
+	private async askWindow(): Promise<void> {
 		await this.verify();
 		// Answers for updates count once the url is checked
 		const rows = this.pending();
@@ -220,6 +242,7 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 		let error: unknown;
 		let failed = false;
 		trust.loading = true;
+		trust.deferred = false;
 		try {
 			exports = load();
 		} catch (err) {
@@ -228,6 +251,8 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 		} finally {
 			trust.loading = false;
 		}
+		// A call that needed an answer threw, even if the code caught it
+		const deferred = trust.deferred;
 		if (trust.pending().length === 0) {
 			if (failed) throw error;
 			trust.adoptLegacy();
@@ -235,7 +260,7 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 			return exports!;
 		}
 		await trust.ask();
-		if (!failed) {
+		if (!failed && !deferred) {
 			trust.adoptLegacy();
 			trust.activate();
 			return exports!;
@@ -269,10 +294,15 @@ ipcHandle("__Luna.nativePermissions.list", (): NativePermissionEntry[] =>
 );
 
 const resetLive = () => {
-	for (const trust of live.values()) trust.reset();
+	for (const ref of live) {
+		const trust = ref.deref();
+		if (trust === undefined) live.delete(ref);
+		else trust.reset();
+	}
 };
 
-// Revoking only ever takes answers away, so the renderer may ask for it. The next use asks again
+// Revoking never grants anything, so the renderer may ask for it: the next use asks again. (A revoked denial is asked
+// again too; any plugin can already open permission windows with native code of its own.)
 ipcHandle("__Luna.nativePermissions.revoke", (_, key: string, category?: string) => {
 	const { natives } = getStore();
 	const record: NativeRecord | undefined = natives[key];
