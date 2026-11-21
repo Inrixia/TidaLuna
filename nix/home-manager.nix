@@ -8,7 +8,7 @@
 let
   cfg = config.programs.tidaluna;
   pkgs = config._module.args.pkgs;
-  isDarwin = pkgs.stdenv.isDarwin;
+  isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
   # Normalize store URLs: strip trailing /store.json since TidaLuna adds it back
   normalizeStoreUrl =
@@ -65,6 +65,12 @@ let
         cp -r ${cfg.package} $out
         chmod -R u+w $out
         cp ${seedSettingsFile} $out/share/tidal-hifi/resources/app/luna-settings.json
+        # The bin wrappers exec the original package, point them at this copy so luna-settings.json is used
+        for f in $out/bin/*; do
+          if [ -f "$f" ] && grep -qF ${cfg.package} "$f"; then
+            substituteInPlace "$f" --replace-fail ${cfg.package} $out
+          fi
+        done
       '';
 in
 {
