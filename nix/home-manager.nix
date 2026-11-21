@@ -23,31 +23,32 @@ let
     else
       url;
 
-  # Build the seed settings JSON
-  pluginNames = if cfg.plugins == null then [ ] else map (p: p.shortURL) cfg.plugins;
-
+  # Build the seed settings JSON, a key is only written when its option is set
   pluginSettings =
     if cfg.plugins == null then
       { }
     else
       builtins.listToAttrs (
         map (p: {
-          name = p.settingsName;
+          name = if p.settingsName != null then p.settingsName else p.name;
           value = p.settings;
         }) (lib.filter (p: p.settings != { }) cfg.plugins)
       );
 
-  seedSettings = {
-    stores = map normalizeStoreUrl cfg.stores;
-    pluginSettings = pluginSettings;
-  }
-  // lib.optionalAttrs (cfg.plugins != null) {
-    plugins = pluginNames;
-  };
+  seedSettings =
+    lib.optionalAttrs (cfg.stores != null) {
+      stores = map normalizeStoreUrl cfg.stores;
+    }
+    // lib.optionalAttrs (cfg.plugins != null) {
+      plugins = map (p: p.name) cfg.plugins;
+    }
+    // lib.optionalAttrs (pluginSettings != { }) {
+      inherit pluginSettings;
+    };
 
   seedSettingsFile = pkgs.writeText "luna-settings.json" (builtins.toJSON seedSettings);
 
-  hasSeedSettings = cfg.stores != [ ] || cfg.plugins != null || pluginSettings != { };
+  hasSeedSettings = seedSettings != { };
 
   # Patch the package to include luna-settings.json in the bundle directory
   patchedPackage =
@@ -77,17 +78,17 @@ in
     };
 
     stores = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
+      type = lib.types.nullOr (lib.types.listOf lib.types.str);
+      default = null;
       example = lib.literalExpression ''
         [
           "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
-          "https://github.com/meowarex/TidalLuna-Plugins/releases/download/latest/store.json"
+          "https://release.radiant-lyrics.org/store.json"
         ]
       '';
       description = ''
-        Plugin store URLs to register in TidaLuna. This list fully replaces the persisted store list on every startup.
-        You must include the stores for any plugins you declare in `plugins`.
+        Plugin store URLs. When set, this list replaces the store list (including the default stores) on every startup.
+        `null` leaves the stores as they are. Declared `plugins` are looked up in these stores.
       '';
     };
 
@@ -96,28 +97,36 @@ in
         lib.types.listOf (
           lib.types.submodule {
             options = {
-              shortURL = lib.mkOption {
+              name = lib.mkOption {
                 type = lib.types.str;
-                description = "Plugin identifier used by the resolver (The name shown in the plugin store).";
-                example = "meowarex/radiant-lyrics";
+                description = ''
+                  Plugin to install: its name as listed in the Plugin Store (e.g. `DiscordRPC`, `meowarex.radiant-lyrics`)
+                  or its package name. Matching ignores case. A plugin that is not found in any store shows an error in TIDAL.
+                '';
+                example = "DiscordRPC";
               };
 
               settingsName = lib.mkOption {
-                type = lib.types.str;
-                description = "Key used for plugin settings storage.";
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Key the plugin stores its settings under. Only needed when it differs from `name` and `settings` is set.";
                 example = "RadiantLyrics";
               };
 
               settings = lib.mkOption {
                 type = lib.types.attrsOf lib.types.anything;
                 default = { };
-                description = "Plugin settings.";
+                description = "Plugin settings. Declared keys overwrite the stored values on every startup, other keys are kept.";
               };
             };
           }
         )
       );
-      default = [ ];
+      default = null;
+      description = ''
+        Plugins to keep installed. When set, every plugin not in this list is removed on startup and missing ones are installed.
+        `null` leaves the installed plugins as they are.
+      '';
     };
   };
 

@@ -445,7 +445,10 @@ ipcHandle("__Luna.getSeedSettings", async () => {
 	const seedPath = path.join(bundleDir, "luna-settings.json");
 	try {
 		return JSON.parse(await readFile(seedPath, "utf8"));
-	} catch {
-		return null;
+	} catch (err: any) {
+		if (err?.code === "ENOENT") return null;
+		// Invalid JSON or unreadable file, log here and let the renderer show it
+		console.error(`[Luna] Failed to load ${seedPath}`, err);
+		throw new Error(`Failed to load ${seedPath}: ${err?.message ?? err}`);
 	}
 });

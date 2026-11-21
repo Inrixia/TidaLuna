@@ -19,7 +19,7 @@ export * from "./SettingsTransfer";
 import "./window.core";
 
 import { LunaPlugin } from "./LunaPlugin";
-import { applySeedSettings } from "./helpers/applySeedSettingsJSOn";
+import { applySeedSettings } from "./helpers/applySeedSettings";
 
 // Wrap loading of plugins in a timeout so native/preload.ts can populate modules with @luna/core (see native/preload.ts)
 setTimeout(async () => {
