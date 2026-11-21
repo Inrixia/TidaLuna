@@ -42,9 +42,26 @@ ipcRenderer.on("__Luna.console", (_event, prop: ConsoleMethodName, args: any[]) 
 			`(async () => {
 				// Check with the main process if this page was processed by Luna's HTTPS handler
 				const isLunaPage = await __ipcRenderer.invoke("__Luna.isLunaPage", location.href);
+				// A reload on any route but / is answered by Tidal's service worker, which never reaches the HTTPS handler,
+				// so the page loads without Luna (e.g. Tidal's "High memory - reloading web client"). Reload at / instead and
+				// put the route back before Tidal boots.
+				const restoreKey = "luna.restoreRoute";
 				if (!isLunaPage) {
+					const canRetryAtRoot = location.pathname !== "/" && sessionStorage.getItem(restoreKey) === null;
+					if (canRetryAtRoot && (await __ipcRenderer.invoke("__Luna.isLunaPage", location.origin + "/"))) {
+						console.log("[Luna.preload] Reloading at / to load Luna, then restoring:", location.href);
+						sessionStorage.setItem(restoreKey, location.pathname + location.search + location.hash);
+						location.replace("/");
+						return;
+					}
+					sessionStorage.removeItem(restoreKey);
 					console.log("[Luna.preload] Skipping non-Luna page:", location.href);
 					return;
+				}
+				const restoreRoute = sessionStorage.getItem(restoreKey);
+				if (restoreRoute !== null) {
+					sessionStorage.removeItem(restoreKey);
+					if (location.pathname === "/") history.replaceState(history.state, "", restoreRoute);
 				}
 
 				const originalConsole = { ...console };
