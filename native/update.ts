@@ -8,6 +8,8 @@ import path from "path";
 
 import { app } from "electron";
 
+import { isInside } from "./isInside";
+
 import type { PackageJson } from "type-fest";
 
 export const pkg = async (): Promise<PackageJson> => require("./app/package.json");
@@ -60,7 +62,7 @@ const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
 	const zip = await JSZip.loadAsync(zipBuffer);
 	for (const filename of Object.keys(zip.files)) {
 		const destPath = path.join(destFolder, filename);
-		if (!destPath.startsWith(destFolder)) {
+		if (!isInside(destFolder, destPath)) {
 			throw new Error(`[UPDATER] Zip Slip blocked: unsafe entry "${filename}"`);
 		}
 	}
