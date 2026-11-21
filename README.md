@@ -55,7 +55,7 @@ inputs.tidaLuna = {
 };
 ```
 
-There are now two ways to install the injected tidal-hifi client
+There are three ways to install the injected tidal-hifi client
 
 #### Overlay
 Add TidaLuna into your overlay list
@@ -77,72 +77,88 @@ environment.systemPackages = with pkgs; [
 ];
 ```
 
-#### Home Manager 
+#### Home Manager
 
-Add the home manager module to `sharedModules`
+The Home Manager module installs the injected client itself (no need for the overlay or package above) and can declare stores, plugins and plugin settings.
+Add the module to `sharedModules` (or to `imports` in a standalone Home Manager config):
 
 ```nix
 home-manager.sharedModules = [
-    inputs.tidaluna.homeManagerModules.default
-]
+  inputs.tidaLuna.homeManagerModules.default
+];
 ```
 
-Then Enable TidaLuna using 
+Then enable TidaLuna:
 
 ```nix
 programs.tidaluna = {
-    enable = true;
+  enable = true;
 };
 ```
 
-##### Configuring Stores
+> [!WARNING]
+> Your config is the source of truth: once you set `stores` or `plugins`, TidaLuna applies them on **every** startup.
+> Stores and plugins you add or remove in the UI are reverted on the next start, and declared `settings` overwrite the values changed in the UI.
+> Options you leave unset (`null`, the default) are not touched.
 
-In contrast to the other installation methods, the home manager module comes with no stores preconfigured.
-This module is declarative: any stores/plugins not listed will be removed and their settings cleared on startup.
-You must include the stores for any plugins you declare in `plugins`. To define stores add them to the `stores` array:
+##### Stores
+
+`stores` replaces the store list, including the stores that come with TidaLuna (listed in `plugins/ui/src/SettingsPage/PluginStoreTab/index.tsx`).
+Plugins declared in `plugins` are looked up in these stores, so include the stores they come from:
+
 ```nix
 programs.tidaluna = {
-    enable = true;
-    stores = [
-        "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
-    ];
+  enable = true;
+  stores = [
+    "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
+  ];
 };
 ```
 
-The list of stores which come default with TidaLuna can be found in `plugins/ui/src/SettingsPage/PluginStoreTab/index.tsx`.
+##### Plugins and their settings
 
-##### Installing and Configuring Plugins
+When `plugins` is set, every plugin not in the list is uninstalled on startup and missing ones are installed from the stores.
+Settings of plugins you uninstall are kept.
 
-After having added the stores needed plugins can be defined in the `plugins` array:
 ```nix
 programs.tidaluna = {
-    enable = true;
-    stores = [
-        "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
-    ];
-    plugins = [
-        {
-            shortURL = "DiscordRPC";
-            settingsName = "DiscordRPC";
-            settings = {
-                "displayOnPause" = false;
-                "displayArtistIcon" = true;
-                "displayPlaylistButton" = true;
-                "customStatusText" = "{track} by {artist}";
-            };
-        }
-    ];
+  enable = true;
+  stores = [
+    "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
+  ];
+  plugins = [
+    { name = "Shazam"; }
+    {
+      name = "DiscordRPC";
+      settings = {
+        displayOnPause = false;
+        displayArtistIcon = true;
+        customStatusText = "{track} by {artist}";
+      };
+    }
+  ];
 };
 ```
 
-A plugin definition consists of the following three keys: 
+A plugin entry has these keys:
 
-- `shortURL`: The name as shown in the "Plugin Store" tab, used for installing the plugin.
-- `settingsName`: The key the plugin uses for storing its settings. This may or may not **differ** from the `shortURL`.
-- `settings`: Settings to be applied to the plugin.
+- `name`: the plugin's name as listed in the Plugin Store (e.g. `DiscordRPC`, `Song Downloader`, `meowarex.radiant-lyrics`) or its package name. Case is ignored.
+  If a plugin is not found in any store, TidaLuna shows an error on startup.
+- `settings` (optional): settings to apply. Only the keys you declare are overwritten, other settings of the plugin are kept.
+- `settingsName` (optional): the key the plugin stores its settings under. Defaults to `name`, set it when they differ.
 
-To get the `settingsName` and `settings` of all installed plugins run the following command in the developer console
-of Tidal: `const idb = await luna.core.ReactiveStore.getStore("@luna/pluginStorage").dump(); console.log(JSON.stringify(idb, null, 2));`
+To see the `settingsName` and `settings` of your installed plugins, run this in TIDAL's developer console:
+`console.log(JSON.stringify(await luna.core.ReactiveStore.getStore("@luna/pluginStorage").dump(), null, 2));`
+
+The module writes these options to `luna-settings.json` next to TidaLuna's files (`resources/app`). Without Nix you can write that file by hand:
+
+```json
+{
+  "stores": ["https://github.com/Inrixia/luna-plugins/releases/download/dev"],
+  "plugins": ["Shazam", "DiscordRPC"],
+  "pluginSettings": { "DiscordRPC": { "displayOnPause": false } }
+}
+```
 
 ## Developers
 
