@@ -1,40 +1,72 @@
-name: "Validate & Build"
+name: "Build & Release"
 
 on:
- workflow_call:
+ push:
+  branches: [master, dev]
+ pull_request:
+ workflow_dispatch:
+
+concurrency:
+ group: ${{ github.workflow }}-${{ github.ref }}
+ cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
- Sanity:
-  name: Build
+ Build:
   runs-on: ubuntu-latest
-
+  permissions:
+   contents: read
   steps:
-   - uses: actions/checkout@v4
+   - uses: actions/checkout@v7
 
    - name: Install pnpm 📥
-     uses: pnpm/action-setup@v4
+     uses: pnpm/action-setup@v6
      with:
       version: latest
 
    - name: Install Node.js 📥
-     uses: actions/setup-node@v4
+     uses: actions/setup-node@v7
      with:
       cache: pnpm
-      node-version: latest
+      node-version: lts/*
 
    - name: Install dependencies 📥
      run: pnpm install
 
-   - name: Build Binaries
+   - name: Build
      run: pnpm run build
 
    - name: Zip Build Output
      run: cd dist && zip -r ../luna.zip *
 
    - name: Upload Build Artifact
-     uses: actions/upload-artifact@v4
+     uses: actions/upload-artifact@v7
      with:
       name: luna-artifacts
       path: |
        ./luna.zip
        ./package.json
+
+ Release:
+  # Publishes once per version: pushes that don't bump package.json's version are skipped, existing releases are never overwritten.
+  needs: Build
+  if: github.event_name == 'push'
+  runs-on: ubuntu-latest
+  permissions:
+   contents: write
+  steps:
+   - uses: actions/download-artifact@v8
+     with:
+      name: luna-artifacts
+
+   - name: Publish release on GitHub
+     env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+     run: |
+      VERSION=$(jq -r .version package.json)
+      if gh release view "$VERSION" >/dev/null 2>&1; then
+        echo "$VERSION is already released, skipping"
+        exit 0
+      fi
+      PRERELEASE=$([ "$GITHUB_REF_NAME" = dev ] && echo --prerelease || true)
+      gh release create "$VERSION" luna.zip --target "$GITHUB_SHA" --title "Release $VERSION" --generate-notes $PRERELEASE

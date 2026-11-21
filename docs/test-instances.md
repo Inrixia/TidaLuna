@@ -65,7 +65,24 @@ A brand-new profile sometimes opens `renderer_crash.html` on its very first star
 
 ## 4. Log in
 
-Clicking _Log in_ in a test instance opens login.tidal.com in your system browser, and the browser hands the result
+### Copy the daily client's login
+
+TIDAL keeps its login only in the profile's `Local Storage` (`AuthDB/<storageKey>…` entries, encrypted with a key
+derived from the storage key, not with anything tied to the machine or profile). It picks the entry belonging to its
+`clientUniqueKey`, which it keeps in IndexedDB (localforage, key `_TIDAL_clientUniqueKey`).
+
+So, with the test instance stopped, copy `%APPDATA%\TIDAL\Local Storage` over the instance's
+`profile\Local Storage` (skip the `LOCK` file; the daily client can keep running), start it, set its
+`_TIDAL_clientUniqueKey` to the daily client's and reload. Don't copy `IndexedDB`: it also holds Luna's plugins and
+settings. The [test instance skill](../.claude/skills/tidal-test-instance/tidal.mjs) does all this on `start` when the
+instance is logged out (`copyDailyLogin`, `useCopiedLogin`).
+
+Sharing the login is safe for the daily client: TIDAL doesn't rotate refresh tokens (a refresh returns no new
+`refresh_token`), so a refresh in either client doesn't invalidate the other's.
+
+### Log in in the test instance
+
+Use this to log in with another account. Clicking _Log in_ in a test instance opens login.tidal.com in your system browser, and the browser hands the result
 (`tidal://login/auth?code=…`) to the TIDAL that is registered for `tidal://` — your daily client, never the test
 instance. The test instance stays logged out.
 
@@ -98,9 +115,8 @@ _Configure…_, click _inspect_ on the Node target and run this in its console:
 ```
 
 Then click _Log in_ in the test instance and log in in the window that opens. The session is stored in that
-instance's profile only, so this is needed once per profile. Don't copy token or cookie files from your daily
-profile instead: refresh-token rotation can log the daily client out. Public pages (albums, playlists) also work
-without logging in.
+instance's profile only, so this is needed once per profile. Public pages (albums, playlists) also work without
+logging in.
 
 ## Gotchas
 

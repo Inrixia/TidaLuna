@@ -1,0 +1,65 @@
+name: "Nix hashes"
+
+# pnpmDeps hashes depend on the lockfile and differ per platform, so recompute them whenever it (or the nix setup) changes.
+
+on:
+ push:
+  branches: [master, dev]
+  paths:
+   - "pnpm-lock.yaml"
+   - "pnpm-workspace.yaml"
+   - "flake.lock"
+   - "nix/**"
+   - ".github/workflows/nix-hashes.yml"
+ workflow_dispatch:
+
+concurrency:
+ group: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+ contents: write
+
+jobs:
+ Linux:
+  name: Update Linux pnpmDeps hash
+  runs-on: ubuntu-latest
+  steps:
+   - uses: actions/checkout@v7
+
+   - uses: cachix/install-nix-action@v32
+     with:
+      extra_nix_config: |
+       access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+   - name: Update injection-linux hash
+     run: |
+      NIXPKGS_REV=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+      nix shell "github:NixOS/nixpkgs/${NIXPKGS_REV}#nix-update" --command nix-update --flake injection-linux --version=skip
+
+   - uses: stefanzweifel/git-auto-commit-action@v7
+     with:
+      commit_message: "nix: update Linux pnpmDeps hash"
+
+ Darwin:
+  name: Update Darwin pnpmDeps hash
+  needs: Linux
+  runs-on: macos-latest
+  steps:
+   - uses: actions/checkout@v7
+
+   - name: Pull Linux hash commit
+     run: git pull --rebase
+
+   - uses: cachix/install-nix-action@v32
+     with:
+      extra_nix_config: |
+       access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+   - name: Update injection-darwin hash
+     run: |
+      NIXPKGS_REV=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+      nix shell "github:NixOS/nixpkgs/${NIXPKGS_REV}#nix-update" --command nix-update --flake injection-darwin --version=skip
+
+   - uses: stefanzweifel/git-auto-commit-action@v7
+     with:
+      commit_message: "nix: update Darwin pnpmDeps hash"

@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import Module, { createRequire } from "module";
 
 import { ipcHandle } from "./ipc";
+import { isInside } from "./isInside";
 
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 
@@ -79,10 +80,10 @@ if (process.platform === "linux") {
 		if (!themeName || themeName === "none") return undefined;
 		const themesDir = path.join(electron.app.getPath("userData"), "themes");
 		const userPath = path.join(themesDir, themeName);
-		if (!userPath.startsWith(themesDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
+		if (!isInside(themesDir, userPath)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
 		const resourcesDir = process.resourcesPath;
 		const resourcesPath = path.join(resourcesDir, themeName);
-		if (!resourcesPath.startsWith(resourcesDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
+		if (!isInside(resourcesDir, resourcesPath)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${themeName}`);
 		try {
 			return await readFile(userPath, "utf8");
 		} catch {
@@ -98,7 +99,7 @@ if (process.platform === "linux") {
 const bundleFile = async (url: string): Promise<[Buffer, ResponseInit]> => {
 	const fileName = url.slice(13);
 	const filePath = path.join(bundleDir, fileName);
-	if (!filePath.startsWith(bundleDir)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${fileName}`);
+	if (!isInside(bundleDir, filePath)) throw new Error(`[🛑Security🛑] Path traversal blocked: ${fileName}`);
 	let content = await readFile(filePath);
 
 	// If JS file, check for .map and append if exists
@@ -124,7 +125,6 @@ ipcHandle("__Luna.renderJs", () => lunaBundle);
 const tidalMainHosts = new Set(["listen.tidal.com", "tidal.com", "desktop.tidal.com", "stage.tidal.com"]);
 const lunaPages = new Set<string>();
 ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
-let httpsHandlerActive = false;
 
 const httpsHandler = async (req: Request): Promise<Response> => {
 	if (req.url.startsWith("https://luna/")) {
@@ -190,7 +190,6 @@ const registerHttpsHandler = () => {
 	} catch {
 		// Handler might already be registered
 	}
-	httpsHandlerActive = true;
 };
 
 const unregisterHttpsHandler = () => {
@@ -199,7 +198,6 @@ const unregisterHttpsHandler = () => {
 	} catch {
 		// Handler might not be registered
 	}
-	httpsHandlerActive = false;
 };
 
 // Ensure app is ready
@@ -216,7 +214,8 @@ electron.app.whenReady().then(async () => {
 // #region Proxied BrowserWindow
 const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 	construct(target, args) {
-		const options = args[0];
+		const options = (args[0] ??= {});
+		options.webPreferences ??= {};
 
 		// Improve memory limits
 		options.webPreferences.nodeOptions = "--max-old-space-size=8192";
@@ -256,6 +255,17 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		}
 
 		const window = new target(options);
+
+		// Allow opening dev tools with F12 without interfering with Tidal's own shortcuts (e.g., Ctrl+Shift+I)
+		window.webContents.on("before-input-event", (event, input) => {
+			if (input.key === "F12") {
+				window.webContents.toggleDevTools();
+				event.preventDefault();
+			}
+		});
+
+		// Everything below is shared main-process state (render target, app listeners, console): only the TIDAL window may own it
+		if (!isTidalWindow) return window;
 
 		globalThis.luna.sendToRender = window.webContents.send.bind(window.webContents);
 
@@ -316,14 +326,6 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 				});
 			});
 		}
-
-		// Allow opening dev tools with F12 without interfering with Tidal's own shortcuts (e.g., Ctrl+Shift+I)
-		window.webContents.on("before-input-event", (event, input) => {
-			if (input.key === "F12") {
-				window.webContents.toggleDevTools();
-				event.preventDefault();
-			}
-		});
 
 		// Notify renderer to unload plugins before window closes (but not when minimizing to tray)
 		window.on("close", (event) => {

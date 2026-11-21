@@ -65,6 +65,11 @@ export class SettingsTransfer
 		if (typeof obj.stores !== "object" || obj.stores === null)
 			return false;
 
+		// restore() clears each store before writing, so reject anything it can't write back
+		for (const store of Object.values(obj.stores))
+			if (typeof store !== "object" || store === null || Array.isArray(store))
+				return false;
+
 		return true;
 	}
 }
