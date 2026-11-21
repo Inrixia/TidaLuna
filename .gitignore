@@ -15,3 +15,9 @@ devenv.local.nix
 
 # pre-commit
 .pre-commit-config.yaml
+
+# Claude
+.codegraph/
+.claude/settings.local.json
+.claude/*.lock
+.tidal-test/
