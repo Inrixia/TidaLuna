@@ -8,5 +8,6 @@
 		"/plugins/lib/src/redux"
 	],
 	"discord.enabled": false,
-	"exportall.config.exportFileExtension": ""
+	"exportall.config.exportFileExtension": "",
+	"claudeCodeChat.permissions.yoloMode": false
 }

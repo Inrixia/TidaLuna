@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@inrixia/helpers':
-        specifier: ^3.21.2
-        version: 3.21.2
+        specifier: ^3.22.0
+        version: 3.22.0
       '@types/clean-css':
         specifier: ^4.2.11
         version: 4.2.11
@@ -437,8 +437,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@inrixia/helpers@3.21.2':
-    resolution: {integrity: sha512-fNkC8dvvOoR9rODNL8Wia6Bzo7wLJz3GAzaLvGWrqKeunSGNwwmVBSFoM7ux6pA0H506GlnHaKJ5iC/r3dEz0Q==}
+  '@inrixia/helpers@3.22.0':
+    resolution: {integrity: sha512-qVY7gpdhUz3xU2qG1DqaDVlm0a/jNZfJNll/t92mHyWrAmr80X44iqGDAJsAmCH7Z0IgBpmz77iFSt8uFRJ/ZQ==}
 
   '@isaacs/nonrecursive-glob-match@1.1.0':
     resolution: {integrity: sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==}
@@ -1513,7 +1513,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@inrixia/helpers@3.21.2':
+  '@inrixia/helpers@3.22.0':
     dependencies:
       dequal: 2.0.3
 
