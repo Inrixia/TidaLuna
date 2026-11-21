@@ -5,8 +5,6 @@ import { ReactiveStore } from "../ReactiveStore";
 import { coreTrace } from "../trace";
 
 const { trace } = coreTrace.withSource(".applySeedSettings");
-// Remembers declared ids that weren't found, see installPlugins
-const seedCache = ReactiveStore.getStore("@luna/seedSettings");
 
 /**
  * Shape of luna-settings.json (written by nix/home-manager.nix).
@@ -100,6 +98,7 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 		if (!plugin.installed) await plugin.install();
 	};
 
+	let storeFailed = false;
 	const stores = await Promise.all(
 		storeUrls.map(async (storeUrl) => {
 			try {
@@ -107,6 +106,7 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 				const files = Array.isArray(manifest.plugins) ? manifest.plugins.filter((file) => typeof file === "string") : [];
 				return files.map((file) => ({ url: LunaPlugin.storePluginUrl(storeUrl, file).replace(/\.mjs$/, ""), entry: file.replace(/\.mjs$/, "") }));
 			} catch (err) {
+				storeFailed = true;
 				trace.err.withContext("Failed to fetch store", storeUrl)(err);
 				return [];
 			}
@@ -121,8 +121,9 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 	}
 
 	// By package name, only fetched when a name didn't match a store entry.
-	// Skipped when the same ids weren't found in the same stores last start, so a typo doesn't fetch every package.json on every start
-	const notFoundKey = () => JSON.stringify({ ids: [...missing.keys()].sort(), storeUrls });
+	// Skipped when the same ids weren't found in the same store entries last start, so a typo doesn't fetch every package.json on every start
+	const seedCache = ReactiveStore.getStore("@luna/seedSettings");
+	const notFoundKey = () => JSON.stringify({ ids: [...missing.keys()].sort(), entries: entries.map(({ url }) => url) });
 	if (missing.size !== 0 && (await seedCache.get<string>("notFound")) !== notFoundKey()) {
 		const installedUrls = new Set(
 			Object.values(LunaPlugin.plugins)
@@ -145,9 +146,10 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 		}
 	}
 
-	if (missing.size === 0) await seedCache.del("notFound");
-	else {
-		await seedCache.set("notFound", notFoundKey());
+	// Only remember a miss when every store answered, a store that was down may have the plugin
+	if (missing.size === 0 || storeFailed) await seedCache.del("notFound");
+	else await seedCache.set("notFound", notFoundKey());
+	if (missing.size !== 0) {
 		trace.msg.err(
 			`luna-settings.json: plugin(s) ${[...missing.values()].join(", ")} not found in any store. Use the name shown in the Plugin Store and declare its store.`,
 		);

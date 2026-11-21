@@ -447,8 +447,7 @@ ipcHandle("__Luna.getSeedSettings", async () => {
 		return JSON.parse(await readFile(seedPath, "utf8"));
 	} catch (err: any) {
 		if (err?.code === "ENOENT") return null;
-		// Invalid JSON or unreadable file, log here and let the renderer show it
-		console.error(`[Luna] Failed to load ${seedPath}`, err);
+		// Invalid JSON or unreadable file, electron logs the thrown error and the renderer shows it
 		throw new Error(`Failed to load ${seedPath}: ${err?.message ?? err}`);
 	}
 });
