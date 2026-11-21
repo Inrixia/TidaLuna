@@ -98,6 +98,8 @@ const elevatedUpdate = async (zipBuffer: Buffer) => {
 let pendingZipBuffer: Buffer | null = null;
 
 export const update = async (version: string): Promise<string> => {
+	// Callable from the renderer: a version with "/" or ".." would point the download at another repo
+	if (!/^[\w.-]+$/.test(version) || version.includes("..")) throw new Error(`[UPDATER] Invalid version "${version}"`);
 	const zipUrl = `https://github.com/Inrixia/TidaLuna/releases/download/${version}/luna.zip`;
 	const res = await fetch(zipUrl);
 	if (!res.ok) throw new Error(`Failed to download ${zipUrl}\n${res.statusText}`);
