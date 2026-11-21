@@ -28,6 +28,9 @@ const tidalAppPath = path.join(process.resourcesPath, "original.asar");
 const tidalPackagePromise = readFile(path.join(tidalAppPath, "package.json"), "utf8").then(JSON.parse);
 // #endregion
 
+// Enable experimental webGPU
+electron.app.commandLine.appendSwitch("enable-unsafe-webgpu");
+
 // Allow debugging from remote origins (e.g., Chrome DevTools over localhost)
 // Requires starting client with --remote-debugging-port=9222
 electron.app.commandLine.appendSwitch("remote-allow-origins", "http://localhost:9222");
@@ -36,6 +39,9 @@ electron.app.commandLine.appendSwitch("remote-allow-origins", "http://localhost:
 if (process.platform === "linux") {
 	// Zygote causes sandbox initialization failures on some Linux configurations
 	electron.app.commandLine.appendSwitch("no-zygote");
+
+	// WebGPU Typically requires Vulcan
+	electron.app.commandLine.appendSwitch("enable-features", "Vulkan");
 
 	// Match tidal-hifi's .desktop StartupWMClass so GNOME/KDE shows the correct dock icon
 	// --class works for X11, CHROME_DESKTOP sets the Wayland app_id
