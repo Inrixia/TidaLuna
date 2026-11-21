@@ -68,7 +68,7 @@ export class LunaPlugin {
 	}
 	// Url of a plugin listed in a store's store.json (spaces become dots, except in the local dev store)
 	public static storePluginUrl(storeUrl: string, entry: string): string {
-		return `${storeUrl}/${storeUrl === "http://127.0.0.1:3000" ? entry : entry.replace(" ", ".")}`;
+		return `${storeUrl}/${storeUrl === "http://127.0.0.1:3000" ? entry : entry.replaceAll(" ", ".")}`;
 	}
 
 	// Storage backing for persisting plugin url/enabled/code etc... See LunaPluginStorage

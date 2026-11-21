@@ -1,4 +1,6 @@
 /// <reference path="../../luna.d.ts" />
+// Hook fetch before TIDAL runs so its requests fill the cache
+export { requestCache, type RequestCacheRule } from "./requestCache";
 // Always expose internals first
 export { tidalModules } from "./exposeTidalInternals";
 export { buildActions, interceptors } from "./exposeTidalInternals.patchAction";

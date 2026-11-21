@@ -93,3 +93,5 @@ export const PluginStoreTab = React.memo(() => {
 		</Stack>
 	);
 });
+
+export const { normalizeStoreUrl } = LunaPlugin;

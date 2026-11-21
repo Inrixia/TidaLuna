@@ -1,4 +1,4 @@
-import { type Tracer } from "@luna/core";
+import { requestCache, type Tracer } from "@luna/core";
 
 import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
 import { createAPIClient } from "@tidal-music/api";
@@ -9,7 +9,7 @@ import type { TApiPlaylistItemRef } from "./types/Playlist";
 import type { TApiTrack, TApiTracks } from "./types/Tracks";
 
 import { getCredentials } from "../../helpers";
-import { libTrace } from "../../index.safe";
+import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
 
 import type { AlbumPage } from "./types/AlbumPage";
@@ -52,22 +52,42 @@ export class TidalApi {
 
 	public static readonly queryArgs: Memoized<() => string> = memoizeArgless(() => {
 		const store = redux.store.getState();
-		return `countryCode=${store.session.countryCode}&deviceType=DESKTOP&locale=${store.settings.language}`;
+		// The locale as TIDAL formats it (en-us > en_US) so its requests share the cache
+		const [lang, region] = store.locale.currentBundleName.split("-");
+		const locale = region === undefined || region === "Latn" ? lang : `${lang}_${region.toUpperCase()}`;
+		return `countryCode=${store.session.countryCode}&deviceType=DESKTOP&locale=${locale}`;
 	});
-	public static fetch = memoize(async <T>(url: string): Promise<T | undefined> => {
-		// Retry a failed request once with a 1s delay
-		let retry = true;
-		while (true) {
-			const res = await fetch(url, {
-				headers: await this.getAuthHeaders(),
-			});
-			if (statusOK(res.status)) return res.json();
-			if (res.status === 403 || res.status === 404) return undefined;
-			if (!retry) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
-			retry = false;
-			await sleep(1000);
-		}
-	});
+	static {
+		requestCache.register(unloads, {
+			pattern: /^https:\/\/(api|desktop)\.tidal\.com\/v1\/(tracks|videos)\/\d+\/playbackinfo\?/,
+			// TIDAL requests its quality setting, plugins the quality it actually got (PlayState.playbackContext.actualAudioQuality)
+			extraUrls: (url, info) => {
+				const audioQuality = (<PlaybackInfoResponse | undefined>info)?.audioQuality;
+				if (audioQuality === undefined) return [];
+				const actual = new URL(url);
+				actual.searchParams.set("audioquality", audioQuality);
+				return [actual];
+			},
+		});
+		requestCache.register(unloads, { pattern: /^https:\/\/(api|desktop)\.tidal\.com\/v1\/(tracks|albums|artists|playlists)\/[\w-]+(\/lyrics)?\?/ });
+	}
+	/** Cached GET of TIDAL's v1 api, shared with concurrent and matching TIDAL requests, see `requestCache` */
+	public static fetch<T>(url: string): Promise<T | undefined> {
+		return requestCache.get<T>(url, async () => {
+			// Retry a failed request once with a 1s delay
+			let retry = true;
+			while (true) {
+				const res = await fetch(url, {
+					headers: await this.getAuthHeaders(),
+				});
+				if (statusOK(res.status)) return res.json();
+				if (res.status === 403 || res.status === 404) return undefined;
+				if (!retry) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
+				retry = false;
+				await sleep(1000);
+			}
+		});
+	}
 
 	public static async track(trackId: redux.ItemId) {
 		return this.fetch<redux.Track>(`https://desktop.tidal.com/v1/tracks/${trackId}?${this.queryArgs()}`);
