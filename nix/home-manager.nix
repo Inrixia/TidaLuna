@@ -83,7 +83,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      defaultText = lib.literalExpression "inputs.tidaluna.packages.\${system}.default";
+      defaultText = lib.literalExpression "inputs.tidaLuna.packages.\${system}.default";
       description = "The TidaLuna package to install (before seed settings are patched in).";
     };
 
