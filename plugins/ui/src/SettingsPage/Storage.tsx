@@ -9,14 +9,17 @@ import { StyleTag } from "@luna/lib";
 import { Messager } from "@luna/core";
 import type { LunaThemeStorage } from "./ThemesTab/LunaTheme";
 import { unloads } from "../index.safe";
+import { addToStores, storeUrls } from "./PluginStoreTab";
 
 const lunaStorage = ReactiveStore.getStore("@luna/storage");
-export const storeUrls = await lunaStorage.getReactive<string[]>("storeUrls", []);
-export const addToStores = (url: string) => {
-	if (url.endsWith("/store.json")) url = url.slice(0, -11);
-	if (storeUrls.includes(url)) return false;
-	return storeUrls.push(url);
-};
+// Stores added here before used a separate list the Plugin Store never read, move them over
+const legacyStoreUrls = await lunaStorage.get<unknown>("storeUrls");
+if (legacyStoreUrls !== undefined) {
+	if (Array.isArray(legacyStoreUrls)) for (const url of legacyStoreUrls) if (typeof url === "string") addToStores(url);
+	// Save the merged list before dropping the old one
+	await ReactiveStore.getStore("@luna/pluginStores").set("storeUrls", [...storeUrls]);
+	await lunaStorage.del("storeUrls");
+}
 
 export const themes = await lunaStorage.getReactive<Record<string, LunaThemeStorage>>("themes", {});
 export const addToThemes = async (url: string) => {
