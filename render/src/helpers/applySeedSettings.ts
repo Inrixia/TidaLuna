@@ -98,7 +98,7 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 		if (!plugin.installed) await plugin.install();
 	};
 
-	let storeFailed = false;
+	const failedStores: string[] = [];
 	const stores = await Promise.all(
 		storeUrls.map(async (storeUrl) => {
 			try {
@@ -106,7 +106,7 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 				const files = Array.isArray(manifest.plugins) ? manifest.plugins.filter((file) => typeof file === "string") : [];
 				return files.map((file) => ({ url: LunaPlugin.storePluginUrl(storeUrl, file).replace(/\.mjs$/, ""), entry: file.replace(/\.mjs$/, "") }));
 			} catch (err) {
-				storeFailed = true;
+				failedStores.push(storeUrl);
 				trace.err.withContext("Failed to fetch store", storeUrl)(err);
 				return [];
 			}
@@ -121,9 +121,11 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 	}
 
 	// By package name, only fetched when a name didn't match a store entry.
-	// Skipped when the same ids weren't found in the same store entries last start, so a typo doesn't fetch every package.json on every start
+	// Skipped when the same ids weren't found in the same store entries (with the same stores failing) last start,
+	// so a typo doesn't fetch every package.json on every start, while a start with a store down doesn't count for the next one
 	const seedCache = ReactiveStore.getStore("@luna/seedSettings");
-	const notFoundKey = () => JSON.stringify({ ids: [...missing.keys()].sort(), entries: entries.map(({ url }) => url) });
+	const notFoundKey = () =>
+		JSON.stringify({ ids: [...missing.keys()].sort(), entries: entries.map(({ url }) => url), failedStores: [...failedStores].sort() });
 	if (missing.size !== 0 && (await seedCache.get<string>("notFound")) !== notFoundKey()) {
 		const installedUrls = new Set(
 			Object.values(LunaPlugin.plugins)
@@ -146,8 +148,7 @@ async function installPlugins(missing: Map<string, string>, storeUrls: string[])
 		}
 	}
 
-	// Only remember a miss when every store answered, a store that was down may have the plugin
-	if (missing.size === 0 || storeFailed) await seedCache.del("notFound");
+	if (missing.size === 0) await seedCache.del("notFound");
 	else await seedCache.set("notFound", notFoundKey());
 	if (missing.size !== 0) {
 		trace.msg.err(
