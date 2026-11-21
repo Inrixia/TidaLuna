@@ -94,3 +94,5 @@ export const PluginStoreTab = React.memo(() => {
 		</Stack>
 	);
 });
+
+export { normalizeStoreUrl };
