@@ -537,7 +537,12 @@ export class LunaPlugin {
 			await this.unload();
 
 			const blobURL = URL.createObjectURL(new Blob([this.code], { type: "text/javascript" }));
-			this.exports = await import(blobURL);
+			try {
+				this.exports = await import(blobURL);
+			} finally {
+				// The imported module stays alive; the blob would otherwise keep a copy of the code per load
+				URL.revokeObjectURL(blobURL);
+			}
 			if (this.exports === undefined) return this.trace.err.throw(`Failed to load. Module exports undefined!`);
 
 			// Ensure loadError is cleared
