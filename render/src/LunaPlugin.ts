@@ -503,10 +503,11 @@ export class LunaPlugin {
 			// If code hasnt changed then just reuse stored code
 			if (!codeChanged) newPackage.code = this.package?.code;
 
-			this.package = newPackage;
-
 			// Ensure that code is fetched if its changed or undefined
-			this.package.code ??= `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
+			newPackage.code ??= `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
+
+			// Only replace the stored package once its code is fetched, so a failed fetch keeps the cached code
+			this.package = newPackage;
 
 			return codeChanged;
 		} catch {
