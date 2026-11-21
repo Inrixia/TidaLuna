@@ -12,7 +12,7 @@ import { LunaStore } from "./LunaStore";
 
 const pluginStores = ReactiveStore.getStore("@luna/pluginStores");
 export const storeUrls = await pluginStores.getReactive<string[]>("storeUrls", []);
-export const normalizeStoreUrl = (url: string) => (url.endsWith("/store.json") ? url.slice(0, -11) : url);
+const normalizeStoreUrl = (url: string) => (url.endsWith("/store.json") ? url.slice(0, -11) : url);
 export const addToStores = (url: string) => {
 	url = normalizeStoreUrl(url);
 	if (storeUrls.includes(url)) return false;
@@ -93,3 +93,5 @@ export const PluginStoreTab = React.memo(() => {
 		</Stack>
 	);
 });
+
+export { normalizeStoreUrl };
