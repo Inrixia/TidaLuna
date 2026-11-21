@@ -2,13 +2,14 @@ import { objectify } from "@inrixia/helpers";
 import vm from "vm";
 
 import { nativeRequire, type NativeModuleInfo } from ".";
-import { isTrusted, loadWithDeferredPrompts } from "./trust";
+import { loadWithPermissions, NativeTrust } from "./trust";
 
 import type Module from "module";
 import { moduleWhitelist } from "./moduleWhitelist";
 
-export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
+export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow): Promise<Module["exports"]> => {
 	const { fileName, code } = moduleInfo;
+	const trust = new NativeTrust(moduleInfo, parent);
 
 	const require = new Proxy(nativeRequire, {
 		apply: (target, thisArg, argumentsList: [moduleName: string]) => {
@@ -23,6 +24,9 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 
 			// Load the real module
 			const realModule = target.apply(thisArg, argumentsList);
+
+			// Asked for together with the file's other modules once it has loaded. Not one that failed to load (e.g. an optional dependency)
+			trust.seen(moduleName);
 
 			// REVERSE LOOKUP (Critical for fixing "Incompatible Receiver")
 			const proxyToTarget = new WeakMap<any, any>();
@@ -57,7 +61,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 					},
 
 					apply: (fn, thisArg, args) => {
-						if (!isTrusted(moduleInfo, moduleName)) {
+						if (!trust.check(moduleName)) {
 							throw new Error(`[🛑Security🛑] Access Denied: User blocked execution of '${moduleName}' in '${fileName}'`);
 						}
 
@@ -69,7 +73,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 					},
 
 					construct: (fn, args) => {
-						if (!isTrusted(moduleInfo, moduleName)) {
+						if (!trust.check(moduleName)) {
 							throw new Error(`[🛑Security🛑] Access Denied: User blocked construction of '${moduleName}' in '${fileName}'`);
 						}
 
@@ -97,7 +101,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 	const WebAssembly = new Proxy(globalThis.WebAssembly, {
 		get(target, prop, receiver) {
 			console.warn(`[🛑Security🛑] '${fileName}' is loading WebAssembly (${String(prop)})!`);
-			if (!isTrusted(moduleInfo, "WebAssembly")) {
+			if (!trust.check("WebAssembly")) {
 				throw new Error(`[🛑Security🛑] Access Denied! User blocked 'WebAssembly' (${String(prop)}) in '${fileName}'`);
 			}
 
@@ -146,7 +150,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 			// @ts-expect-error This exists
 			const debugProcess: (pid: number) => void = process._debugProcess;
 			console.warn(`[🛑Security🛑] '${fileName}' is calling 'process.debugProcess'`);
-			if (!isTrusted(moduleInfo, "DebugProcess")) {
+			if (!trust.check("DebugProcess")) {
 				throw new Error(`[🛑Security🛑] Access Denied! User blocked 'process.debugProcess' in '${fileName}'`);
 			}
 			debugProcess(process.pid);
@@ -239,13 +243,11 @@ export const secureLoad = (moduleInfo: NativeModuleInfo): Module["exports"] => {
 		return sandbox.module.exports as Module;
 	};
 
-	try {
-		// Trust prompts can't be shown while the code runs: the vm timeout counts the time a dialog is open, and once
-		// it has passed V8 stops the code as soon as the dialog returns, so the answer is lost and the load fails.
-		// Calls that need a prompt fail instead; they are asked after the run and the code is loaded again.
-		return loadWithDeferredPrompts(load);
-	} catch (err) {
+	// Permissions can't be asked while the code runs: the vm timeout counts the time a prompt is open, and once
+	// it has passed V8 stops the code as soon as the prompt returns, so the answer is lost and the load fails.
+	// Calls that need an answer fail instead; they are asked after the run and the code is loaded again.
+	return loadWithPermissions(trust, load).catch((err) => {
 		console.error(`Failed to load module ${fileName}:`, err);
 		throw err;
-	}
+	});
 };

@@ -126,12 +126,13 @@ logging in.
   test window was, possibly off-screen. Expect log lines from all instances in the same `app.log`.
 - **One device plays at a time per account.** Starting playback in a test instance logged in with your account
   pauses the daily client (and the other way round). Use a second account, or avoid playback while listening.
-- **Native-code "Security Warning" dialog.** The first time a plugin's native code (`*.native.ts`) uses modules
-  such as `fs`, `http`, `electron` or `child_process`, Luna asks _"Allow plugin access to …?"_ in a modal dialog of
-  the main process. The main process waits for the answer, so an instance whose window is minimized or hidden
-  appears frozen (CDP calls time out). Keep the window visible while installing or enabling such plugins and
-  answer the dialog quickly: the native module loads under a short timeout and an answer that comes too late is
-  not saved, so Luna asks again on the next load. A rebuilt plugin asks again.
+- **"Plugin Permission Request" window.** The first time a plugin's native code (`*.native.ts`) requires modules
+  such as `fs`, `http`, `electron` or `child_process`, Luna asks once per native file in a window of its own,
+  listing what the file wants by category (Network Access, Filesystem, …). The plugin waits for the answer, so keep
+  the instance's windows visible while installing or enabling such plugins. A rebuilt plugin asks again only for
+  categories allowed for one version; "Allow, also for updates" keeps the answer for later builds from the same url.
+  A module first used after the file has loaded is still asked in a modal message box, which blocks the main
+  process (CDP calls time out) until it is answered. Answers are listed, and can be revoked, in Luna Settings.
 - **TIDAL Connect** uses fixed local ports, so only one instance (daily or test) can offer it at a time.
 - **Stopping an instance.** Quit it normally, or kill its processes by path. `taskkill /IM TIDAL.exe` kills every
   TIDAL, including the daily client:

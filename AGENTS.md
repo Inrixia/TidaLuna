@@ -17,7 +17,7 @@ Luna (TidaLuna) = client mod for TIDAL desktop app (Electron). Takes over TIDAL'
 Three runtimes, all built by `esbuild.config.ts` into `dist/`:
 
 - **`native/` → `injector.mjs`**, Electron main-process entry (package.json `main`). Luna's `dist` installed as TIDAL's `resources/app`; TIDAL's own `app.asar` renamed `original.asar`, which injector boots. Wraps `BrowserWindow` (adds Luna's preload, forces sandbox + contextIsolation on TIDAL's window) and handles `https` protocol: strips TIDAL's CSP, marks TIDAL's module scripts `type="luna/quartz"`, serves `https://luna/*` from bundle folder (`TIDALUNA_DIST_PATH` overrides folder).
-  - `native/NativeModule/` runs plugin native code (`__Luna.registerNative`) in `vm` sandbox. Node modules outside `moduleWhitelist.ts` prompt user; answers saved in encrypted trust store. Security boundary.
+  - `native/NativeModule/` runs plugin native code (`__Luna.registerNative`) in `vm` sandbox. Node modules outside `moduleWhitelist.ts` are asked for by category (`permissions/categories.ts`), one window per native file; answers saved in encrypted store, kept per plugin url (checked against what the url serves) or per code hash. Security boundary.
 - **`native/preload.ts` → `preload.mjs`** exposes `__ipcRenderer` and `__platform` to page, imports `luna.mjs`.
 - **`render/` → `luna.mjs`** is `@luna/core`:
   - `exposeTidalInternals*.ts` re-runs TIDAL's module scripts through `@uwu/quartz` to capture its modules, Redux store, action creators. This layer breaks when TIDAL updates.

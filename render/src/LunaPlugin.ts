@@ -482,6 +482,8 @@ export class LunaPlugin {
 		this.store.installed = false;
 		delete LunaPlugin.plugins[this.url];
 		await LunaPlugin.pluginStorage.del(this.name);
+		// A reinstall asks for native permissions again
+		await __ipcRenderer.invoke("__Luna.nativePermissions.forget", this.url).catch(this.trace.err.withContext("Failed to forget native permissions"));
 		this.loading._ = false;
 		coreTrace.msg.log(`Uninstalled plugin ${this.name}${this.isDev ? " [DEV]" : ""}`);
 	}
@@ -536,7 +538,9 @@ export class LunaPlugin {
 			// Ensure we unload if previously loaded
 			await this.unload();
 
-			const blobURL = URL.createObjectURL(new Blob([this.code], { type: "text/javascript" }));
+			// Name this plugin's url when its native code registers, so its permissions are kept per plugin (see native/NativeModule/trust.ts)
+			const code = this.code.replace(/(["'`])__Luna\.registerNative\1\s*,/g, () => `"__Luna.registerNativeFrom",${JSON.stringify(this.url)},`);
+			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
 			try {
 				this.exports = await import(blobURL);
 			} finally {
