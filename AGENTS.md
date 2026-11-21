@@ -61,7 +61,7 @@ Reload core plugin changes from Luna Settings; changes to `native/` or `render/`
 
 ## Gotchas
 
-- **Pushing change to root `package.json` on `master` or `dev` publishes release** (`.github/workflows/release*.yml`): GitHub release tagged with `version`, then CI commits updated Nix hashes. Version-bump commits use bare version as message, e.g. `1.22.0-beta`.
-- Dependency changes can need `pnpmDeps` hash updated in `nix/injection-linux.nix` and `nix/injection-darwin.nix`. Flake Review workflow builds PRs touching them.
+- **Pushing a new `version` in root `package.json` to `master` or `dev` publishes release** (`.github/workflows/build.yml`): GitHub release tagged with `version` (prerelease on `dev`). Versions already released are skipped, never overwritten. Version-bump commits use bare version as message, e.g. `1.22.0-beta`.
+- `pnpmDeps` hashes in `nix/injection-linux.nix` and `nix/injection-darwin.nix` depend on `pnpm-lock.yaml` and differ per platform. CI (`.github/workflows/nix-hashes.yml`) recomputes and commits them after lockfile/nix changes land on `master`/`dev`; PRs don't need to update them.
 - Code must work on official TIDAL (Windows/macOS) and tidal-hifi (Linux). They load differently: on Linux, Luna replaces tidal-hifi's preload instead of adding one, and handles login in popup window. See `platformIsLinux` branches in `native/injector.ts`.
 - Keep security checks intact: `NativeModule` sandbox and trust prompts, `openExternal` allowing only http(s) (`native/expose.ts`), path-traversal guard in `bundleFile` (`native/injector.ts`).
