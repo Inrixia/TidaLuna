@@ -125,7 +125,6 @@ ipcHandle("__Luna.renderJs", () => lunaBundle);
 const tidalMainHosts = new Set(["listen.tidal.com", "tidal.com", "desktop.tidal.com", "stage.tidal.com"]);
 const lunaPages = new Set<string>();
 ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
-let httpsHandlerActive = false;
 
 const httpsHandler = async (req: Request): Promise<Response> => {
 	if (req.url.startsWith("https://luna/")) {
@@ -191,7 +190,6 @@ const registerHttpsHandler = () => {
 	} catch {
 		// Handler might already be registered
 	}
-	httpsHandlerActive = true;
 };
 
 const unregisterHttpsHandler = () => {
@@ -200,7 +198,6 @@ const unregisterHttpsHandler = () => {
 	} catch {
 		// Handler might not be registered
 	}
-	httpsHandlerActive = false;
 };
 
 // Ensure app is ready
