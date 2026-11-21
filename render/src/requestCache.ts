@@ -5,12 +5,34 @@ export type RequestCacheRule = {
 	pattern: RegExp;
 	/** Other urls a response is also the answer for, e.g. a playbackinfo response under the quality it actually returned */
 	extraUrls?: (url: URL, value: unknown) => (string | URL)[];
+	/**
+	 * Also answer TIDAL's own matching requests from the cache (stale-while-revalidate): a cached response is returned at once
+	 * and re-fetched in the background when older than a few seconds, a changed response is reported to `requestCache.onChange`
+	 */
+	swr?: true;
+};
+
+type RawResponse = { status: number; statusText: string; headers: Headers; etag: string | null; body: string };
+type Entry = {
+	/** The parsed response, only parsed when something asks for it as TIDAL parses its own */
+	value?: Promise<unknown>;
+	/** The response as received, only for entries filled by a fetch through the hook, which can be served to TIDAL */
+	raw?: Promise<RawResponse>;
+	time: number;
+	revalidating?: true;
 };
 
 const rules = new Set<RequestCacheRule>();
-const entries = new Map<string, Promise<unknown>>();
+const entries = new Map<string, Entry>();
 /** In-flight entries that may fill extraUrls, by path */
 const pending = new Map<Promise<unknown>, string>();
+const changeListeners = new Set<(url: string) => void>();
+
+/** A response served from the cache is re-fetched in the background when older than this */
+const revalidateAfterMs = 5_000;
+/** and not served at all once older than this */
+const maxServeAgeMs = 10 * 60_000;
+const maxEntries = 10_000;
 
 // Both hosts serve the same v1 api, TIDAL uses api. and Luna desktop.
 const tidalHosts = new Set(["api.tidal.com", "desktop.tidal.com"]);
@@ -21,40 +43,104 @@ const keyOf = (url: URL) => {
 	return `${pathOf(url)}?${search}`;
 };
 
-const matches = (href: string) => {
-	for (const rule of rules) if (rule.pattern.test(href)) return true;
-	return false;
+const parse = (raw: RawResponse) => {
+	if (raw.status >= 200 && raw.status < 300) return JSON.parse(raw.body);
+	if (raw.status === 403 || raw.status === 404) return undefined;
+	throw new Error(`${raw.status} ${raw.statusText}`);
+};
+const drop = (key: string, entry: Entry) => entries.get(key) === entry && entries.delete(key);
+const valueOf = (key: string, entry: Entry) => {
+	if (entry.value === undefined) {
+		entry.value = entry.raw!.then(parse);
+		entry.value.catch(() => drop(key, entry));
+	}
+	return entry.value;
 };
 
-const store = (url: URL, key: string, value: Promise<unknown>) => {
-	entries.set(key, value);
+const store = (url: URL, key: string, value: Promise<unknown> | undefined, raw?: Promise<RawResponse>) => {
+	const entry: Entry = { value, raw, time: Date.now() };
+	(raw ?? value)!.catch(() => drop(key, entry));
+	// Re-inserted so the map stays in age order for eviction
+	entries.delete(key);
+	entries.set(key, entry);
+	if (entries.size > maxEntries) entries.delete(entries.keys().next().value!);
 	const aliasRules: Required<RequestCacheRule>[] = [];
 	for (const rule of rules) if (rule.extraUrls !== undefined && rule.pattern.test(url.href)) aliasRules.push(<Required<RequestCacheRule>>rule);
-	if (aliasRules.length !== 0) pending.set(value, pathOf(url));
-	value
+	if (aliasRules.length === 0) return entry;
+	const resolving = valueOf(key, entry);
+	pending.set(resolving, pathOf(url));
+	resolving
 		.then(
 			(resolved) => {
 				for (const rule of aliasRules) {
 					for (const extra of rule.extraUrls(url, resolved)) {
 						const extraKey = keyOf(new URL(extra));
-						if (!entries.has(extraKey)) entries.set(extraKey, value);
+						if (!entries.has(extraKey)) entries.set(extraKey, entry);
 					}
 				}
 			},
-			() => entries.get(key) === value && entries.delete(key),
+			() => {},
 		)
-		.finally(() => pending.delete(value));
-	return value;
+		.finally(() => pending.delete(resolving));
+	return entry;
+};
+
+const readRaw = async (res: Response): Promise<RawResponse> => {
+	// Cloned synchronously, before the caller's handlers can read the body
+	const clone = res.clone();
+	return { status: res.status, statusText: res.statusText, headers: res.headers, etag: res.headers.get("etag"), body: await clone.text() };
+};
+// Some apis (openapi playlist items) return the same json with keys in another order
+const sortedKeys = (_: string, value: unknown) => {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+	const sorted: Record<string, unknown> = {};
+	for (const key of Object.keys(value).sort()) sorted[key] = (<Record<string, unknown>>value)[key];
+	return sorted;
+};
+const sameJson = (a: string, b: string) => {
+	try {
+		return JSON.stringify(JSON.parse(a), sortedKeys) === JSON.stringify(JSON.parse(b), sortedKeys);
+	} catch {
+		return false;
+	}
+};
+const sameResponse = (a: RawResponse, b: RawResponse) =>
+	a.status === b.status && ((a.etag !== null && a.etag === b.etag) || a.body === b.body || sameJson(a.body, b.body));
+
+// Path segments and query values that name an item (numeric, uuid and hex mix ids), they have a digit unlike v1 or playlists
+const idLike = /^(?=.*\d)[\w-]{3,}$/;
+/** Drop every entry mentioning an item a mutation of `url` changes, e.g. a playlist on edit, a user's collection on (un)favorite */
+const invalidate = (url: URL) => {
+	const ids: string[] = [];
+	for (const part of url.pathname.split("/")) if (idLike.test(part)) ids.push(part);
+	for (const value of url.searchParams.values()) for (const part of value.split(",")) if (idLike.test(part)) ids.push(part);
+	if (ids.length === 0) return;
+	for (const key of entries.keys()) {
+		for (const id of ids) {
+			if (!key.includes(id)) continue;
+			entries.delete(key);
+			break;
+		}
+	}
 };
 
 /**
  * Cache of request responses shared by everything in the page.
- * TIDAL's own requests are never served from it, but responses to ones matching a registered rule fill it.
+ * Responses to requests matching a registered rule fill it. TIDAL's own requests are only served from it for `swr` rules.
  */
 export const requestCache = {
 	register(unloads: LunaUnloads, rule: RequestCacheRule) {
 		rules.add(rule);
 		unloads.add(() => rules.delete(rule));
+	},
+	/** Calls `listener` with the url of a cached response that changed when re-fetched in the background */
+	onChange(unloads: LunaUnloads, listener: (url: string) => void) {
+		changeListeners.add(listener);
+		unloads.add(() => changeListeners.delete(listener));
+	},
+	/** Drops every entry, e.g. on logout */
+	clear() {
+		entries.clear();
 	},
 	/**
 	 * The cached or in-flight value for `url`, otherwise the result of `fetcher` which is cached.
@@ -63,41 +149,108 @@ export const requestCache = {
 	get<T>(url: string, fetcher: () => Promise<T | undefined>): Promise<T | undefined> {
 		const parsed = new URL(url);
 		const key = keyOf(parsed);
-		const entry = <Promise<T | undefined> | undefined>entries.get(key);
+		const entry = entries.get(key);
 		// A failed entry is already deleted when this runs (e.g. TIDAL aborted its request), so this fetches
-		if (entry !== undefined) return entry.catch(() => requestCache.get(url, fetcher));
+		if (entry !== undefined) return (<Promise<T | undefined>>valueOf(key, entry)).catch(() => requestCache.get(url, fetcher));
 		// A request in flight for the same path may answer this one through extraUrls (e.g. playbackinfo at another quality)
 		const path = pathOf(parsed);
 		const samePath: Promise<unknown>[] = [];
-		for (const [value, pendingPath] of pending) if (pendingPath === path) samePath.push(value);
+		pending.forEach((pendingPath, value) => pendingPath === path && samePath.push(value));
 		if (samePath.length !== 0) return Promise.allSettled(samePath).then(() => requestCache.get(url, fetcher));
 		// Run fetcher after the entry is stored so the fetch hook sees its own request as cached
-		return <Promise<T | undefined>>store(parsed, key, Promise.resolve().then(fetcher));
+		return <Promise<T | undefined>>store(parsed, key, Promise.resolve().then(fetcher)).value;
 	},
 };
 
 const fetch = globalThis.fetch;
-globalThis.fetch = function (input, init) {
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+
+const fill = (url: URL, key: string, input: FetchInput, init: FetchInit) => {
 	const res = fetch.call(globalThis, input, init);
 	try {
-		const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-		if (rules.size === 0 || method.toUpperCase() !== "GET") return res;
-		const url = new URL(input instanceof Request ? input.url : String(input), location.href);
-		if (!matches(url.href)) return res;
-		const key = keyOf(url);
-		if (entries.has(key)) return res;
 		// Attached before the caller's handlers, so the clone is taken before the body is read
-		store(
-			url,
-			key,
-			res.then((r) => {
-				if (r.ok) return r.clone().json();
-				if (r.status === 403 || r.status === 404) return undefined;
-				throw new Error(`${r.status} ${r.statusText}`);
-			}),
-		);
+		store(url, key, undefined, res.then(readRaw));
 	} catch {
 		// Never break a request because of caching
 	}
 	return res;
+};
+
+const revalidate = (url: URL, key: string, entry: Entry, input: FetchInput, init: FetchInit) => {
+	// Without the caller's signal, the caller going away shouldn't drop the entry
+	const request = new Request(input, { ...init, signal: null });
+	entry.revalidating = true;
+	fetch
+		.call(globalThis, request)
+		.then(readRaw)
+		.then(async (raw) => {
+			if (entries.get(key) !== entry) return;
+			const old = await entry.raw!;
+			if (raw.status === 304 || sameResponse(old, raw)) return void (entry.time = Date.now());
+			if (raw.status !== 200) return void entries.delete(key);
+			store(url, key, undefined, Promise.resolve(raw));
+			for (const listener of changeListeners) listener(url.href);
+		})
+		.catch(() => drop(key, entry))
+		.finally(() => delete entry.revalidating);
+};
+
+/** A response for a TIDAL request from an `swr` entry, if there is one to serve */
+const fromCache = (url: URL, key: string, input: FetchInput, init: FetchInit): Promise<Response> | undefined => {
+	const cacheMode = init?.cache ?? (input instanceof Request ? input.cache : "default");
+	if (cacheMode === "no-store" || cacheMode === "no-cache" || cacheMode === "reload") return;
+	const entry = entries.get(key);
+	if (entry?.raw === undefined) return;
+	const age = Date.now() - entry.time;
+	if (age > maxServeAgeMs) return;
+	if (age > revalidateAfterMs && !entry.revalidating) revalidate(url, key, entry, input, init);
+	const fallback = () => fill(url, key, input, init);
+	return entry.raw.then((raw) => {
+		if (raw.status !== 200) return fallback();
+		const res = new Response(raw.body, { status: raw.status, statusText: raw.statusText, headers: raw.headers });
+		Object.defineProperty(res, "url", { value: url.href });
+		return res;
+	}, fallback);
+};
+
+/** The response for a request the cache handles, `undefined` for the rest */
+const cachedFetch = (input: FetchInput, init: FetchInit): Promise<Response> | undefined => {
+	if (rules.size === 0) return;
+	const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+	const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+	if (method !== "GET") {
+		if (url.hostname !== "tidal.com" && !url.hostname.endsWith(".tidal.com")) return;
+		// Before and after, so nothing fetched while the mutation is in flight stays cached
+		invalidate(url);
+		const res = fetch.call(globalThis, input, init);
+		res.finally(() => invalidate(url)).catch(() => {});
+		return res;
+	}
+	const href = url.href;
+	let matched = false;
+	let swr = false;
+	for (const rule of rules) {
+		if (!rule.pattern.test(href)) continue;
+		matched = true;
+		if (rule.swr) {
+			swr = true;
+			break;
+		}
+	}
+	if (!matched) return;
+	const key = keyOf(url);
+	// An swr entry not served (stale, uncacheable or filled by a Luna fetcher) is replaced, other entries are kept
+	if (swr) return fromCache(url, key, input, init) ?? fill(url, key, input, init);
+	return entries.has(key) ? undefined : fill(url, key, input, init);
+};
+
+globalThis.fetch = function (input: FetchInput, init?: FetchInit) {
+	let res: Promise<Response> | undefined;
+	try {
+		res = cachedFetch(input, init);
+	} catch {
+		// Never break a request because of caching
+	}
+	return res ?? fetch.call(globalThis, input, init);
 };
