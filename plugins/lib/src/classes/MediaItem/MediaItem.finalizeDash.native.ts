@@ -1,4 +1,15 @@
-import { ALL_FORMATS, BufferSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output } from "mediabunny";
+import {
+	ALL_FORMATS,
+	BufferSource,
+	BufferTarget,
+	Conversion,
+	FilePathSource,
+	FlacOutputFormat,
+	Input,
+	Mp4OutputFormat,
+	Output,
+	type MetadataTags,
+} from "mediabunny";
 import { ByteVector, File as TagFile, Picture, PictureType } from "node-taglib-sharp";
 
 import { readFile, rename, writeFile } from "fs/promises";
@@ -10,6 +21,7 @@ import type { MetaTags } from "./MediaItem.tags";
  * fragmented MP4 that most taggers (and some players) can't handle. This module remuxes
  * the download into a standard progressive MP4 - preserving the AAC encoder delay
  * (edit list) so the audio stays sample-identical - and then writes the tags.
+ * Lossless streams (FLAC in MP4) are remuxed into a native FLAC file instead.
  */
 
 // #region MP4 box helpers
@@ -210,7 +222,7 @@ const yearFrom = (tags: MetaTags["tags"]): number | undefined => {
 	return undefined;
 };
 
-const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<void> => {
+const writeTags = async (path: string, mimeType: string, { tags, coverUrl }: MetaTags): Promise<void> => {
 	// Fetch the cover before opening the file so a network failure can't interrupt the save
 	let cover: Picture | undefined;
 	if (coverUrl !== undefined) {
@@ -226,7 +238,8 @@ const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<vo
 
 	let file: TagFile | undefined;
 	try {
-		file = TagFile.createFromPath(path);
+		// Pick the reader by container, not by the file extension the caller chose
+		file = TagFile.createFromPath(path, mimeType);
 		const tag = file.tag;
 
 		const title = first(tags.title);
@@ -274,20 +287,61 @@ const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<vo
 };
 // #endregion
 
-/** Remux a raw DASH (fragmented MP4) download into a standard progressive MP4 and tag it */
+/** Remux a raw DASH (fragmented MP4) download into a standard progressive MP4 (or native FLAC) and tag it */
 export const finalizeDashDownload = async (path: string, tags?: MetaTags): Promise<void> => {
 	const source = await readFile(path);
 
 	const input = new Input({ formats: ALL_FORMATS, source: new BufferSource(source) });
-	const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });
+	const isFlac = (await input.getPrimaryAudioTrack())?.codec === "flac";
+	const output = new Output({ format: isFlac ? new FlacOutputFormat() : new Mp4OutputFormat(), target: new BufferTarget() });
 	await (await Conversion.init({ input, output })).execute();
 
-	const muxed = patchMoov(Buffer.from(output.target.buffer!), readMediaTime(source));
+	const remuxed = Buffer.from(output.target.buffer!);
+	const muxed = isFlac ? remuxed : patchMoov(remuxed, readMediaTime(source));
 
 	// Replace the raw download only once the remux fully succeeded
 	const tmpPath = `${path}.tmp`;
 	await writeFile(tmpPath, muxed);
 	await rename(tmpPath, path);
 
-	if (tags !== undefined) await writeTags(path, tags);
+	if (tags !== undefined) await writeTags(path, isFlac ? "taglib/flac" : "taglib/m4a", tags);
+};
+
+/** Tags written by mediabunny while remuxing, node-taglib-sharp can't tag its MP4 output (no udta box) */
+const toMetadataTags = async ({ tags, coverUrl }: MetaTags): Promise<MetadataTags> => {
+	const metadata: MetadataTags = {};
+	const title = first(tags.title);
+	if (title !== undefined) metadata.title = title;
+	const artists = asArray(tags.artist);
+	if (artists.length > 0) metadata.artist = artists.join(", ");
+	const date = first(tags.date);
+	if (date !== undefined && !isNaN(Date.parse(date))) metadata.date = new Date(date);
+	if (coverUrl !== undefined) {
+		try {
+			const res = await fetch(coverUrl);
+			if (res.ok) {
+				const mimeType = res.headers.get("content-type") ?? "image/jpeg";
+				metadata.images = [{ data: new Uint8Array(await res.arrayBuffer()), mimeType, kind: "coverFront" }];
+			}
+		} catch {}
+	}
+	return metadata;
+};
+
+/** Remux a raw HLS (MPEG-TS) video download into a standard MP4 with tags */
+export const finalizeHlsDownload = async (path: string, tags?: MetaTags): Promise<void> => {
+	const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
+	// Native code has no WritableStream, so FilePathTarget can't be used here
+	const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });
+	try {
+		const metadataTags = tags !== undefined ? await toMetadataTags(tags) : undefined;
+		await (await Conversion.init({ input, output, tags: metadataTags })).execute();
+	} finally {
+		input.dispose();
+	}
+
+	// Replace the raw download only once the remux fully succeeded
+	const tmpPath = `${path}.tmp`;
+	await writeFile(tmpPath, Buffer.from(output.target.buffer!));
+	await rename(tmpPath, path);
 };

@@ -141,7 +141,7 @@ export const InstallFromUrl = React.memo(() => {
 			fullWidth
 			value={value}
 			label={err ?? success ?? "Install from URL"}
-			onInput={onInput}
+			onChange={onInput}
 		/>
 	);
 });

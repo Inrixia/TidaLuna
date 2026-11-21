@@ -1,21 +1,6 @@
-/** `GET openapi.tidal.com/v2/tracks/{id}?include=lyrics`, only the parts used for lyrics */
-export interface TApiTrackWithLyrics {
-	included?: TApiLyrics[];
-}
+import type { components } from "@tidal-music/api";
 
-export interface TApiLyrics {
-	id: string;
-	type: "lyrics";
-	attributes: {
-		text?: string;
-		lrcText?: string;
-		direction?: "LEFT_TO_RIGHT" | "RIGHT_TO_LEFT";
-		technicalStatus?: string;
-		provider?: {
-			source: string;
-			name?: string;
-			commonTrackId?: string;
-			lyricsId?: string;
-		};
-	};
-}
+/** `GET /tracks/{id}?include=lyrics` from TIDAL's OpenAPI, the lyrics are in `included` */
+export type TApiTrackWithLyrics = components["schemas"]["Tracks_Single_Resource_Data_Document"];
+/** Lyrics of a track from TIDAL's OpenAPI */
+export type TApiLyrics = components["schemas"]["Lyrics_Resource_Object"];

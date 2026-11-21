@@ -1,4 +1,3 @@
-import { ThemeProvider } from "@mui/material/styles";
 import { ConfirmProvider } from "material-ui-confirm";
 import React from "react";
 import semverGt from "semver/functions/gt";
@@ -9,14 +8,15 @@ import { ContextMenu, ipcRenderer } from "@luna/lib";
 import { Page } from "./classes/Page";
 
 import { confirm } from "./helpers/confirm";
-import { lunaMuiTheme } from "./lunaTheme";
+import { MuiTheme, lunaMuiTheme, LunaMuiThemeProvider } from "./lunaTheme";
+export type { MuiThemeOverride } from "./lunaTheme";
 import { currentSettingsTab, LunaPage } from "./SettingsPage";
 export { currentSettingsTab, SettingsTabs } from "./SettingsPage";
 export type { SettingsTabContent, SettingsTabDefinition, SettingsTabOverride, SettingsTabProps } from "./SettingsPage";
 import { storeUrls } from "./SettingsPage/PluginStoreTab";
 import { fetchReleases } from "./SettingsPage/SettingsTab/LunaClientUpdate";
 
-import { pkg } from "plugins/lib.native/src/index.native";
+import { pkg } from "../../lib.native/src/index.native";
 import { unloads } from "./index.safe";
 import "./logoutConfirm";
 
@@ -24,17 +24,17 @@ export * from "./classes";
 export * from "./components";
 export * from "./helpers";
 
-export { lunaMuiTheme, unloads };
+export { MuiTheme, lunaMuiTheme, LunaMuiThemeProvider, unloads };
 
 /** The Luna Settings page, plugins can restyle it via settingsPage.pageStyles */
 export const settingsPage = Page.register(
 	"LunaSettings",
 	unloads,
-	<ThemeProvider theme={lunaMuiTheme}>
+	<LunaMuiThemeProvider>
 		<ConfirmProvider>
 			<LunaPage />
 		</ConfirmProvider>
-	</ThemeProvider>,
+	</LunaMuiThemeProvider>,
 );
 // thx @n1ckoates re CoverTheme <3
 settingsPage.pageStyles.background = `
