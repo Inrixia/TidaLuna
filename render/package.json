@@ -11,7 +11,7 @@
 	"dependencies": {
 		"@uwu/quartz": "^1.5.3",
 		"idb-keyval": "^6.3.0",
-		"spitroast": "^2.1.6"
+		"spitroast": "^2.2.0"
 	},
 	"devDependencies": {
 		"oby": "^15.1.2",
