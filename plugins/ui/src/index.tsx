@@ -13,7 +13,7 @@ export type { MuiThemeOverride } from "./lunaTheme";
 import { currentSettingsTab, LunaPage } from "./SettingsPage";
 export { currentSettingsTab, SettingsTabs } from "./SettingsPage";
 export type { SettingsTabContent, SettingsTabDefinition, SettingsTabOverride, SettingsTabProps } from "./SettingsPage";
-import { addToStores } from "./SettingsPage/PluginStoreTab";
+import { addToStores, normalizeStoreUrl, storeUrls } from "./SettingsPage/PluginStoreTab";
 import { fetchReleases } from "./SettingsPage/SettingsTab/LunaClientUpdate";
 
 import { pkg } from "../../lib.native/src/index.native";
@@ -55,7 +55,7 @@ ContextMenu.onOpen(unloads, async ({ event, contextMenu }) => {
 	}
 });
 
-ipcRenderer.onOpenUrl(unloads, (reqUrl) => {
+ipcRenderer.onOpenUrl(unloads, async (reqUrl) => {
 	const url = URL.parse(reqUrl);
 	if (url?.protocol !== "tidaluna:") return;
 	// Newer Chromium parses tidaluna://settings/store as host "settings" + path "/store", older as path "//settings/store"
@@ -64,10 +64,19 @@ ipcRenderer.onOpenUrl(unloads, (reqUrl) => {
 	switch (route) {
 		case "settings/store":
 			currentSettingsTab._ = "Plugin Store";
+			settingsPage.open();
 			for (const [key, value] of url.searchParams) {
-				if (key.toLowerCase() === "installfromurl") addToStores(value);
+				if (key.toLowerCase() !== "installfromurl" || storeUrls.includes(normalizeStoreUrl(value))) continue;
+				// Any web page can open this link, so ask before adding a store
+				const res = await confirm({
+					title: "Add plugin store?",
+					description: value,
+					confirmationText: "Add store",
+					cancellationText: "Cancel",
+				});
+				if (res.confirmed) addToStores(value);
 			}
-			break;
+			return;
 		case "settings/plugins":
 			currentSettingsTab._ = "Plugins";
 			break;
