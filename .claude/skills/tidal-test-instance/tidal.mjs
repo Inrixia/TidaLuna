@@ -142,6 +142,15 @@ const session = async () => {
 	}
 	throw new Error("TIDAL's session didn't initialize within 30s");
 };
+/** Right after a load the session reports initialized with `userId` still null, the login follows a moment later */
+const loggedInSession = async () => {
+	for (let tries = 0; tries < 20; tries++) {
+		const restored = await session();
+		if (restored.userId !== null) return restored;
+		await sleep(500);
+	}
+	return await session();
+};
 
 // TIDAL's login (@tidal-music/auth) is only in localStorage, so copying the daily client's Local Storage copies it. Only that: IndexedDB holds Luna's plugins and settings too.
 // Copied file by file while the daily client may run: readFile can read its open leveldb files where copyFile can't, LOCK stays locked and isn't needed.
@@ -242,7 +251,7 @@ switch (command) {
 			if ((await evalInPage(`(${useCopiedLogin})()`)).value === true) {
 				await evaluate("Page.reload");
 				await launch();
-				({ userId } = await session());
+				({ userId } = await loggedInSession());
 			}
 		}
 		console.log(`Instance ${instance} running, Luna loaded, ${userId === null ? "logged out" : `logged in as user ${userId}`} (CDP port ${port})`);
