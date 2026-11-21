@@ -25,8 +25,8 @@ export const lunaNativePlugin = (pluginEntryPoint: string, pkgName: string): Plu
 						moduleContents: (module: string) => `
 							module.exports = luna.modules["${module}"];
 							if (module.exports === undefined) throw new Error("Cannot find native module ${module} in luna.modules");
-							// Super icky, but lmao it works...
-							luna.tidalWindow?.webContents?.send("__Luna.LunaPlugin.addDependant", "${module}", "${pkgName}")
+							// Register this plugin as a dependant of the native module's plugin (see LunaPlugin "__Luna.LunaPlugin.addDependant")
+							luna.sendToRender("__Luna.LunaPlugin.addDependant", "${module}", "${pkgName}");
 						`,
 						// Override externals as we dont want to dyanmic resolve electron or ./original.asar etc
 						externals: ["@luna/*"],
