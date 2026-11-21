@@ -3,8 +3,7 @@ import { moduleAlias } from "./moduleAlias";
 
 import type { NativeModuleInfo } from ".";
 
-import { existsSync, readFileSync } from "fs";
-import { writeFile } from "fs/promises";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 
 let trustStore: Map<string, boolean>;
@@ -35,9 +34,8 @@ const saveTrustStore = () => {
 		const jsonString = JSON.stringify(Array.from(trustStore.entries()));
 		const encryptedBuffer = safeStorage.encryptString(jsonString);
 		const STORE_PATH = path.join(app.getPath("userData"), "luna-trust-store.enc");
-		writeFile(STORE_PATH, encryptedBuffer).catch((e) => {
-			console.error(saveErr, e);
-		});
+		// Sync: several prompts can answer back to back, and overlapping async writes to one file can corrupt it
+		writeFileSync(STORE_PATH, encryptedBuffer);
 	} catch (e) {
 		console.error(saveErr, e);
 	}
