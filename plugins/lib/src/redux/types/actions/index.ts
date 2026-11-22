@@ -1246,7 +1246,7 @@ export interface ActionPayloads {
 	"player/ERROR": unknown;
 	"player/FORCE_AUTOMATIC_PROGRESSION": unknown;
 	"player/PRELOAD_ITEM": MediaProduct;
-	"player/PRELOAD_NEXT_ITEM": MediaProduct;
+	"player/PRELOAD_NEXT_ITEM": undefined;
 	"player/PRELOAD_SUCCESS": undefined;
 	"player/SET_ACTIVE_DEVICE": unknown;
 	"player/SET_ACTIVE_DEVICE_SUCCESS": unknown;

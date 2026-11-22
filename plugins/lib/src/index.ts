@@ -13,6 +13,7 @@ import { unloads } from "./index.safe";
 export { setWindowTitle } from "./windowTitle";
 
 import "./navigation";
+import "./preloadNext";
 
 export { errSignal } from "./index.safe";
 
