@@ -60,7 +60,8 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 		try {
 			return await exports[exportName](...args);
 		} catch (err: any) {
-			err.cause = `[Luna.native] (${fileName}).${exportName}`;
+			// Native code can throw anything, and setting a property on a primitive throws in its place
+			if (typeof err === "object" && err !== null) err.cause = `[Luna.native] (${fileName}).${exportName}`;
 			throw err;
 		}
 	});
