@@ -217,6 +217,11 @@ electron.app.whenReady().then(async () => {
 });
 
 // #region Proxied BrowserWindow
+// TIDAL builds its window again after a renderer crash, and on macOS when reopened with no window left.
+// What Luna registers outside the window (session preload, app listeners, console) must not pile up on each one
+let sessionPreloadRegistered = false;
+const nativeConsole = console;
+
 const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 	construct(target, args) {
 		const options = (args[0] ??= {});
@@ -238,7 +243,8 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			if (platformIsLinux) {
 				// Linux (tidal-hifi): Replace preload
 				options.webPreferences.preload = path.join(bundleDir, "preload.mjs");
-			} else {
+			} else if (!sessionPreloadRegistered) {
+				sessionPreloadRegistered = true;
 				// Windows/macOS (TIDAL official): Add Luna preload via session
 				const lunaPreload = path.join(bundleDir, "preload.mjs");
 				if (typeof electron.session.defaultSession.registerPreloadScript === "function") {
@@ -352,14 +358,21 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		// #region Open from link
 		// MacOS
 		electron.app.setAsDefaultProtocolClient("tidaLuna");
-		electron.app.on("open-url", (_, url) => window.webContents.send("__Luna.openUrl", url));
+		const onOpenUrl = (_: unknown, url: string) => window.webContents.send("__Luna.openUrl", url);
+		electron.app.on("open-url", onOpenUrl);
 		// Windows/Linux
-		electron.app.on("second-instance", (_, argv) => window.webContents.send("__Luna.openUrl", argv[argv.length - 1]));
+		const onSecondInstance = (_: unknown, argv: string[]) => window.webContents.send("__Luna.openUrl", argv[argv.length - 1]);
+		electron.app.on("second-instance", onSecondInstance);
+		// Sending to a destroyed window throws, the window that replaces this one adds its own listeners
+		window.on("closed", () => {
+			electron.app.off("open-url", onOpenUrl);
+			electron.app.off("second-instance", onSecondInstance);
+		});
 		// #endregion
 
 		// #region Native console logging
 		// Overload console logging to forward to dev-tools
-		const _console = console;
+		const _console = nativeConsole;
 		const consolePrefix = "[Luna.native]";
 		let rendererAlive = true;
 		window.webContents.on("render-process-gone", (_, details) => {
