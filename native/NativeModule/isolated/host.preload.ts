@@ -45,6 +45,9 @@ ipcRenderer.on("__LunaNativeHost.ping", () => ipcRenderer.send("__LunaNativeHost
 // Runs in the main world, passed there as source text: must not use anything outside its own body.
 const loadInMainWorld = (fileName: string, code: string, modules: Record<string, HostModule>) => {
 	const host: typeof bridge = (globalThis as any).__lunaNativeHost;
+	// Taken before the code runs: it could replace them, and its own failure would then be told wrong
+	const toText = String;
+	const ErrorType = Error;
 
 	const loaded: Record<string, Record<string, unknown>> = {};
 	for (const moduleName in modules) {
@@ -92,7 +95,7 @@ const loadInMainWorld = (fileName: string, code: string, modules: Record<string,
 	} catch (err) {
 		// A throw here would reach the preload without its message, and not as the code's own
 		try {
-			return String(err instanceof Error ? (err.stack ?? err.message) : err);
+			return toText(err instanceof ErrorType ? (err.stack ?? err.message) : err);
 		} catch {
 			return "threw a value that cannot be shown";
 		}
