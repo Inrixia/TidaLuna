@@ -2,6 +2,7 @@ import type { LunaUnloads } from "@luna/core";
 import { redux } from "@luna/lib";
 
 import { store as obyStore } from "oby";
+import { startTransition } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { unloads } from "../index.safe";
@@ -73,7 +74,9 @@ export class Page {
 		if (this.component === undefined || this.reactRoot !== undefined) return;
 		this.reactRoot = createRoot(this.root);
 		this.unloads.add(this.reactRoot.unmount.bind(this.reactRoot));
-		this.reactRoot.render(this.component);
+		// As a transition React renders in slices, yielding to the browser between them, instead of one long task
+		const { component, reactRoot } = this;
+		startTransition(() => reactRoot.render(component));
 	}
 
 	static {

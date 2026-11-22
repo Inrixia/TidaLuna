@@ -20,7 +20,8 @@ import { ThemesTab } from "./ThemesTab";
 export { currentSettingsTab, SettingsTabs } from "./tabs";
 export type { SettingsTab as SettingsTabDefinition, SettingsTabContent, SettingsTabOverride, SettingsTabProps } from "./tabs";
 
-addBuiltInSettingsTab({ id: "Plugins", label: "Plugins", icon: <ExtensionIcon />, order: 100, content: <PluginsTab /> });
+// keepAlive: the most used tab (plugin settings), so switching back to it doesn't re-render every plugin's settings
+addBuiltInSettingsTab({ id: "Plugins", label: "Plugins", icon: <ExtensionIcon />, order: 100, content: <PluginsTab />, keepAlive: true });
 addBuiltInSettingsTab({ id: "Plugin Store", label: "Plugin Store", icon: <StorefrontIcon />, order: 200, content: <PluginStoreTab /> });
 addBuiltInSettingsTab({ id: "Themes", label: "Themes", icon: <PaletteIcon />, order: 300, content: <ThemesTab /> });
 addBuiltInSettingsTab({ id: "Settings", label: "Settings", icon: <SettingsIcon />, order: 400, content: <SettingsTab /> });
@@ -61,6 +62,8 @@ export const LunaPage = React.memo(() => {
 	const tabs = SettingsTabs.list().filter((tab) => !tab.hidden);
 	// If the selected tab was removed or hidden fall back to the first tab
 	const selected = tabs.some((tab) => tab.id === currentTab) ? currentTab : tabs[0]?.id;
+	// The tab bar follows selected straight away, content renders as an interruptible transition so a heavy tab doesn't drop frames
+	const shown = React.useDeferredValue(selected);
 	// Keep currentSettingsTab (and onChange listeners) in sync with the fallback
 	React.useEffect(() => {
 		if (selected !== undefined && selected !== currentTab) currentSettingsTab._ = selected;
@@ -74,7 +77,7 @@ export const LunaPage = React.memo(() => {
 				))}
 			</Tabs>
 			{tabs.map((tab) => (
-				<LunaTabPage key={tab.id} tab={tab} active={tab.id === selected} />
+				<LunaTabPage key={tab.id} tab={tab} active={tab.id === shown} />
 			))}
 		</Container>
 	);
