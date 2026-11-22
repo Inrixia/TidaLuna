@@ -97,7 +97,10 @@ const startHost = async (moduleInfo: NativeModuleInfo, load: number): Promise<Ho
 
 const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Promise<Host> => {
 	// Read from the default export: a named import of something this Electron lacks would stop the injector from loading
-	if (typeof electron.WebContentsView !== "function") throw new Error(`Isolated native code ('${fileName}') needs Electron 30 or newer`);
+	// By version too: Electron 29 has a class of this name that ignores webPreferences, so the preload would never run
+	if (typeof electron.WebContentsView !== "function" || !(parseInt(process.versions.electron) >= 30)) {
+		throw new Error(`Isolated native code ('${fileName}') needs Electron 30 or newer`);
+	}
 
 	const session = await getHostSession();
 	const view = new electron.WebContentsView({
