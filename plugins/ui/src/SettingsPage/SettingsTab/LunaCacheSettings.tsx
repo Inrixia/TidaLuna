@@ -26,18 +26,22 @@ export const LunaCacheSettings = React.memo(() => {
 	// A lower limit deletes tracks at once, so it is applied when typing stops (Enter, leaving the field, or a pause), not per keystroke:
 	// typing "100" would otherwise first set 1 GB
 	const [draftGb, setDraftGb] = React.useState<number>();
+	const pendingGb = React.useRef<number>(undefined);
 	const applyTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
-	const applyLimit = React.useCallback((gb: number | undefined) => {
+	const applyLimit = React.useCallback(() => {
 		clearTimeout(applyTimer.current);
+		const gb = pendingGb.current;
 		if (gb === undefined) return;
+		pendingGb.current = undefined;
 		AudioCache.setLimit(Math.max(0, gb) * GB)
 			.then(() => AudioCache.stats())
 			.then((stats) => {
 				setAudio(stats);
-				setDraftGb(undefined);
+				if (pendingGb.current === undefined) setDraftGb(undefined);
 			});
 	}, []);
-	React.useEffect(() => () => clearTimeout(applyTimer.current), []);
+	// Leaving the page applies what was typed
+	React.useEffect(() => applyLimit, []);
 
 	const limitDesc =
 		audio &&
@@ -51,11 +55,12 @@ export const LunaCacheSettings = React.memo(() => {
 				value={draftGb ?? (audio === undefined ? 0 : Math.round((audio.userLimit ?? 128 * GB) / GB))}
 				onNumber={(gb) => {
 					setDraftGb(gb);
+					pendingGb.current = gb;
 					clearTimeout(applyTimer.current);
-					applyTimer.current = setTimeout(() => applyLimit(gb), 2000);
+					applyTimer.current = setTimeout(applyLimit, 2000);
 				}}
-				onBlur={() => applyLimit(draftGb)}
-				onKeyDown={(e) => e.key === "Enter" && applyLimit(draftGb)}
+				onBlur={applyLimit}
+				onKeyDown={(e) => e.key === "Enter" && applyLimit()}
 			/>
 			<LunaButtonSetting title="Open audio cache folder" desc={audio?.path} onClick={() => AudioCache.openFolder()} children="Open" />
 			{audio && (
