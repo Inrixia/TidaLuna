@@ -213,20 +213,32 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
 };
 
 /**
+ * Numbers a load of `fileName`. To be called as soon as the load is asked for, before anything is awaited:
+ * of two loads of one file the one numbered last wins, whichever finishes first.
+ */
+export const isolatedLoadAsked = (fileName: string): number => {
+	const load = ++loads;
+	asked.set(fileName, load);
+	return load;
+};
+
+/**
  * Runs native code in its own sandboxed renderer process instead of the main process. The code gets no Node or Electron:
  * `require` only knows the modules in ./syncModules.ts, everything else is what a web page has, without network.
  * The process is identified by its webContents, so nothing it sends can make it act as another module.
  * Loading a `fileName` again stops the process that ran it before.
  *
+ * @param load Its number, from isolatedLoadAsked
  * @param fallback Loads the code some other way if no host could load it. A load of the file asked for meanwhile still wins.
  */
 export const isolatedLoad = async (
 	moduleInfo: NativeModuleInfo,
+	load: number,
 	fallback?: (err: unknown) => Promise<NativeExports>,
 ): Promise<NativeExports> => {
 	const { fileName } = moduleInfo;
-	const load = ++loads;
-	asked.set(fileName, load);
+	// Asked for again while this load waited to start: the newer one may already be loading, and must not be outranked
+	if (asked.get(fileName) !== load) throw new LoadedAgain(fileName);
 	let host: Host;
 	try {
 		host = await startHost(moduleInfo, load);

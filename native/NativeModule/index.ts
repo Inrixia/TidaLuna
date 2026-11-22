@@ -9,7 +9,7 @@ import { ipcHandle } from "../ipc";
 import { createHash } from "crypto";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
-import { isIsolatedNative, isolatedLoad } from "./isolated";
+import { isIsolatedNative, isolatedLoad, isolatedLoadAsked } from "./isolated";
 import { secureLoad } from "./secureLoad";
 
 declare global {
@@ -46,6 +46,8 @@ const mainProcessFallback = (moduleInfo: NativeModuleInfo, parent?: Electron.Bro
 
 const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: string, code: string, url?: string) => {
 	const hash = createHash("sha256").update(code, "utf8").digest("hex");
+	// Before the first await, so loads of one file are numbered in the order they were asked for
+	const isolated = isIsolatedNative(fileName) ? isolatedLoadAsked(fileName) : undefined;
 
 	const moduleInfo: NativeModuleInfo = {
 		hash,
@@ -58,9 +60,10 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 	let exports;
 	try {
 		const parent = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-		exports = isIsolatedNative(fileName)
-			? await isolatedLoad(moduleInfo, mainProcessFallback(moduleInfo, parent))
-			: await secureLoad(moduleInfo, parent);
+		exports =
+			isolated !== undefined
+				? await isolatedLoad(moduleInfo, isolated, mainProcessFallback(moduleInfo, parent))
+				: await secureLoad(moduleInfo, parent);
 	} catch (err) {
 		const isDepricatedModule = Error.isError(err) && /Cannot use import statement outside a module/i.test(err.message);
 		if (isDepricatedModule) throw new Error("Plugin using deprecated unsafe native code! Please ask the plugin author to rebuild!");
