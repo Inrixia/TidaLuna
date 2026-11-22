@@ -119,57 +119,36 @@ MediaItem.onMediaTransition(unloads, async (item) => {
 	lastId = item.id;
 
 	try {
-		const [title, artists, album, image] = await Promise.all([
-			item.title(),
-			item.artists().then((a) => Promise.all(a)),
-			item.album(),
-			item.coverUrl({ res: "640" }),
-		]);
-
-		const artistStr = artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
-		const durationSec = safeNum(item.duration);
-		const currentSec = safeNum(PlayState.currentTime);
-
-		lastInfo = {
-			title: title ?? "Unknown",
-			artists: artistStr,
-			album: (await album?.title()) ?? "",
-			url: item.url ?? "",
-			image: image ?? "",
-			icon: image ?? "",
-			durationInSeconds: durationSec,
-			duration: formatTime(durationSec),
-			currentInSeconds: currentSec,
-			current: formatTime(currentSec),
-			status: PlayState.playing ? "playing" : "paused",
-			trackId: String(item.id),
-			playingFrom: "TIDAL",
-			favorite: false,
-			player: {
-				status: PlayState.playing ? "playing" : "paused",
-				shuffle: PlayState.shuffle ?? false,
-				repeat: mapRepeat(PlayState.repeatMode),
-			},
-		};
-
-		__ipcRenderer.send("update-info", lastInfo);
-		linuxTrace.log("Sent update-info:", title);
+		// TIDAL's own metadata first, title() and artists() wait on MusicBrainz which can take seconds
+		const tidalArtists = <string[]>(item.tidalItem.artists?.map((a) => a?.name).filter(Boolean) ?? []);
+		setInfo(item, item.tidalItem.title ?? "Unknown", tidalArtists.join(", ") || "Unknown", "", "");
 
 		// Window title
-		document.title = (await getTidalHifiSetting<boolean>("staticWindowTitle"))
-			? "TIDAL Hi-Fi"
-			: `${title ?? "Unknown"} - ${artistStr}`;
+		const staticTitle = await getTidalHifiSetting<boolean>("staticWindowTitle");
+		document.title = staticTitle ? "TIDAL Hi-Fi" : `${item.tidalItem.title ?? "Unknown"} - ${tidalArtists.join(", ") || "Unknown"}`;
 
 		// Skip artists
 		if (await getTidalHifiSetting<boolean>("skipArtists")) {
 			const skippedArtists = (await getTidalHifiSetting<string[]>("skippedArtists")) ?? [];
-			const artistNames = artists?.map((a) => a?.name).filter(Boolean) as string[];
-			if (artistNames.some((name) => skippedArtists.includes(name))) {
-				linuxTrace.log("Skipping artist:", artistNames);
+			if (tidalArtists.some((name) => skippedArtists.includes(name))) {
+				linuxTrace.log("Skipping artist:", tidalArtists);
 				PlayState.next();
 				return;
 			}
 		}
+
+		const [title, artists, album, image] = await Promise.all([
+			item.title(),
+			item.artists().then((a) => Promise.all(a)),
+			item.album().then((album) => album?.title()),
+			item.coverUrl({ res: "640" }),
+		]);
+		if (item.id !== lastId) return;
+
+		const artistStr = artists?.map((a) => a?.name).filter(Boolean).join(", ") || "Unknown";
+		setInfo(item, title ?? "Unknown", artistStr, album ?? "", image ?? "");
+		if (!staticTitle) document.title = `${title ?? "Unknown"} - ${artistStr}`;
+		linuxTrace.log("Sent update-info:", title);
 
 		// Desktop notification
 		if (await getTidalHifiSetting<boolean>("notifications")) {
@@ -179,6 +158,33 @@ MediaItem.onMediaTransition(unloads, async (item) => {
 		linuxTrace.err.withContext("tidalHifi.onMediaTransition")(err);
 	}
 });
+
+function setInfo(item: MediaItem, title: string, artistStr: string, album: string, image: string) {
+	const durationSec = safeNum(item.duration);
+	const currentSec = safeNum(PlayState.currentTime);
+	lastInfo = {
+		title,
+		artists: artistStr,
+		album,
+		url: item.url ?? "",
+		image,
+		icon: image,
+		durationInSeconds: durationSec,
+		duration: formatTime(durationSec),
+		currentInSeconds: currentSec,
+		current: formatTime(currentSec),
+		status: PlayState.playing ? "playing" : "paused",
+		trackId: String(item.id),
+		playingFrom: "TIDAL",
+		favorite: false,
+		player: {
+			status: PlayState.playing ? "playing" : "paused",
+			shuffle: PlayState.shuffle ?? false,
+			repeat: mapRepeat(PlayState.repeatMode),
+		},
+	};
+	__ipcRenderer.send("update-info", lastInfo);
+}
 
 PlayState.onState(unloads, (state) => {
 	if (!lastInfo.title) return;
