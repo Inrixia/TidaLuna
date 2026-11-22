@@ -5,7 +5,7 @@
 import electron from "electron";
 
 import { createHash } from "crypto";
-import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, utimes, writeFile } from "fs/promises";
 import path from "path";
 
 import { tidalMainHosts } from "./tidalHosts";
@@ -47,7 +47,15 @@ const keep = async (file: string, meta: Meta, body: ReadableStream<Uint8Array>) 
 		(json) => (<Meta>JSON.parse(json)).sha256,
 		() => undefined,
 	);
-	if (kept === meta.sha256) return;
+	// Unchanged: only marked as just seen, so the file's age stays when it was last loaded
+	if (kept === meta.sha256) {
+		try {
+			const now = new Date();
+			return await utimes(file, now, now);
+		} catch {
+			// The body is gone, written again below
+		}
+	}
 	await mkdir(cacheDir(), { recursive: true });
 	// Own part file per write, two loads of the same url can overlap
 	const part = `${file}.${++partId}.part`;
