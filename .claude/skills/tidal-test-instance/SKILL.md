@@ -26,6 +26,8 @@ node .claude/skills/tidal-test-instance/tidal.mjs [--instance <n>] <command>
 
 Instance `n` uses CDP port `9230 + n`, main-process inspector port `9330 + n` (instance 1: 9231, 9331). Main-process stdout/stderr go to `.tidal-test/<n>/main.log`: live native console (all native logs incl. before window exists, crashes), follow with `tail -f`. Page `logs` also shows native logs forwarded once window exists.
 
+Agents may use seperate instances if needed, prefer shared.
+
 ## DevTools Protocol
 
 All Chrome DevTools does goes over these ports. Full schema (types, descriptions, every domain/method/event): `curl http://127.0.0.1:9231/json/protocol` (page), `:9331/json/protocol` (main process, Node's subset: Runtime, Debugger, Profiler, HeapProfiler…). `cdp` calls any of it; put `<Domain>.enable` first when method needs it. Examples:
