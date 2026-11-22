@@ -7,6 +7,7 @@ import { resolveAbsolutePath } from "./helpers/resolvePath";
 
 import { findCreateActionFunction } from "./helpers/findCreateAction";
 import { getOrCreateLoadingContainer } from "./loadingContainer";
+import { applyTidalPatches } from "./tidalPatches";
 
 export const tidalModules: Record<string, object> = {};
 
@@ -144,6 +145,7 @@ for (const script of scripts) {
 							// Tidal react-dom/client
 							const createRootExport = /([\w$]+)\.createRoot\s*=(?!=)/;
 							code = code.replace(createRootExport, "$1.createRoot=globalThis.__lunaCreateRoot=");
+							code = applyTidalPatches(code);
 
 							const actionData = findCreateActionFunction(code);
 
