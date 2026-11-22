@@ -35,6 +35,12 @@ export const getOrCreateLoadingContainer = () => {
 		Object.assign(messageContainer.style, messageStyles);
 		loadingContainer.appendChild(messageContainer);
 
+		// TIDAL's own loading screen (removed when its app mounts) covers the page, show its logo above this, which is above it until then
+		const tidalLoaderStyle = document.createElement("style");
+		tidalLoaderStyle.textContent =
+			"#app-loader { align-items: flex-start !important; padding-top: 10vh; } body:has(#app-loader) #tidaluna-loading { z-index: 1 !important; }";
+		loadingContainer.appendChild(tidalLoaderStyle);
+
 		// Prefer body, fallback to documentElement for early loading (tidal-hifi)
 		if (document.body) {
 			document.body.appendChild(loadingContainer);

@@ -11,6 +11,7 @@ import Module, { createRequire } from "module";
 
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
+import { tidalMainHosts } from "./tidalHosts";
 
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 
@@ -117,12 +118,16 @@ const bundleFile = async (url: string): Promise<[Buffer, ResponseInit]> => {
 	return [content, { headers: { "Content-Type": mime.getType(fileName)! } }];
 };
 
-// Preload bundle files for https://luna/
-const lunaBundle = bundleFile("https://luna/luna.mjs").then(([content]) => content);
-ipcHandle("__Luna.renderJs", () => lunaBundle);
+// Read luna.mjs ahead of the first page load; later loads read it again, so a page reload picks up a rebuilt render bundle
+const readLunaBundle = () => bundleFile("https://luna/luna.mjs").then(([content]) => content);
+let lunaBundle: Promise<Buffer> | undefined = readLunaBundle();
+ipcHandle("__Luna.renderJs", () => {
+	const bundle = lunaBundle ?? readLunaBundle();
+	lunaBundle = undefined;
+	return bundle;
+});
 
 // #region HTTPS Handler
-const tidalMainHosts = new Set(["listen.tidal.com", "tidal.com", "desktop.tidal.com", "stage.tidal.com"]);
 const lunaPages = new Set<string>();
 ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
 
@@ -212,6 +217,11 @@ electron.app.whenReady().then(async () => {
 });
 
 // #region Proxied BrowserWindow
+// TIDAL builds its window again after a renderer crash, and on macOS when reopened with no window left.
+// What Luna registers outside the window (session preload, app listeners, console) must not pile up on each one
+let sessionPreloadRegistered = false;
+const nativeConsole = console;
+
 const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 	construct(target, args) {
 		const options = (args[0] ??= {});
@@ -233,7 +243,8 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			if (platformIsLinux) {
 				// Linux (tidal-hifi): Replace preload
 				options.webPreferences.preload = path.join(bundleDir, "preload.mjs");
-			} else {
+			} else if (!sessionPreloadRegistered) {
+				sessionPreloadRegistered = true;
 				// Windows/macOS (TIDAL official): Add Luna preload via session
 				const lunaPreload = path.join(bundleDir, "preload.mjs");
 				if (typeof electron.session.defaultSession.registerPreloadScript === "function") {
@@ -256,9 +267,11 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		const window = new target(options);
 
-		// Allow opening dev tools with F12 without interfering with Tidal's own shortcuts (e.g., Ctrl+Shift+I)
+		// Open dev tools with F12 or Ctrl+Shift+I (Cmd+Alt+I on macOS), overriding TIDAL's own use of them
 		window.webContents.on("before-input-event", (event, input) => {
-			if (input.key === "F12") {
+			if (input.type !== "keyDown") return;
+			const ctrlShiftI = input.code === "KeyI" && (process.platform === "darwin" ? input.meta && input.alt : input.control && input.shift);
+			if (input.key === "F12" || ctrlShiftI) {
 				window.webContents.toggleDevTools();
 				event.preventDefault();
 			}
@@ -345,25 +358,36 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		// #region Open from link
 		// MacOS
 		electron.app.setAsDefaultProtocolClient("tidaLuna");
-		electron.app.on("open-url", (_, url) => window.webContents.send("__Luna.openUrl", url));
+		const onOpenUrl = (_: unknown, url: string) => window.webContents.send("__Luna.openUrl", url);
+		electron.app.on("open-url", onOpenUrl);
 		// Windows/Linux
-		electron.app.on("second-instance", (_, argv) => window.webContents.send("__Luna.openUrl", argv[argv.length - 1]));
+		const onSecondInstance = (_: unknown, argv: string[]) => window.webContents.send("__Luna.openUrl", argv[argv.length - 1]);
+		electron.app.on("second-instance", onSecondInstance);
+		// Sending to a destroyed window throws, the window that replaces this one adds its own listeners
+		window.on("closed", () => {
+			electron.app.off("open-url", onOpenUrl);
+			electron.app.off("second-instance", onSecondInstance);
+		});
 		// #endregion
 
 		// #region Native console logging
 		// Overload console logging to forward to dev-tools
-		const _console = console;
+		const _console = nativeConsole;
 		const consolePrefix = "[Luna.native]";
 		let rendererAlive = true;
 		window.webContents.on("render-process-gone", (_, details) => {
 			rendererAlive = false;
 			_console.error(consolePrefix, `Renderer process gone: ${details.reason}`);
 		});
+		// Code that reads a console method and later writes it back (Sentry does on every unhandled rejection) leaves one of these
+		// wrappers on the real console. Wrapping it again would prefix and forward every log once more each time
+		const wrappers = new WeakSet<Function>();
 		console = new Proxy(_console, {
 			get(target, prop, receiver) {
 				const originalValue = target[prop as keyof typeof target];
 				if (typeof originalValue === "function") {
-					return (...args: any[]) => {
+					if (wrappers.has(originalValue)) return originalValue;
+					const wrapper = (...args: any[]) => {
 						if (args.length > 0) {
 							args = [consolePrefix, ...args];
 						}
@@ -378,6 +402,8 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 							}
 						}
 					};
+					wrappers.add(wrapper);
+					return wrapper;
 				}
 				// Return non-function properties directly
 				return Reflect.get(target, prop, receiver);

@@ -6,5 +6,6 @@ export * from "./getPlaybackInfo.dasha.native";
 export * from "./listenerError";
 export * from "./observable";
 export * from "./parseDate";
+export * from "./router";
 export * from "./safeTimeout";
 export * from "./trackTable";

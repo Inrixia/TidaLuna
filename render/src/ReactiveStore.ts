@@ -27,7 +27,11 @@ export class ReactiveStore {
 	private readonly reactiveCache: Record<string, any> = {};
 	public async getReactive<T extends StoreReconcileable>(key: string, defaultValue: T = <T>{}): Promise<T> {
 		if (key in this.reactiveCache) return this.reactiveCache[key];
-
+		// Callers that arrive while the first is still reading idb share its object, or each would get its own and only the last would be cached
+		return (this.reactiveLoading[key] ??= this.loadReactive(key, defaultValue).finally(() => delete this.reactiveLoading[key]));
+	}
+	private readonly reactiveLoading: Record<string, Promise<any>> = {};
+	private async loadReactive<T extends StoreReconcileable>(key: string, defaultValue: T): Promise<T> {
 		// Create the oby reactive object
 		const reactiveObj = obyStore(defaultValue);
 		// Reconcile the object with the idb store to ensure we have the latest values

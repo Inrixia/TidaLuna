@@ -20,7 +20,7 @@ export const TidalChromeVersion = "chrome126"; // Tidal target version
 
 const externals = ["@luna/*", "oby", "react", "react-dom/client", "react/jsx-runtime", "electron"];
 
-export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions) => {
+export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions, onNativeCode?: (fileName: string, code: string) => void) => {
 	const pkgPath = path.join(pluginPath, "package.json");
 	const pluginPackage = await readFile(pkgPath, "utf8").then(JSON.parse);
 	// Sanitize pluginPackage.name, remove @, replace / with .
@@ -51,7 +51,7 @@ export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions
 				`,
 			}),
 			fileUrlPlugin,
-			lunaNativePlugin(entryPoint, pkgName),
+			lunaNativePlugin(entryPoint, pkgName, onNativeCode),
 			writeBundlePlugin(pkgPath),
 		],
 	};

@@ -12,6 +12,8 @@ import { unloads } from "./index.safe";
 
 export { setWindowTitle } from "./windowTitle";
 
+import "./navigation";
+
 export { errSignal } from "./index.safe";
 
 // Hide the update notification on MacOS as it breaks Luna for some reason

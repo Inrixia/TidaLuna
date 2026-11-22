@@ -46,14 +46,18 @@ export class MediaItem extends ContentBase {
 		const clearWarnCatch = redux.intercept("message/MESSAGE_WARN", unloads, (message) => {
 			if (message?.message === "The content is no longer available") return true;
 		});
-		const { mediaItem } = await redux.interceptActionResp(
-			() => redux.actions["content/LOAD_SINGLE_MEDIA_ITEM"]({ id: itemId, itemType: contentType }),
-			unloads,
-			["content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS"],
-			["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
-		);
-		clearWarnCatch();
-		return mediaItem;
+		try {
+			const { mediaItem } = await redux.interceptActionResp(
+				() => redux.actions["content/LOAD_SINGLE_MEDIA_ITEM"]({ id: itemId, itemType: contentType }),
+				unloads,
+				["content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS"],
+				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
+			);
+			return mediaItem;
+		} finally {
+			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
+			clearWarnCatch();
+		}
 	}
 
 	// #region Static Construction
@@ -359,12 +363,15 @@ export class MediaItem extends ContentBase {
 
 	public flacTags: () => Promise<MetaTags> = memoize(() => makeTags(this));
 
+	// fetchTidalMediaItem asks the tracks API, a video id would get nothing or another item
 	public async copyright(): Promise<string | undefined> {
-		if (!!this.tidalItem.copyright) await this.fetchTidalMediaItem();
+		if (!this.tidalItem.copyright && this.contentType === "track")
+			await this.fetchTidalMediaItem().catch(this.trace.warn.withContext("copyright.fetchTidalMediaItem"));
 		return this.tidalItem.copyright ?? undefined;
 	}
 	public async bpm(): Promise<number | undefined> {
-		if (!!this.tidalItem.bpm) await this.fetchTidalMediaItem();
+		if (!this.tidalItem.bpm && this.contentType === "track")
+			await this.fetchTidalMediaItem().catch(this.trace.warn.withContext("bpm.fetchTidalMediaItem"));
 		return this.tidalItem.bpm ?? undefined;
 	}
 	// #endregion
