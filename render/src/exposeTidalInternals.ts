@@ -143,8 +143,9 @@ for (const script of scripts) {
 					{
 						transform({ code }) {
 							// Tidal react-dom/client
-							const createRootExport = /([\w$]+)\.createRoot\s*=(?!=)/;
-							code = code.replace(createRootExport, "$1.createRoot=globalThis.__lunaCreateRoot=");
+							// Lookbehind, not a leading ([\w$]+) which retries at every position of a multi MB bundle (~30ms each vs ~1ms)
+							const createRootExport = /(?<=[\w$])\.createRoot\s*=(?!=)/;
+							code = code.replace(createRootExport, ".createRoot=globalThis.__lunaCreateRoot=");
 							code = applyTidalPatches(code);
 
 							const actionData = findCreateActionFunction(code);
