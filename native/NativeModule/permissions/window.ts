@@ -1,6 +1,6 @@
 import { BrowserWindow } from "electron";
 
-import { categoryInfo } from "./categories";
+import { categoryInfo, MAIN_PROCESS } from "./categories";
 import type { PermissionAnswer } from "./store";
 
 export type PermissionRequest = {
@@ -102,7 +102,7 @@ const buildHtml = ({ fileName, url, claimedUrl, rows, kept }: PermissionRequest)
 		<div>
 			<div class="name">${escapeHtml(label)}${highRisk.has(category) ? '<span class="tag risk">High risk</span>' : ""}</div>
 			<div class="desc">${escapeHtml(description)}</div>
-			<div class="modules mono">${escapeHtml(modules.join(", "))}</div>
+			<div class="modules mono">${escapeHtml(modules.filter((name) => name !== MAIN_PROCESS).join(", "))}</div>
 		</div>
 	</div>
 	<div class="seg${url !== undefined ? "" : " two"}" role="radiogroup" aria-label="${escapeHtml(label)}">

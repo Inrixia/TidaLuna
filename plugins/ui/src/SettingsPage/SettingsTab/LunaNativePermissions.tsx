@@ -37,7 +37,7 @@ export const LunaNativePermissions = React.memo(() => {
 	return (
 		<LunaSettings
 			title="Native permissions"
-			desc="What plugins' native code may do, as you answered when it asked. Revoke an answer to be asked again the next time the plugin uses it"
+			desc="What plugins' native code may do, as you answered when it asked. Revoke an answer to be asked again the next time the plugin uses it (or loads, for running in the main process)"
 		>
 			{[...entries]
 				.sort((a, b) => a.fileName.localeCompare(b.fileName))
@@ -55,7 +55,7 @@ export const LunaNativePermissions = React.memo(() => {
 									key={category}
 									sx={{ paddingLeft: 3 }}
 									title={label}
-									desc={onlyModules ? `Only ${modules.join(", ")} (answered before permissions had categories)` : modules.join(", ")}
+									desc={onlyModules ? `Only ${modules.join(", ")} (answered before permissions had categories)` : modules.filter((name) => name !== "MainProcess").join(", ")}
 								>
 									<Stack direction="row" spacing={1} sx={{ flexGrow: 1, alignItems: "center", justifyContent: "flex-end" }}>
 										<Typography variant="body2" sx={{ color: answerColor[answer] }}>

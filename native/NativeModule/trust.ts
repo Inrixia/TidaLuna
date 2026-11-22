@@ -157,6 +157,8 @@ export class NativeTrust {
 		}
 		// Answers from before categories, per module (none for code of a plugin uninstalled since it loaded)
 		if (this.removed) return undefined;
+		// Never from an old answer: those were given per module, to code that was already running
+		if (moduleName === MAIN_PROCESS) return undefined;
 		if (this.legacy.has(moduleName)) return true;
 		if (this.adoptedAllows(moduleName)) {
 			this.legacy.add(moduleName);
@@ -194,7 +196,7 @@ export class NativeTrust {
 	}
 
 	/**
-	 * Whether the code may run in the main process at all. Asked before its first run, in the same window as the
+	 * Whether the code may run in the main process at all. Asked before every run of a load, in the same window as the
 	 * modules passed to `seen` so far: the sandbox it runs in limits what honest code uses, it can't hold code that
 	 * works against it, so nothing of a file the user has not accepted may run there.
 	 */
@@ -208,6 +210,8 @@ export class NativeTrust {
 	public pending(): { category: string; modules: string[] }[] {
 		const pending = [];
 		for (const [category, modules] of this.modules) {
+			// Code that already runs is not asked whether it may (e.g. revoked since): the next load asks
+			if (this.active && modules.has(MAIN_PROCESS)) continue;
 			if ([...modules].some((moduleName) => this.decide(moduleName) === undefined)) pending.push({ category, modules: [...modules] });
 		}
 		return pending;
@@ -408,8 +412,11 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 	trust.settling = true;
 	try {
 		await trust.prepare();
-		if (!(await trust.mayRun())) throw new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process`);
 		for (let run = 1; ; run++) {
+			// Before every run: the answer can be revoked while a later window of this load is open
+			if (!(await trust.mayRun())) {
+				throw new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (answers are listed in Luna Settings)`);
+			}
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
 			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
 			const exports = await runOnce(trust, load);

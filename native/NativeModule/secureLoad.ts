@@ -5,6 +5,7 @@ import { nativeRequire, type NativeModuleInfo } from ".";
 import { categoryOf } from "./permissions/categories";
 import { loadWithPermissions, NativeTrust } from "./trust";
 
+import { builtinModules } from "module";
 import type Module from "module";
 import { moduleWhitelist } from "./moduleWhitelist";
 
@@ -247,10 +248,13 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 	};
 
 	// The file is asked for before its first run (see NativeTrust.mayRun). The modules its source names are put in that
-	// window too, so it stays one window. A guess, so only names with a category: what the code uses is checked as it runs
-	for (const [, name] of code.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)) {
+	// window too, so it stays one window. A guess from the text (it also finds a require the code never reaches, and
+	// misses a name put together at run time, asked after the run as before), so only names with a category and Node's
+	// own modules: what the code uses is checked as it runs
+	const listed = (moduleName: string) => !categoryOf(moduleName).startsWith("module:") || builtinModules.includes(moduleName);
+	for (const [, name] of moduleInfo.isCore ? [] : code.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)) {
 		const moduleName = normalize(name);
-		if (!moduleWhitelist.has(moduleName) && moduleName !== "process" && !categoryOf(moduleName).startsWith("module:")) trust.seen(moduleName);
+		if (!moduleWhitelist.has(moduleName) && moduleName !== "process" && listed(moduleName)) trust.seen(moduleName);
 	}
 
 	// Permissions can't be asked while the code runs: the vm timeout counts the time a prompt is open, and once

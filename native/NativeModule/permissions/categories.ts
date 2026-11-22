@@ -16,7 +16,7 @@ export const permissionCategories: PermissionCategory[] = [
 		id: "main",
 		label: "Run in TIDAL's Main Process",
 		description:
-			"Run this file's code inside the TIDAL app itself. Luna asks for what it uses below, but code running there can't be fully contained: allow it only if you trust the plugin with your computer and your TIDAL account.",
+			"Run this file's code inside the TIDAL app itself. Luna asks separately for the Node modules it uses, but code running there can't be fully contained: allow it only if you trust the plugin with your computer and your TIDAL account.",
 		modules: [MAIN_PROCESS],
 	},
 	{
