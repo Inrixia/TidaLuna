@@ -93,6 +93,7 @@ h2 { font-size:16px; margin-bottom:12px; }
 button { padding:8px 16px; border:none; border-radius:4px; background:#eb1e32; color:#fff; cursor:pointer; font-size:13px; }
 button:disabled { background:#333; color:#777; cursor:default; }
 .choices .risky { color:#ff5a5a; }
+#main { display:contents; }
 #confirm { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); align-items:center; justify-content:center; padding:24px; }
 #confirm.open { display:flex; }
 #confirm .box { background:#2a1414; border:1px solid #eb1e32; border-radius:6px; padding:16px 18px; font-size:13px; color:#eee; line-height:1.5; max-width:520px; }
@@ -102,6 +103,7 @@ button:disabled { background:#333; color:#777; cursor:default; }
 </style>
 </head>
 <body>
+<div id="main">
 <h2>Plugin Permission Request</h2>
 <div class="info">
 	<div><span class="label">Plugin: </span><span class="value">${escapeHtml(plugin)}</span></div>
@@ -120,6 +122,7 @@ ${keptHtml}
 	<div style="margin-top:6px">Answers can be revoked in Luna Settings. Closing this window answers nothing: you will be asked again next time.</div>
 </div>
 <div class="actions"><button id="validate" disabled>Validate</button></div>
+</div>
 <div id="confirm"><div class="box">
 	<h3>Allow <span id="confirm-what"></span> for all versions?</h3>
 	<div>${escapeHtml(ALL_VERSIONS_WARNING)}</div>
@@ -130,30 +133,40 @@ const count = ${rows.length};
 const labels = ${JSON.stringify(rows.map(({ category }) => categoryInfo(category).label)).replace(/</g, "\\u003c")};
 const validate = document.getElementById("validate");
 const confirmBox = document.getElementById("confirm");
-// "All versions" stays picked only once confirmed: Cancel puts back the row's previous choice
+const main = document.getElementById("main");
+// "All versions" counts only for rows where it was confirmed: Cancel puts back the row's previous choice
 let pendingRisky;
+const confirmed = new Set();
 const previous = new Map();
+const closeConfirm = (keep) => {
+	if (keep) confirmed.add(pendingRisky.name);
+	else {
+		pendingRisky.checked = false;
+		const before = previous.get(pendingRisky.name);
+		if (before !== undefined) before.checked = true;
+	}
+	pendingRisky = undefined;
+	confirmBox.classList.remove("open");
+	main.inert = false;
+	validate.disabled = answers() === undefined;
+};
 document.addEventListener("change", (event) => {
 	const input = event.target;
-	if (input.value === "allowUpdates") {
+	if (input.value !== "allowUpdates") {
+		confirmed.delete(input.name);
+		previous.set(input.name, input);
+	} else if (!confirmed.has(input.name)) {
 		pendingRisky = input;
 		document.getElementById("confirm-what").textContent = labels[Number(input.name.slice(1))];
 		confirmBox.classList.add("open");
-	} else previous.set(input.name, input);
+		// Nothing behind it can be changed or validated until it is answered
+		main.inert = true;
+		document.getElementById("confirm-no").focus();
+	}
 }, true);
-document.getElementById("confirm-yes").addEventListener("click", () => {
-	previous.set(pendingRisky.name, pendingRisky);
-	pendingRisky = undefined;
-	confirmBox.classList.remove("open");
-});
-document.getElementById("confirm-no").addEventListener("click", () => {
-	pendingRisky.checked = false;
-	const before = previous.get(pendingRisky.name);
-	if (before !== undefined) before.checked = true;
-	pendingRisky = undefined;
-	confirmBox.classList.remove("open");
-	validate.disabled = answers() === undefined;
-});
+document.getElementById("confirm-yes").addEventListener("click", () => closeConfirm(true));
+document.getElementById("confirm-no").addEventListener("click", () => closeConfirm(false));
+document.addEventListener("keydown", (event) => event.key === "Escape" && pendingRisky !== undefined && closeConfirm(false));
 const answers = () => {
 	const chosen = [];
 	for (let i = 0; i < count; i++) {
@@ -165,8 +178,8 @@ const answers = () => {
 };
 document.addEventListener("change", () => (validate.disabled = answers() === undefined));
 validate.addEventListener("click", () => {
-	if (pendingRisky !== undefined) return;
 	const chosen = answers();
+	if (pendingRisky !== undefined || chosen?.some((answer, i) => answer === "allowUpdates" && !confirmed.has("r" + i))) return;
 	if (chosen !== undefined) document.title = "${SUBMIT}" + JSON.stringify(chosen);
 });
 </script>
