@@ -1,4 +1,4 @@
-import { parseDasha, type DashManifest } from "./getPlaybackInfo.dasha.native";
+import { parseDasha, type DashManifest } from "./getPlaybackInfo.dasha.isolated.native";
 
 import type { PlaybackInfoResponse, VideoPlaybackInfoResponse, VideoQuality } from "../classes/TidalApi";
 import { TidalApi } from "../classes/TidalApi";
