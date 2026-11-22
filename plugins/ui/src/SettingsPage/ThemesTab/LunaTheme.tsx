@@ -49,7 +49,7 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 			const css = (themes[url].css = await ftch.text(url));
 			setCSS(css);
 			// Reloading an enabled theme has to restyle the page, not only update what is stored
-			if (themes[url].enabled) themeStyle.css = css;
+			if (themes[url]?.enabled) themeStyle.css = css;
 			setManifest(parseManifest(css));
 		} finally {
 			setLoading(false);
