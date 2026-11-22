@@ -12,6 +12,7 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
+import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
 import { tidalMainHosts } from "./tidalHosts";
@@ -147,7 +148,7 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 	// Bypass CSP & Mark meta scripts for quartz injection on Tidal main pages
 	const reqUrl = new URL(req.url);
 	if (tidalMainHosts.has(reqUrl.hostname) && !path.extname(reqUrl.pathname)) {
-		const res = await electron.net.fetch(req, { bypassCustomProtocolHandlers: true });
+		const res = await staleIfError(req.url, () => electron.net.fetch(req, { bypassCustomProtocolHandlers: true }), req);
 		const contentType = res.headers.get("content-type") ?? "";
 		if (!contentType.includes("text/html")) return res;
 		let body = await res.text();
@@ -173,19 +174,16 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 	}
 
 	// Fix tidal trying to bypass cors
-	if (req.url.endsWith("?cors")) return fetch(req);
+	if (req.url.endsWith("?cors")) return staleIfError(req.url, () => fetch(req), req);
 
 	// Fix font loading - fonts require credentials: 'omit' for CORS
 	if (fontUrlRegex.test(req.url)) {
-		return electron.net.fetch(req.url, {
-			bypassCustomProtocolHandlers: true,
-			credentials: "omit",
-		});
+		return staleIfError(req.url, () => electron.net.fetch(req.url, { bypassCustomProtocolHandlers: true, credentials: "omit" }), req);
 	}
 
 	// All other requests passthrough
 	try {
-		return await electron.net.fetch(req, { bypassCustomProtocolHandlers: true });
+		return await staleIfError(req.url, () => electron.net.fetch(req, { bypassCustomProtocolHandlers: true }), req);
 	} catch (err: any) {
 		console.error(`[HTTPS] Fetch error for ${req.url}:`, err.message);
 		throw err;
@@ -208,7 +206,7 @@ const tidalModuleHandler = async (req: Request): Promise<Response> => {
 	const url = new URL(req.url);
 	if (!tidalMainHosts.has(url.host)) return new Response(null, { status: 403 });
 	const origin = `https://${url.host}`;
-	const res = await electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true });
+	const res = await staleIfError(origin + url.pathname + url.search, () => electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }));
 	// shortcut: every .js is taken for a module, TIDAL's workers are inline blobs, check if a classic script ever loads from here
 	if (!res.ok || !url.pathname.endsWith(".js")) {
 		const headers = new Headers(res.headers);
