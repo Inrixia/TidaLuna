@@ -64,7 +64,7 @@ const toError = (thrown: unknown) => {
 const views = new Set<Electron.WebContentsView>();
 // fileName -> the host that currently runs it
 const hosts = new Map<string, Host>();
-// fileName -> number of the load that may serve the file: the newest asked for or, once that one has failed, the one that
+// fileName -> number of the load that may serve the file: the newest that started or, once that one has failed, the one that
 // served before it. Loads finish in any order: one that is not this load any more is given up (see startHost).
 const lastLoad = new Map<string, number>();
 // fileName -> number of the newest load asked for. Never taken back, unlike `lastLoad` (see startHost)
@@ -98,7 +98,7 @@ const startHost = async (moduleInfo: NativeModuleInfo, load: number): Promise<Ho
 const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Promise<Host> => {
 	// Read from the default export: a named import of something this Electron lacks would stop the injector from loading
 	// By version too: Electron 29 has a class of this name that ignores webPreferences, so the preload would never run
-	if (typeof electron.WebContentsView !== "function" || !(parseInt(process.versions.electron) >= 30)) {
+	if (typeof electron.WebContentsView !== "function" || !(parseInt(process.versions.electron, 10) >= 30)) {
 		throw new Error(`Isolated native code ('${fileName}') needs Electron 30 or newer`);
 	}
 
