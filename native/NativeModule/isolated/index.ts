@@ -218,7 +218,10 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
  *
  * @param fallback Loads the code some other way if no host could load it. A load of the file asked for meanwhile still wins.
  */
-export const isolatedLoad = async (moduleInfo: NativeModuleInfo, fallback?: (err: unknown) => Promise<NativeExports>): Promise<NativeExports> => {
+export const isolatedLoad = async (
+	moduleInfo: NativeModuleInfo,
+	fallback?: (err: unknown) => Promise<NativeExports>,
+): Promise<NativeExports> => {
 	const { fileName } = moduleInfo;
 	const load = ++loads;
 	asked.set(fileName, load);
