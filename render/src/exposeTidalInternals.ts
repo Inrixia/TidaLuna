@@ -15,7 +15,10 @@ export const tidalModules: Record<string, object> = {};
 // Quartz is the fallback if that fails.
 let nativeModules = true;
 const nativeModuleUrl = (path: string) => `luna-module://${location.host}${path}`;
-(<{ __lunaRegisterModule?: (path: string, module: object) => void }>globalThis).__lunaRegisterModule = (path, module) => (tidalModules[path] = module);
+(<{ __lunaRegisterModule?: (path: string, module: object) => void }>globalThis).__lunaRegisterModule = (path, module) => {
+	tidalModules[path] = module;
+	if (loadingContainer.isConnected) messageContainer.append(`Loaded ${path}`, document.createElement("br"));
+};
 
 // Store pending promises to avoid race conditions with circular imports
 const pendingModules: Record<string, Promise<object>> = {};
@@ -186,4 +189,8 @@ for (const script of scripts) {
 	delete pendingModules[scriptPath];
 }
 
-setTimeout(() => (loadingContainer.style.opacity = "0"), 2000);
+setTimeout(() => {
+	loadingContainer.style.opacity = "0";
+	// After its fade, lazy chunks loaded later shouldn't add to it
+	setTimeout(() => loadingContainer.remove(), 1000);
+}, 2000);

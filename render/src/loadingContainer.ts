@@ -35,11 +35,21 @@ export const getOrCreateLoadingContainer = () => {
 		Object.assign(messageContainer.style, messageStyles);
 		loadingContainer.appendChild(messageContainer);
 
-		// TIDAL's own loading screen (removed when its app mounts) covers the page, show its logo above this, which is above it until then
+		// TIDAL's own loading screen (#wimp > #app-loader, replaced when its app mounts) covers the page, show its logo above this, which is above it until then.
+		// Not a :has() rule, that restyles the page on every DOM change
 		const tidalLoaderStyle = document.createElement("style");
-		tidalLoaderStyle.textContent =
-			"#app-loader { align-items: flex-start !important; padding-top: 10vh; } #app-loader ~ #tidaluna-loading { z-index: 1 !important; }";
+		tidalLoaderStyle.textContent = "#app-loader { align-items: flex-start !important; padding-top: 10vh; }";
 		loadingContainer.appendChild(tidalLoaderStyle);
+		loadingContainer.style.zIndex = "1";
+		const lowerOnMount = () => {
+			const wimp = document.getElementById("wimp");
+			if (wimp === null) return void document.addEventListener("DOMContentLoaded", lowerOnMount, { once: true });
+			const lower = () => wimp.querySelector(":scope > #app-loader") === null && ((loadingContainer!.style.zIndex = "-1"), true);
+			if (lower()) return;
+			const observer = new MutationObserver(() => lower() && observer.disconnect());
+			observer.observe(wimp, { childList: true });
+		};
+		lowerOnMount();
 
 		// Prefer body, fallback to documentElement for early loading (tidal-hifi)
 		if (document.body) {
