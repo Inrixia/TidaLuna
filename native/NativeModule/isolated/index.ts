@@ -69,7 +69,7 @@ const hosts = new Map<string, Host>();
 const lastLoad = new Map<string, number>();
 // fileName -> number of the newest load asked for. Never taken back, unlike `lastLoad` (see startHost)
 const asked = new Map<string, number>();
-// fileName -> number of the load whose host served the file last, running or died
+// fileName -> number of the load that served the file last: a host, running or died, or a fallback (see isolatedLoad)
 const served = new Map<string, number>();
 // Load numbers are never given out twice: a load that was given up must not match `lastLoad` again later
 let loads = 0;
@@ -233,6 +233,7 @@ export const isolatedLoad = async (
 		if (asked.get(fileName) !== load) throw new LoadedAgain(fileName);
 		// No host serves the file from here on: one that died earlier must not be started again by a call
 		lastLoad.set(fileName, load);
+		served.set(fileName, load);
 		// Only now: had the fallback failed too, the host that ran the file before would keep answering
 		hosts.get(fileName)?.stop(new LoadedAgain(fileName));
 		return exports;
