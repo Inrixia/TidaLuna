@@ -18,6 +18,8 @@ export type { AudioCacheStats, AudioCacheStatus } from "../../../native/audioCac
 export const audioCacheUrl = luna.audioCacheUrl;
 export const audioCacheWindow = luna.audioCacheWindow;
 export const audioCacheHover = luna.audioCacheHover;
+export const audioCacheWaitFilled = luna.audioCacheWaitFilled;
+export const audioCachePersist = luna.audioCachePersist;
 export const audioCacheStatus = luna.audioCacheStatus;
 export const audioCacheStats = luna.audioCacheStats;
 export const audioCacheSetLimit = luna.audioCacheSetLimit;

@@ -13,10 +13,12 @@ export * from "./update";
 export {
 	audioCacheHover,
 	audioCacheOpenFolder,
+	audioCachePersist,
 	audioCacheSetLimit,
 	audioCacheStats,
 	audioCacheStatus,
 	audioCacheUrl,
+	audioCacheWaitFilled,
 	audioCacheWindow,
 	type AudioCacheStats,
 	type AudioCacheStatus,

@@ -1,16 +1,16 @@
 // Audio cache. TIDAL's native player (TIDALPlayer.exe) fetches audio itself from a url TIDAL sends it over stdin (media.load / media.preload),
 // so Luna can't see that traffic. Those messages are rewritten (rewritePlayerMessage) to point at a loopback server here, which serves the audio
 // from the cache, and anything else in the main process can read audio through it too (audioCacheUrl, e.g. MediaItem downloads).
-// - Each audio file is a file on disk filled by ranged fetches in any order, the bytes held are tracked in memory. The OS caches it in memory.
+// - Active / partial audio entries are filled in memory by ranged fetches in any order, the bytes held are tracked in memory.
 // - Requests are answered as bytes arrive. A read of bytes nothing is fetching soon starts fetching from there (instant seeks).
-// - Wanted files (the player's track, the renderer's window, hovered tracks) are filled in the background, only the most important at a time.
-// - Complete files are kept on disk until the cache is over its limit, then the least recently used go. Partial files go on restart.
-// The bytes are kept as TIDAL serves them (OLD_AES encrypted for some), whoever reads them decrypts.
+// - Wanted entries (the player's track, the renderer's window, hovered tracks) are filled in the background, only the most important at a time.
+// - Once a wanted track is completely in memory, @luna/lib persists it to disk via MediaItem.download (decrypted, tagged and named from its tags)
+//   with an <id>.json sidecar. Persisted files are served directly from disk with encryptionKey cleared, until pruned by LRU when over the limit.
 import electron from "electron";
 
 import { createHash, randomBytes } from "crypto";
-import { constants, readFileSync } from "fs";
-import { mkdir, open, readdir, rm, stat, statfs, utimes, writeFile, type FileHandle } from "fs/promises";
+import { constants } from "fs";
+import { mkdir, open, readdir, readFile, rm, stat, statfs, utimes, writeFile, type FileHandle } from "fs/promises";
 import http from "http";
 import path from "path";
 
@@ -28,12 +28,14 @@ type Entry = {
 	id: string;
 	/** Latest url seen for this audio, its token is what the CDN accepts */
 	url: string;
-	file: string;
 	size?: number;
 	type: string;
+	/** Raw CDN bytes held in memory while active */
+	data?: Buffer;
 	/** Sorted, merged, end exclusive */
 	have: Range[];
 	complete: boolean;
+	persisting?: boolean;
 	fetches: Set<Fetch>;
 	filling?: Promise<void>;
 	/** Where a read wants the fill to continue from */
@@ -41,30 +43,38 @@ type Entry = {
 	/** Reads blocked on bytes */
 	waiting: number;
 	readers: number;
-	refs: number;
-	handle?: Promise<FileHandle>;
 	failures: number;
 	error?: unknown;
 	waiters: Set<() => void>;
+};
+type DiskEntry = {
+	file: string;
+	size: number;
+	type: string;
+	used: number;
+	refs: number;
+	handle?: Promise<FileHandle>;
 };
 
 // Set when ready: reading userData fixes it, and it is derived from TIDAL's name which native/injector.ts sets after this module loads
 let dir = "";
 const entries = new Map<string, Entry>();
-/** Complete files on disk */
-const disk = new Map<string, { size: number; used: number }>();
+/** Complete, decrypted and tagged files persisted on disk */
+const disk = new Map<string, DiskEntry>();
 let usage = 0;
 let userLimit: number | undefined;
 const stats = { servedBytes: 0, fetchedBytes: 0 };
 
 let currentId: string | undefined;
+let currentMem = false;
 let preloadId: string | undefined;
+let preloadMem = false;
 let windowIds: string[] = [];
 /** Latest first */
 let hoverIds: string[] = [];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const fileOf = (id: string) => path.join(dir, id);
+const fileOf = (name: string) => path.join(dir, name);
 // Keyed by path, the token in the query changes
 const idOf = (rawUrl: string) => {
 	let url: URL;
@@ -85,17 +95,11 @@ const openEntry = (rawUrl: string): Entry | undefined => {
 	if (id === undefined) return;
 	let entry = entries.get(id);
 	if (entry === undefined) {
-		const file = fileOf(id);
+		const onDisk = disk.get(id);
 		entry = {
-			...{ id, url: rawUrl, file, type: "application/octet-stream", have: [], complete: false },
-			...{ fetches: new Set(), waiters: new Set(), waiting: 0, readers: 0, refs: 0, failures: 0 },
+			...{ id, url: rawUrl, size: onDisk?.size, type: onDisk?.type ?? "application/octet-stream", have: [], complete: false },
+			...{ fetches: new Set(), waiters: new Set(), waiting: 0, readers: 0, failures: 0 },
 		};
-		try {
-			const meta = JSON.parse(readFileSync(file + ".json", "utf8"));
-			Object.assign(entry, { size: meta.size, type: meta.type, have: [[0, meta.size]], complete: true });
-		} catch {
-			// Not on disk
-		}
 		entries.set(id, entry);
 	}
 	// A url someone held on to (e.g. a memoized playbackinfo) doesn't replace a newer one
@@ -132,8 +136,11 @@ const gapFrom = (have: Range[], pos: number, limit: number): Range | undefined =
 };
 const heldBytes = (have: Range[]) => have.reduce((sum, [start, end]) => sum + end - start, 0);
 
+const isMemPinned = (entry: Entry) => (entry.id === currentId && currentMem) || (entry.id === preloadId && preloadMem);
+
 // Priorities, only fetches of the most important entries proceed
 const wantedBytes = (entry: Entry) => {
+	if (disk.has(entry.id) && !isMemPinned(entry)) return 0;
 	if (entry.id === currentId || entry.id === preloadId || windowIds.includes(entry.id)) return Infinity;
 	return hoverIds.includes(entry.id) ? hoverBytes : 0;
 };
@@ -166,22 +173,34 @@ const wake = (entry: Entry) => {
 	entry.waiters.clear();
 };
 
-const acquire = (entry: Entry) => {
-	entry.refs++;
-	return (entry.handle ??= ready.then(() => open(entry.file, constants.O_RDWR | constants.O_CREAT)));
+/** Releases an entry's in-memory buffer once it is persisted on disk or no longer wanted and has no active memory readers */
+const maybeFreeMemory = (entry: Entry) => {
+	if (entry.data === undefined) return;
+	if (entry.readers > 0 || entry.fetches.size > 0 || entry.persisting || isMemPinned(entry)) return;
+	if (disk.has(entry.id) || wantedBytes(entry) === 0) {
+		entry.data = undefined;
+		entry.have = [];
+		entry.complete = false;
+	}
 };
-const release = (entry: Entry) => {
-	if (--entry.refs !== 0) return;
-	const handle = entry.handle;
-	entry.handle = undefined;
+const trimMemory = () => {
+	for (const entry of entries.values()) maybeFreeMemory(entry);
+};
+
+const acquireDisk = (onDisk: DiskEntry) => {
+	onDisk.refs++;
+	return (onDisk.handle ??= ready.then(() => open(fileOf(onDisk.file), constants.O_RDONLY)));
+};
+const releaseDisk = (onDisk: DiskEntry) => {
+	if (--onDisk.refs !== 0) return;
+	const handle = onDisk.handle;
+	onDisk.handle = undefined;
 	handle?.then((fh) => fh.close()).catch(() => {});
 };
 
-const touch = (entry: Entry) => {
-	const onDisk = disk.get(entry.id);
-	if (onDisk === undefined) return;
+const touch = (onDisk: DiskEntry) => {
 	onDisk.used = Date.now();
-	utimes(entry.file, new Date(), new Date()).catch(() => {});
+	utimes(fileOf(onDisk.file), new Date(), new Date()).catch(() => {});
 };
 
 const limit = async () => {
@@ -198,92 +217,96 @@ const prune = (): Promise<void> =>
 	(pruning ??= (async () => {
 		const max = await limit();
 		if (usage <= max) return;
-		for (const [id, { size }] of [...disk].sort(([, a], [, b]) => a.used - b.used)) {
+		for (const [id, onDisk] of [...disk].sort(([, a], [, b]) => a.used - b.used)) {
 			if (usage <= max) break;
 			const entry = entries.get(id);
-			if (entry !== undefined && (entry.refs > 0 || wantedBytes(entry) > 0)) continue;
+			if (onDisk.refs > 0 || id === currentId || id === preloadId || windowIds.includes(id)) continue;
+			if (entry !== undefined && (entry.readers > 0 || entry.persisting)) continue;
 			entries.delete(id);
 			disk.delete(id);
-			usage -= size;
+			usage -= onDisk.size;
 			await rm(fileOf(id) + ".json", { force: true });
-			await rm(fileOf(id), { force: true });
+			await rm(fileOf(onDisk.file), { force: true });
 		}
 	})()
 		.catch((err) => console.error("[Luna.native] [AudioCache] Failed to prune", err))
 		.finally(() => (pruning = undefined)));
 
-// Partial files from a previous run are dropped, the bytes they hold aren't known
-const ready = electron.app.whenReady().then(async () => {
-	dir = path.join(electron.app.getPath("userData"), "luna-audio-cache");
-	await mkdir(dir, { recursive: true });
-	const names = new Set(await readdir(dir));
-	await Promise.all(
-		[...names].map(async (name) => {
-			const id = name.endsWith(".json") ? name.slice(0, -5) : name;
-			if (!names.has(id) || !names.has(`${id}.json`)) return rm(fileOf(name), { force: true });
-			if (name !== id) return;
-			const { size, mtimeMs } = await stat(fileOf(id));
-			disk.set(id, { size, used: mtimeMs });
-			usage += size;
-		}),
-	);
-	await prune();
-}).catch((err) => console.error("[Luna.native] [AudioCache] Failed to read the cache folder", err));
-
-const completed = async (entry: Entry) => {
-	entry.complete = true;
-	await writeFile(entry.file + ".json", JSON.stringify({ size: entry.size, type: entry.type }));
-	disk.set(entry.id, { size: entry.size!, used: Date.now() });
-	usage += entry.size!;
-	await prune();
-};
+// Only complete files with a valid <id>.json sidecar referencing their named audio file are kept; orphans and legacy raw files are dropped
+const ready = electron.app
+	.whenReady()
+	.then(async () => {
+		dir = path.join(electron.app.getPath("userData"), "luna-audio-cache");
+		await mkdir(dir, { recursive: true });
+		const names = new Set(await readdir(dir));
+		const kept = new Set<string>();
+		await Promise.all(
+			[...names].map(async (name) => {
+				if (!name.endsWith(".json")) return;
+				try {
+					const id = name.slice(0, -5);
+					const meta = JSON.parse(await readFile(fileOf(name), "utf8"));
+					if (typeof meta.file !== "string" || meta.file !== path.basename(meta.file) || !names.has(meta.file)) return;
+					const { size, mtimeMs } = await stat(fileOf(meta.file));
+					if (!(size > 0)) return;
+					disk.set(id, { file: meta.file, size, type: meta.type ?? "audio/flac", used: mtimeMs, refs: 0 });
+					usage += size;
+					kept.add(name);
+					kept.add(meta.file);
+				} catch {}
+			}),
+		);
+		await Promise.all([...names].filter((name) => !kept.has(name)).map((name) => rm(fileOf(name), { force: true })));
+		await prune();
+	})
+	.catch((err) => console.error("[Luna.native] [AudioCache] Failed to read the cache folder", err));
 
 const isAbort = (err: unknown) => err instanceof Error && err.name === "AbortError";
-/** Fetches [start, end) into the file while `keepGoing`, in turn with other entries' fetches by priority */
+/** Fetches [start, end) into `entry.data` in memory while `keepGoing`, in turn with other entries' fetches by priority */
 const fetchRange = async (entry: Entry, start: number, end: number, keepGoing: () => boolean) => {
 	const job: Fetch = { pos: start, end };
 	const abort = new AbortController();
 	entry.fetches.add(job);
 	active.add(entry);
 	try {
-		const fh = await acquire(entry);
-		try {
-			await gate(entry);
-			if (!keepGoing()) return;
-			const res = await electron.net.fetch(entry.url, {
-				headers: { Range: `bytes=${start}-${end === Infinity ? "" : end - 1}` },
-				signal: abort.signal,
-				bypassCustomProtocolHandlers: true,
-			});
-			if (res.body === null || (res.status !== 206 && !(res.status === 200 && start === 0))) throw new Error(`Audio fetch failed, HTTP ${res.status}`);
-			const size = Number(res.status === 206 ? res.headers.get("content-range")?.split("/")[1] : res.headers.get("content-length"));
-			if (!(size > 0)) throw new Error("Audio fetch has no size");
-			if (entry.size === undefined) {
-				entry.size = size;
-				entry.type = res.headers.get("content-type") ?? entry.type;
-			}
-			job.end = Math.min(job.end, entry.size);
-			wake(entry);
-			for await (const chunk of <AsyncIterable<Uint8Array>>(<unknown>res.body)) {
-				// An unread response holds its connection (and HTTP/2 window) from the fetches outranking it, so drop it, fill resumes when on top
-				if (!keepGoing() || !isTop(entry)) break;
-				const length = Math.min(chunk.byteLength, job.end - job.pos);
-				await fh.write(chunk, 0, length, job.pos);
-				addRange(entry.have, job.pos, job.pos + length);
-				job.pos += length;
-				stats.fetchedBytes += length;
-				entry.failures = 0;
-				wake(entry);
-				if (job.pos >= job.end) break;
-			}
-		} finally {
-			abort.abort();
-			release(entry);
+		await gate(entry);
+		if (!keepGoing()) return;
+		const res = await electron.net.fetch(entry.url, {
+			headers: { Range: `bytes=${start}-${end === Infinity ? "" : end - 1}` },
+			signal: abort.signal,
+			bypassCustomProtocolHandlers: true,
+		});
+		if (res.body === null || (res.status !== 206 && !(res.status === 200 && start === 0))) throw new Error(`Audio fetch failed, HTTP ${res.status}`);
+		const size = Number(res.status === 206 ? res.headers.get("content-range")?.split("/")[1] : res.headers.get("content-length"));
+		if (!(size > 0)) throw new Error("Audio fetch has no size");
+		if (entry.data === undefined) {
+			entry.size = size;
+			entry.type = res.headers.get("content-type") ?? entry.type;
+			entry.data = Buffer.allocUnsafe(size);
 		}
-		if (!entry.complete && heldUntil(entry.have, 0) >= entry.size!) await completed(entry);
+		job.end = Math.min(job.end, entry.size!);
+		wake(entry);
+		for await (const chunk of <AsyncIterable<Uint8Array>>(<unknown>res.body)) {
+			// An unread response holds its connection (and HTTP/2 window) from the fetches outranking it, so drop it, fill resumes when on top
+			if (!keepGoing() || !isTop(entry)) break;
+			const length = Math.min(chunk.byteLength, job.end - job.pos);
+			entry.data.set(chunk.subarray(0, length), job.pos);
+			addRange(entry.have, job.pos, job.pos + length);
+			job.pos += length;
+			stats.fetchedBytes += length;
+			entry.failures = 0;
+			wake(entry);
+			if (job.pos >= job.end) break;
+		}
+		if (!entry.complete && entry.size !== undefined && heldUntil(entry.have, 0) >= entry.size) {
+			entry.complete = true;
+			wake(entry);
+		}
 	} finally {
+		abort.abort();
 		entry.fetches.delete(job);
 		if (entry.fetches.size === 0) active.delete(entry);
+		maybeFreeMemory(entry);
 		regate();
 		wake(entry);
 	}
@@ -294,9 +317,10 @@ const failed = (entry: Entry, err: unknown) => {
 	if (++entry.failures === maxFailures) console.error(`[Luna.native] [AudioCache] ${entry.id}`, err);
 };
 
-/** Fills a wanted entry in the background, from where a read wants it or the start */
-const fill = (entry: Entry) =>
-	(entry.filling ??= (async () => {
+/** Fills a wanted entry in memory in the background, from where a read wants it or the start */
+const fill = (entry: Entry) => {
+	if (wantedBytes(entry) === 0) return;
+	return (entry.filling ??= (async () => {
 		while (entry.failures < maxFailures) {
 			const from = entry.want ?? 0;
 			entry.want = undefined;
@@ -310,9 +334,11 @@ const fill = (entry: Entry) =>
 		}
 	})().finally(() => {
 		entry.filling = undefined;
+		maybeFreeMemory(entry);
 		// Reads waiting on a fill that stopped short (e.g. the track is no longer wanted) ask again
 		wake(entry);
 	}));
+};
 
 /** Resolves once there are new bytes (or an error) for a read at `pos` */
 const need = async (entry: Entry, pos: number) => {
@@ -344,23 +370,65 @@ const parseRange = (header: string | undefined, size: number): Range | undefined
 	return [start, end];
 };
 
+const waitDrain = (res: http.ServerResponse) =>
+	new Promise<void>((resolve) => {
+		const done = () => (res.off("drain", done), res.off("close", done), resolve());
+		res.on("drain", done).on("close", done);
+	});
+
 // Only who is given a url can read through the server
 const secret = randomBytes(16).toString("hex");
 const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
-	const [, urlSecret, id] = (req.url ?? "").split("/");
-	const entry = urlSecret === secret ? entries.get(id) : undefined;
+	await ready;
+	const [, urlSecret, mode, id] = (req.url ?? "").split("/");
+	if (urlSecret !== secret) return void res.writeHead(404).end();
+
+	if (mode === "disk") {
+		const onDisk = disk.get(id);
+		if (onDisk === undefined) return void res.writeHead(404).end();
+		touch(onDisk);
+		const fh = acquireDisk(onDisk);
+		try {
+			const size = onDisk.size;
+			const rangeHeader = req.headers.range;
+			const range = parseRange(rangeHeader, size);
+			if (rangeHeader !== undefined && range === undefined) return void res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
+			const [start, end] = range ?? [0, size - 1];
+			res.writeHead(range ? 206 : 200, {
+				"Content-Type": onDisk.type,
+				"Content-Length": end - start + 1,
+				"Accept-Ranges": "bytes",
+				"X-Luna-Decrypted": "1",
+				...(range && { "Content-Range": `bytes ${start}-${end}/${size}` }),
+			});
+			if (req.method === "HEAD") return void res.end();
+
+			for (let pos = start; pos <= end && !res.destroyed; ) {
+				const buffer = Buffer.allocUnsafe(Math.min(end + 1 - pos, 1024 ** 2));
+				const { bytesRead } = await (await fh).read(buffer, 0, buffer.length, pos);
+				if (bytesRead === 0) throw new Error(`Audio file ${onDisk.file} is shorter than expected`);
+				stats.servedBytes += bytesRead;
+				pos += bytesRead;
+				if (!res.write(buffer.subarray(0, bytesRead))) await waitDrain(res);
+			}
+			res.end();
+		} finally {
+			releaseDisk(onDisk);
+		}
+		return;
+	}
+
+	const entry = mode === "mem" ? entries.get(id) : undefined;
 	if (entry === undefined) return void res.writeHead(404).end();
 
 	entry.readers++;
-	touch(entry);
-	const fh = acquire(entry);
 	// A read blocked on bytes outranks every other fetch, it must not outlive its connection
 	const onClose = () => wake(entry);
 	res.once("close", onClose);
 	try {
 		const rangeHeader = req.headers.range;
 		const requestedStart = Number(/^bytes=(\d+)-/.exec(rangeHeader ?? "")?.[1] ?? 0);
-		while (entry.size === undefined) await need(entry, requestedStart);
+		while (entry.data === undefined || entry.size === undefined) await need(entry, requestedStart);
 		const size = entry.size;
 		const range = parseRange(rangeHeader, size);
 		if (rangeHeader !== undefined && range === undefined) return void res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
@@ -379,22 +447,17 @@ const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
 				await need(entry, pos);
 				continue;
 			}
-			const buffer = Buffer.allocUnsafe(Math.min(held - pos, 1024 ** 2));
-			const { bytesRead } = await (await fh).read(buffer, 0, buffer.length, pos);
-			if (bytesRead === 0) throw new Error(`Audio file ${entry.id} is shorter than held`);
-			stats.servedBytes += bytesRead;
-			pos += bytesRead;
-			if (!res.write(buffer.subarray(0, bytesRead)))
-				await new Promise<void>((resolve) => {
-					const done = () => (res.off("drain", done), res.off("close", done), resolve());
-					res.on("drain", done).on("close", done);
-				});
+			if (entry.data === undefined) throw new Error(`Audio memory buffer for ${entry.id} was released while reading`);
+			const chunk = entry.data.subarray(pos, Math.min(held, pos + 1024 ** 2));
+			stats.servedBytes += chunk.byteLength;
+			pos += chunk.byteLength;
+			if (!res.write(chunk)) await waitDrain(res);
 		}
 		res.end();
 	} finally {
 		res.off("close", onClose);
 		entry.readers--;
-		release(entry);
+		maybeFreeMemory(entry);
 	}
 };
 
@@ -406,9 +469,9 @@ server.on("listening", () => (port = (<{ port: number }>server.address()).port))
 server.on("error", (err) => console.error("[Luna.native] [AudioCache] server error, playing from TIDAL's urls", err));
 server.listen(0, "127.0.0.1").unref();
 
-const loopbackUrl = (entry: Entry) =>
+const loopbackUrl = (entry: Entry, mode: "disk" | "mem") =>
 	// Named like the original so readers still see the file extension
-	`http://127.0.0.1:${port}/${secret}/${entry.id}/${path.posix.basename(new URL(entry.url).pathname)}`;
+	`http://127.0.0.1:${port}/${secret}/${mode}/${entry.id}/${path.posix.basename(new URL(entry.url).pathname)}`;
 
 /** Points the audio url of a message to TIDAL's player at the cache. Messages that aren't audio loads pass through */
 export const rewritePlayerMessage = (message: string) => {
@@ -417,11 +480,22 @@ export const rewritePlayerMessage = (message: string) => {
 		const parsed = JSON.parse(message);
 		const entry = typeof parsed.url === "string" ? openEntry(parsed.url) : undefined;
 		if (entry === undefined) return message;
-		if (parsed.command === "media.preload") preloadId = entry.id;
-		else currentId = entry.id;
+		const fromDisk = parsed.command === "media.recover" && entry.id === currentId ? !currentMem && disk.has(entry.id) : disk.has(entry.id);
+		if (parsed.command === "media.preload") {
+			preloadId = entry.id;
+			preloadMem = !fromDisk;
+		} else {
+			currentId = entry.id;
+			currentMem = !fromDisk;
+		}
+		trimMemory();
 		regate();
-		fill(entry);
-		return JSON.stringify({ ...parsed, url: loopbackUrl(entry) });
+		if (!fromDisk) fill(entry);
+		return JSON.stringify({
+			...parsed,
+			url: loopbackUrl(entry, fromDisk ? "disk" : "mem"),
+			...(fromDisk && { encryptionKey: "" }),
+		});
 	} catch {
 		return message;
 	}
@@ -430,13 +504,14 @@ export const rewritePlayerMessage = (message: string) => {
 /** A url serving the audio at `url` (https://*.audio.tidal.com) through the cache, which supports ranges. `undefined` for other urls */
 export const audioCacheUrl = (url: string) => {
 	const entry = port === undefined ? undefined : openEntry(url);
-	return entry && loopbackUrl(entry);
+	return entry && loopbackUrl(entry, disk.has(entry.id) ? "disk" : "mem");
 };
 
 /** The audio urls to fetch in the background, in priority order, e.g. of the current, next and previous track */
 export const audioCacheWindow = (urls: string[]) => {
 	const window = urls.map(openEntry).filter((entry) => entry !== undefined);
 	windowIds = window.map((entry) => entry.id);
+	trimMemory();
 	regate();
 	window.forEach(fill);
 };
@@ -446,16 +521,70 @@ export const audioCacheHover = (url: string) => {
 	const entry = openEntry(url);
 	if (entry === undefined) return;
 	hoverIds = [entry.id, ...hoverIds.filter((id) => id !== entry.id)].slice(0, 4);
+	trimMemory();
 	regate();
 	fill(entry);
+};
+
+/**
+ * Waits until `url` has completely filled in memory and needs to be persisted to disk.
+ * Returns the cache folder path when ready to persist, or `undefined` if already on disk or no longer wanted.
+ */
+export const audioCacheWaitFilled = async (url: string): Promise<string | undefined> => {
+	await ready;
+	const entry = openEntry(url);
+	if (entry === undefined || disk.has(entry.id)) return;
+	while (!entry.complete && !disk.has(entry.id)) {
+		if (entry.failures >= maxFailures || wantedBytes(entry) < Infinity) return;
+		fill(entry);
+		await new Promise<void>((resolve) => entry.waiters.add(resolve));
+	}
+	if (disk.has(entry.id) || !entry.complete || entry.data === undefined) return;
+	entry.persisting = true;
+	return dir;
+};
+
+/**
+ * Registers a track file written by `MediaItem.download` into the on-disk cache with its `<id>.json` sidecar,
+ * and releases the in-memory buffer once no longer needed.
+ */
+export const audioCachePersist = async (url: string, filePath?: string): Promise<void> => {
+	await ready;
+	const id = idOf(url);
+	if (id === undefined) return;
+	const entry = entries.get(id);
+	try {
+		if (filePath === undefined) return;
+		const fileName = path.basename(filePath);
+		const { size, mtimeMs } = await stat(filePath);
+		if (!(size > 0)) return;
+		const type = entry?.type && entry.type !== "application/octet-stream" ? entry.type : "audio/flac";
+		for (const [otherId, other] of disk) {
+			if (other.file !== fileName && otherId !== id) continue;
+			disk.delete(otherId);
+			usage -= other.size;
+			if (otherId !== id) await rm(fileOf(otherId) + ".json", { force: true });
+		}
+		await writeFile(fileOf(id) + ".json", JSON.stringify({ file: fileName, size, type }));
+		disk.set(id, { file: fileName, size, type, used: mtimeMs, refs: 0 });
+		usage += size;
+		await prune();
+	} finally {
+		if (entry !== undefined) {
+			entry.persisting = false;
+			maybeFreeMemory(entry);
+			wake(entry);
+		}
+	}
 };
 
 export type AudioCacheStatus = { size?: number; held: number; complete: boolean };
 export const audioCacheStatus = (url: string): AudioCacheStatus => {
 	const id = idOf(url);
-	const entry = id === undefined ? undefined : entries.get(id);
 	const onDisk = id === undefined ? undefined : disk.get(id);
-	if (entry === undefined) return { size: onDisk?.size, held: onDisk?.size ?? 0, complete: onDisk !== undefined };
+	if (onDisk !== undefined) return { size: onDisk.size, held: onDisk.size, complete: true };
+	const entry = id === undefined ? undefined : entries.get(id);
+	if (entry === undefined) return { size: undefined, held: 0, complete: false };
 	return { size: entry.size, held: heldBytes(entry.have), complete: entry.complete };
 };
 

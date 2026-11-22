@@ -1,9 +1,11 @@
 import {
 	audioCacheHover,
 	audioCacheOpenFolder,
+	audioCachePersist,
 	audioCacheSetLimit,
 	audioCacheStats,
 	audioCacheStatus,
+	audioCacheWaitFilled,
 	audioCacheWindow,
 	type AudioCacheStats,
 	type AudioCacheStatus,
@@ -15,6 +17,7 @@ import { getPlaybackInfo } from "../helpers/getPlaybackInfo";
 import { safeTimeout } from "../helpers/safeTimeout";
 import { libTrace, unloads } from "../index.safe";
 import * as redux from "../redux";
+import { MediaItem } from "./MediaItem";
 import { PlayState } from "./PlayState";
 
 export type { AudioCacheStats, AudioCacheStatus };
@@ -25,6 +28,7 @@ export type { AudioCacheStats, AudioCacheStatus };
  */
 export class AudioCache {
 	private static readonly trace = libTrace.withSource("AudioCache").trace;
+	private static readonly persisting = new Set<string>();
 
 	/** The url of a track's audio at the streaming quality, the url TIDAL's player plays */
 	public static async url(trackId: redux.ItemId): Promise<string | undefined> {
@@ -40,6 +44,29 @@ export class AudioCache {
 	public static async prefetch(trackId: redux.ItemId): Promise<void> {
 		const url = await this.url(trackId);
 		if (url !== undefined) await audioCacheHover(url);
+	}
+	/** Waits for a track's audio to finish filling in memory, then persists it to disk decrypted and tagged via `MediaItem.download` */
+	private static async persist(trackId: redux.ItemId, url: string): Promise<void> {
+		if (this.persisting.has(url)) return;
+		this.persisting.add(url);
+		try {
+			const dir = await audioCacheWaitFilled(url);
+			if (dir === undefined) return;
+			let filePath: string | undefined;
+			try {
+				const mediaItem = await MediaItem.fromId(trackId);
+				if (mediaItem === undefined) return;
+				const quality = redux.store.getState().settings.quality.streaming;
+				const [{ tags }, ext] = await Promise.all([mediaItem.flacTags(), mediaItem.fileExtension(quality)]);
+				const artist = tags.artist?.join(", ") || "Unknown Artist";
+				const title = tags.title || String(trackId);
+				filePath = await mediaItem.download([dir, `${artist} - ${title}.${ext}`], quality);
+			} finally {
+				await audioCachePersist(url, filePath);
+			}
+		} finally {
+			this.persisting.delete(url);
+		}
 	}
 	public static stats(): Promise<AudioCacheStats> {
 		return audioCacheStats();
@@ -58,13 +85,22 @@ export class AudioCache {
 	static {
 		this.storage.then(({ limitBytes }) => (limitBytes ? audioCacheSetLimit(limitBytes) : undefined)).catch(this.trace.err.withContext("limit"));
 
-		// The next and previous track are fetched in the background, debounced as skipping through tracks shouldn't fetch each
+		// The current, next and previous track are fetched in the background and persisted to disk once filled,
+		// debounced as skipping through tracks shouldn't fetch each
 		let cancelWindow: (() => void) | undefined;
 		const updateWindow = async () => {
 			const { elements, currentIndex } = PlayState.playQueue;
-			const ids = [currentIndex + 1, currentIndex - 1].map((index) => elements[index]?.mediaItemId);
-			const urls = await Promise.all(ids.map((id) => (id === undefined ? undefined : this.url(id))));
-			await audioCacheWindow(urls.filter((url) => url !== undefined));
+			const currentId = PlayState.playbackContext?.actualProductId ?? elements[currentIndex]?.mediaItemId;
+			const windowIds = [currentIndex + 1, currentIndex - 1].map((index) => elements[index]?.mediaItemId);
+			const [currentUrl, ...windowUrls] = await Promise.all([currentId, ...windowIds].map((id) => (id === undefined ? undefined : this.url(id))));
+			await audioCacheWindow(windowUrls.filter((url) => url !== undefined));
+			for (const [id, url] of <const>[
+				[currentId, currentUrl],
+				[windowIds[0], windowUrls[0]],
+				[windowIds[1], windowUrls[1]],
+			]) {
+				if (id !== undefined && url !== undefined) this.persist(id, url).catch(this.trace.err.withContext("persist", id));
+			}
 		};
 		redux.intercept("playbackControls/MEDIA_PRODUCT_TRANSITION", unloads, () => {
 			cancelWindow?.();

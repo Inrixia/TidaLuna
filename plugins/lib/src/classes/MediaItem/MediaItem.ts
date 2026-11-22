@@ -478,7 +478,7 @@ export class MediaItem extends ContentBase {
 	public async downloadProgress() {
 		return downloadProgress(this.id);
 	}
-	public download: (path: string | string[], audioQuality?: redux.AudioQuality) => Promise<void> = asyncDebounce(
+	public download: (path: string | string[], audioQuality?: redux.AudioQuality) => Promise<string> = asyncDebounce(
 		async (path: string | string[], audioQuality?: redux.AudioQuality) => {
 			if (this.contentType === "video") {
 				const [playbackInfo, tags] = await Promise.all([getVideoPlaybackInfo(this.id), this.flacTags()]);

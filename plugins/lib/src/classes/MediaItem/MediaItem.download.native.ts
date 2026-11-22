@@ -27,17 +27,20 @@ const fileExists = async (path: string): Promise<boolean> => {
 const downloads: Record<redux.ItemId, { progress: FetchProgress; promise: Promise<void> } | undefined> = {};
 export const downloadProgress = async (trackId: redux.ItemId) => downloads[trackId]?.progress;
 const downloadSema = new Semaphore(1);
-export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, path: string | string[], tags?: MetaTags): Promise<void> =>
+export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, path: string | string[], tags?: MetaTags): Promise<string> =>
 	downloadSema.with(async () => {
 		const itemId = "videoId" in playbackInfo ? playbackInfo.videoId : playbackInfo.trackId;
-		if (downloads[itemId] !== undefined) return downloads[itemId]!.promise;
+		if (Array.isArray(path)) path = join(...path);
+		const parsedPath = parse(path);
+		// The file is written under its sanitized name, so that is the path to check
+		const filePath = join(parsedPath.dir, sanitize(parsedPath.base));
+		if (downloads[itemId] !== undefined) {
+			await downloads[itemId]!.promise;
+			return filePath;
+		}
 		try {
-			if (Array.isArray(path)) path = join(...path);
-			const parsedPath = parse(path);
-			// The file is written under its sanitized name, so that is the path to check
-			const filePath = join(parsedPath.dir, sanitize(parsedPath.base));
 			// Dont download if file already exists
-			if (await fileExists(filePath)) return;
+			if (await fileExists(filePath)) return filePath;
 			await mkdir(parsedPath.dir, { recursive: true });
 
 			const progress = { total: 0, downloaded: 0 };
@@ -61,6 +64,7 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 			if (playbackInfo.manifestMimeType === "application/dash+xml") await finalizeDashDownload(filePath, tags);
 			// HLS video streams are MPEG-TS segments: remux to a standard MP4 and write the tags post-download
 			if (playbackInfo.manifestMimeType === "application/vnd.tidal.emu") await finalizeHlsDownload(filePath, tags);
+			return filePath;
 		} finally {
 			delete downloads[itemId];
 		}

@@ -38,6 +38,7 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 	const partialRequest = bytesWanted !== undefined;
 	if (urls.length === 1 && partialRequest) reqInit.headers.set("Range", `bytes=0-${bytesWanted}`);
 
+	let usedDecipher = false;
 	try {
 		for (let url of urls) {
 			// TIDAL's audio is read through the cache, which fills it (or answers from it) for the player too
@@ -52,11 +53,14 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 			(progress.total as number) += parseTotal(res.headers);
 			const reader = res.body?.getReader();
 			if (!reader) continue;
+			// Files served from the on-disk audio cache are already decrypted
+			const streamDecipher = res.headers.get("x-luna-decrypted") === "1" ? undefined : decipher;
+			if (streamDecipher) usedDecipher = true;
 			while (true) {
 				let { done, value } = await reader.read();
 				if (done) break;
 
-				if (decipher) value = decipher.update(value!);
+				if (streamDecipher) value = streamDecipher.update(value!);
 				(progress.downloaded as number) += value!.length;
 
 				yield value;
@@ -66,7 +70,7 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 			if (partialRequest && progress.downloaded! >= bytesWanted) return;
 		}
 	} finally {
-		if (decipher) {
+		if (decipher && usedDecipher) {
 			const decipherEnd = decipher.final();
 			(progress.downloaded as number) += decipherEnd.length;
 
