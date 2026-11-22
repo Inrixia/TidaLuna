@@ -27,6 +27,13 @@ const emit = (events: Events | undefined, name: string, ...args: unknown[]) => {
 const overflow = (axis?: string) => (axis === undefined || axis.endsWith("scroll") ? "auto" : "hidden");
 
 const instances = new WeakMap<Element, object>();
+const scrollbarElement = document.createElement("div");
+const scrollbar = {
+	scrollbar: scrollbarElement,
+	track: scrollbarElement,
+	handle: scrollbarElement,
+	clone: () => scrollbar,
+};
 let styled = false;
 /** Takes OverlayScrollbars' (target, options, events) and returns the parts of an instance TIDAL uses, with every element being the target */
 const nativeScroll = (init: Element | { target: Element }, options?: Options, events?: Events) => {
@@ -54,6 +61,8 @@ const nativeScroll = (init: Element | { target: Element }, options?: Options, ev
 		content: target,
 		scrollOffsetElement: target,
 		scrollEventElement: target,
+		scrollbarHorizontal: scrollbar,
+		scrollbarVertical: scrollbar,
 	};
 	const onScroll = (event: Event) => emit(events, "scroll", instance, event);
 	target.addEventListener("scroll", onScroll, { passive: true });
