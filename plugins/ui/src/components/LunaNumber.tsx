@@ -18,6 +18,10 @@ export type LunaNumberProps = TextFieldProps & {
 export const LunaNumber = React.memo((props: LunaNumberProps) => {
 	const theme = useTheme();
 	const [number, setNumber] = React.useState<number>(isNaN(props.value!) ? (props.defaultValue ?? 0) : (props.value ?? 0));
+	// Follow a value that loads later, so +/- step from what is shown
+	React.useEffect(() => {
+		if (props.value !== undefined && !isNaN(props.value)) setNumber(props.value);
+	}, [props.value]);
 	const onNumber = (number: any) => {
 		const num = +number;
 		if (isNaN(num)) return;

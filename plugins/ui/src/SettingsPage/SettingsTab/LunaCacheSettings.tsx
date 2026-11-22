@@ -23,6 +23,22 @@ export const LunaCacheSettings = React.memo(() => {
 		return () => clearInterval(interval);
 	}, []);
 
+	// A lower limit deletes tracks at once, so it is applied when typing stops (Enter, leaving the field, or a pause), not per keystroke:
+	// typing "100" would otherwise first set 1 GB
+	const [draftGb, setDraftGb] = React.useState<number>();
+	const applyTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+	const applyLimit = React.useCallback((gb: number | undefined) => {
+		clearTimeout(applyTimer.current);
+		if (gb === undefined) return;
+		AudioCache.setLimit(Math.max(0, gb) * GB)
+			.then(() => AudioCache.stats())
+			.then((stats) => {
+				setAudio(stats);
+				setDraftGb(undefined);
+			});
+	}, []);
+	React.useEffect(() => () => clearTimeout(applyTimer.current), []);
+
 	const limitDesc =
 		audio &&
 		`Using ${formatBytes(audio.usage)} of ${formatBytes(audio.limit)} in ${audio.files} tracks. 0 for 128 GB, never more than 75% of free disk space`;
@@ -31,8 +47,15 @@ export const LunaCacheSettings = React.memo(() => {
 			<LunaNumberSetting
 				title="Audio cache limit (GB)"
 				desc={limitDesc}
-				value={audio?.userLimit === undefined ? 0 : Math.round(audio.userLimit / GB)}
-				onNumber={(gb) => AudioCache.setLimit(Math.max(0, gb) * GB).then(() => AudioCache.stats().then(setAudio))}
+				min={0}
+				value={draftGb ?? (audio === undefined ? 0 : Math.round((audio.userLimit ?? 128 * GB) / GB))}
+				onNumber={(gb) => {
+					setDraftGb(gb);
+					clearTimeout(applyTimer.current);
+					applyTimer.current = setTimeout(() => applyLimit(gb), 2000);
+				}}
+				onBlur={() => applyLimit(draftGb)}
+				onKeyDown={(e) => e.key === "Enter" && applyLimit(draftGb)}
 			/>
 			<LunaButtonSetting title="Open audio cache folder" desc={audio?.path} onClick={() => AudioCache.openFolder()} children="Open" />
 			{audio && (
