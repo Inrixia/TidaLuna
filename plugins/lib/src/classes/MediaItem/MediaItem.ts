@@ -360,11 +360,11 @@ export class MediaItem extends ContentBase {
 	public flacTags: () => Promise<MetaTags> = memoize(() => makeTags(this));
 
 	public async copyright(): Promise<string | undefined> {
-		if (!!this.tidalItem.copyright) await this.fetchTidalMediaItem();
+		if (!this.tidalItem.copyright) await this.fetchTidalMediaItem().catch(this.trace.warn.withContext("copyright.fetchTidalMediaItem"));
 		return this.tidalItem.copyright ?? undefined;
 	}
 	public async bpm(): Promise<number | undefined> {
-		if (!!this.tidalItem.bpm) await this.fetchTidalMediaItem();
+		if (!this.tidalItem.bpm) await this.fetchTidalMediaItem().catch(this.trace.warn.withContext("bpm.fetchTidalMediaItem"));
 		return this.tidalItem.bpm ?? undefined;
 	}
 	// #endregion
