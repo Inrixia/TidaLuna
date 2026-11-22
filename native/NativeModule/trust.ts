@@ -290,7 +290,7 @@ export class NativeTrust {
 	private overruled(by: NativeTrust, replaced: Map<string, string[]>) {
 		if (by === this || by.info.fileName !== this.info.fileName) return;
 		const sameCode = by.info.hash === this.info.hash;
-		const samePlugin = by.info.url !== undefined && by.info.url === this.info.url;
+		const samePlugin = by.verifiedUrl !== undefined && by.verifiedUrl === this.info.url;
 		for (const [category, hashes] of replaced) {
 			if (sameCode || samePlugin || hashes.includes(this.info.hash)) this.decided.delete(category);
 		}
