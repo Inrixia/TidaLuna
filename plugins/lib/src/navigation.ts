@@ -17,8 +17,7 @@ for (const pattern of [
 redux.intercept("session/LOGOUT", unloads, () => requestCache.clear());
 
 // Re-run the page's loaders when data it shows changed, they get the new response from the cache
-let revalidateTimeout: ReturnType<typeof setTimeout> | undefined;
-unloads.add(() => clearTimeout(revalidateTimeout));
+let cancelRevalidate: (() => void) | undefined;
 // The ids in the current path (e.g. a playlist's uuid), otherwise its last segment (e.g. explore, albums)
 const isForCurrentPage = (url: string) => {
 	const segments = location.pathname.split("/").filter(Boolean);
@@ -28,11 +27,15 @@ const isForCurrentPage = (url: string) => {
 requestCache.onChange(unloads, (url) => {
 	// A change to another page (e.g. one prefetched on hover) mustn't reset the scroll of this one
 	if (!isForCurrentPage(url)) return;
-	clearTimeout(revalidateTimeout);
-	revalidateTimeout = setTimeout(() => {
-		const router = getRouter();
-		if (router?.state.navigation.state === "idle") router.revalidate();
-	}, 300);
+	cancelRevalidate?.();
+	cancelRevalidate = safeTimeout(
+		unloads,
+		() => {
+			const router = getRouter();
+			if (router?.state.navigation.state === "idle") router.revalidate();
+		},
+		300,
+	);
 });
 
 // Pages like artist fetch their data from components (RTK Query hooks), not route loaders, so a loader prefetch misses it.
@@ -52,49 +55,53 @@ const mapArgs = (value: unknown, map: (value: unknown) => unknown | undefined): 
 	const mapped = map(value);
 	if (mapped !== undefined) return mapped;
 	if (Array.isArray(value)) return value.map((item) => mapArgs(item, map));
-	if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, mapArgs(item, map)]));
+	if (value !== null && typeof value === "object")
+		return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, mapArgs(item, map)]));
 	return value;
 };
 const learnPageQueries = (router: DataRouter) => {
-	let learnTimeout: ReturnType<typeof setTimeout> | undefined;
+	let cancelLearn: (() => void) | undefined;
 	let learnedPath = "";
-	unloads.add(() => clearTimeout(learnTimeout));
 	unloads.add(
 		router.subscribe(({ location: { pathname } }) => {
 			if (pathname === learnedPath) return;
 			learnedPath = pathname;
-			clearTimeout(learnTimeout);
+			cancelLearn?.();
 			const match = matchRoutes(router, pathname);
 			if (match === undefined) return;
 			const ids = idParams(match.params);
 			if (ids.length === 0) return;
 			const since = Date.now();
 			// Components mount and query within a few seconds of the location changing
-			learnTimeout = setTimeout(() => {
-				if (location.pathname !== pathname) return;
-				const learned: QueryTemplate[] = [];
-				const state = <Record<string, { queries?: Record<string, RtkQueryState>; config?: unknown }>>(<unknown>redux.store.getState());
-				for (const [api, slice] of Object.entries(state)) {
-					if (slice?.queries === undefined || slice.config === undefined) continue;
-					for (const query of Object.values(slice.queries)) {
-						if ((query?.startedTimeStamp ?? 0) < since) continue;
-						let usesParam = false;
-						const args = mapArgs(query.originalArgs, (value) => {
-							const param = ids.find(([, id]) => String(value) === id);
-							if (param === undefined) return;
-							usesParam = true;
-							return { [paramMark]: param[0], number: typeof value === "number" };
-						});
-						if (usesParam) learned.push({ api, endpoint: query.endpointName, args });
+			cancelLearn = safeTimeout(
+				unloads,
+				() => {
+					if (location.pathname !== pathname) return;
+					const learned: QueryTemplate[] = [];
+					const state = <Record<string, { queries?: Record<string, RtkQueryState>; config?: unknown }>>(<unknown>redux.store.getState());
+					for (const [api, slice] of Object.entries(state)) {
+						if (slice?.queries === undefined || slice.config === undefined) continue;
+						for (const query of Object.values(slice.queries)) {
+							if ((query?.startedTimeStamp ?? 0) < since) continue;
+							let usesParam = false;
+							const args = mapArgs(query.originalArgs, (value) => {
+								const param = ids.find(([, id]) => String(value) === id);
+								if (param === undefined) return;
+								usesParam = true;
+								return { [paramMark]: param[0], number: typeof value === "number" };
+							});
+							if (usesParam) learned.push({ api, endpoint: query.endpointName, args });
+						}
 					}
-				}
-				// Merged, a visit doesn't re-query what RTK still has cached
-				const known = pageQueries[match.path] ?? [];
-				const keys = new Set(known.map((query) => JSON.stringify(query)));
-				const added = learned.filter((query) => !keys.has(JSON.stringify(query)));
-				// shortcut: grows with every distinct query a path makes, capped at 20, add expiry if TIDAL's args churn
-				if (added.length !== 0) pageQueries[match.path] = [...known, ...added].slice(-20);
-			}, 3000);
+					// Merged, a visit doesn't re-query what RTK still has cached
+					const known = pageQueries[match.path] ?? [];
+					const keys = new Set(known.map((query) => JSON.stringify(query)));
+					const added = learned.filter((query) => !keys.has(JSON.stringify(query)));
+					// shortcut: grows with every distinct query a path makes, capped at 20, add expiry if TIDAL's args churn
+					if (added.length !== 0) pageQueries[match.path] = [...known, ...added].slice(-20);
+				},
+				3000,
+			);
 		}),
 	);
 };
@@ -102,7 +109,9 @@ const rtkApis = new Map<string, RtkApi>();
 const getRtkApi = (reducerPath: string) => {
 	if (!rtkApis.has(reducerPath)) {
 		const isApi = (_: unknown, value: unknown) =>
-			typeof (<RtkApi>value)?.reducerPath === "string" && typeof (<RtkApi>value).util?.prefetch === "function" && !rtkApis.has((<RtkApi>value).reducerPath);
+			typeof (<RtkApi>value)?.reducerPath === "string" &&
+			typeof (<RtkApi>value).util?.prefetch === "function" &&
+			!rtkApis.has((<RtkApi>value).reducerPath);
 		for (const { value } of recursiveSearch<RtkApi>(tidalModules, isApi)) {
 			rtkApis.set(value.reducerPath, value);
 			if (value.reducerPath === reducerPath) break;
@@ -187,23 +196,24 @@ redux.intercept("page/SET_PAGE_ID", unloads, () => prefetching !== 0 && getRoute
 const hoverDelayMs = 65;
 const prefetchedAt = new Map<string, number>();
 let hovered: Element | null = null;
-let hoverTimeout: ReturnType<typeof setTimeout> | undefined;
+let cancelHover: (() => void) | undefined;
 const onPointerOver = (event: PointerEvent) => {
 	const link = (<Element>event.target).closest?.(`a[href^="/"]`) ?? null;
 	if (link === hovered) return;
 	hovered = link;
-	clearTimeout(hoverTimeout);
+	cancelHover?.();
 	const href = link?.getAttribute("href");
 	if (!href) return;
-	hoverTimeout = setTimeout(() => {
-		if (href === location.pathname + location.search || Date.now() - (prefetchedAt.get(href) ?? 0) < 60_000) return;
-		if (prefetchedAt.size > 500) prefetchedAt.clear();
-		prefetchedAt.set(href, Date.now());
-		prefetch(href);
-	}, hoverDelayMs);
+	cancelHover = safeTimeout(
+		unloads,
+		() => {
+			if (href === location.pathname + location.search || Date.now() - (prefetchedAt.get(href) ?? 0) < 60_000) return;
+			if (prefetchedAt.size > 500) prefetchedAt.clear();
+			prefetchedAt.set(href, Date.now());
+			prefetch(href);
+		},
+		hoverDelayMs,
+	);
 };
 document.addEventListener("pointerover", onPointerOver);
-unloads.add(() => {
-	document.removeEventListener("pointerover", onPointerOver);
-	clearTimeout(hoverTimeout);
-});
+unloads.add(() => document.removeEventListener("pointerover", onPointerOver));

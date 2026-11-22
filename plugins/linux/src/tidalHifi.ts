@@ -20,7 +20,7 @@
  * Not working:
  * - ListenBrainz scrobbling — tidal-hifi does not send API requests despite receiving correct data.
  */
-import { MediaItem, PlayState, redux } from "@luna/lib";
+import { MediaItem, PlayState, redux, safeInterval } from "@luna/lib";
 import { linuxTrace, unloads } from "./index.safe";
 
 linuxTrace.log("tidal-hifi bridge enabled");
@@ -196,11 +196,10 @@ redux.intercept("playbackControls/SEEK", unloads, (time) => {
 	if (lastInfo.title && typeof time === "number") sendUpdateInfo(PlayState.playing ? "playing" : "paused", safeNum(time));
 });
 
-const updateInterval = setInterval(() => {
+safeInterval(unloads, () => {
 	if (!lastInfo.title || !PlayState.playing) return;
 	sendUpdateInfo("playing");
 }, 5000);
-unloads.add(() => clearInterval(updateInterval));
 
 // #endregion
 

@@ -3,7 +3,7 @@ import React from "react";
 import semverGt from "semver/functions/gt";
 import semverRcompare from "semver/functions/rcompare";
 
-import { ContextMenu, ipcRenderer } from "@luna/lib";
+import { ContextMenu, ipcRenderer, safeTimeout } from "@luna/lib";
 
 import { Page } from "./classes/Page";
 
@@ -84,7 +84,7 @@ ipcRenderer.onOpenUrl(unloads, async (reqUrl) => {
 	if (route.startsWith("settings")) settingsPage.open();
 });
 
-setTimeout(async () => {
+safeTimeout(unloads, async () => {
 	const latestReleaseTag = (await fetchReleases())
 		.filter((release) => !release.prerelease)
 		.map((rel) => rel.tag_name)

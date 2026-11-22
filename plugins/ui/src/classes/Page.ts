@@ -1,5 +1,5 @@
 import type { LunaUnloads } from "@luna/core";
-import { redux } from "@luna/lib";
+import { redux, safeTimeout } from "@luna/lib";
 
 import { store as obyStore } from "oby";
 import { startTransition } from "react";
@@ -91,7 +91,7 @@ export class Page {
 			// If we are navigating to a page that exists, add it to the DOM
 			if (pageName in this.pages) {
 				const page = this.pages[pageName];
-				setTimeout(page.addtoDOM.bind(page));
+				safeTimeout(unloads, page.addtoDOM.bind(page));
 			}
 		});
 	}

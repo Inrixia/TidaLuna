@@ -3,6 +3,7 @@
 import type { VoidFn } from "@inrixia/helpers";
 import type { LunaUnloads } from "@luna/core";
 import { unloads } from "../index.safe";
+import { safeTimeout } from "./safeTimeout";
 
 export type ObserveCallback<E extends Element = Element> = (elem: E) => unknown;
 export type ObserveEntry<E extends Element = Element> = [selector: string, callback: ObserveCallback<E>];
@@ -81,11 +82,15 @@ export const observePromise = <T extends Element>(unloads: LunaUnloads, selector
 		if (elem !== null) res(elem as T);
 		const unob = observe(unloads, selector, (elem) => {
 			unob();
-			clearTimeout(timeout);
+			timeout();
 			res(elem as T);
 		});
-		const timeout = setTimeout(() => {
-			unob();
-			res(null);
-		}, timeoutMs);
+		const timeout = safeTimeout(
+			unloads,
+			() => {
+				unob();
+				res(null);
+			},
+			timeoutMs,
+		);
 	});
