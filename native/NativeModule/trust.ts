@@ -267,11 +267,11 @@ export class NativeTrust {
 		const url = this.verifiedUrl;
 		const { natives } = getStore();
 		const record = (natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
-		// Builds whose answer is replaced here
-		const replaced = new Set<string>();
+		// category -> builds whose answer for it is replaced here
+		const replaced = new Map<string, string[]>();
 		rows.forEach(({ category, modules }, i) => {
 			const answer = answers[i];
-			for (const other of record.categories[category]?.hashes ?? []) replaced.add(other);
+			replaced.set(category, record.categories[category]?.hashes ?? []);
 			retireReplaced(record.categories[category], hash);
 			record.categories[category] = { answer, hashes: [hash], modules, at: Date.now() };
 			this.decided.set(category, answer !== "deny");
@@ -280,19 +280,20 @@ export class NativeTrust {
 		});
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
-		for (const ref of live) ref.deref()?.overruled(this, rows, replaced);
+		for (const ref of live) ref.deref()?.overruled(this, replaced);
 	}
 
 	/**
-	 * `by` saved answers for `rows`: if they are about this code or plugin too, or replaced an answer that named this
-	 * build (`replaced`), they replace what this load took before
+	 * `by` saved answers for the categories of `replaced`. Where they are about this code or plugin too, or replaced an
+	 * answer that named this build, they replace what this load took before
 	 */
-	private overruled(by: NativeTrust, rows: { category: string }[], replaced: Set<string>) {
+	private overruled(by: NativeTrust, replaced: Map<string, string[]>) {
 		if (by === this || by.info.fileName !== this.info.fileName) return;
-		const sameCode = by.info.hash === this.info.hash || replaced.has(this.info.hash);
+		const sameCode = by.info.hash === this.info.hash;
 		const samePlugin = by.info.url !== undefined && by.info.url === this.info.url;
-		if (!sameCode && !samePlugin) return;
-		for (const { category } of rows) this.decided.delete(category);
+		for (const [category, hashes] of replaced) {
+			if (sameCode || samePlugin || hashes.includes(this.info.hash)) this.decided.delete(category);
+		}
 	}
 
 	/**
