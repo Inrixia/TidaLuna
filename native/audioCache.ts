@@ -48,7 +48,8 @@ type Entry = {
 	waiters: Set<() => void>;
 };
 
-const dir = path.join(electron.app.getPath("userData"), "luna-audio-cache");
+// Set when ready: reading userData fixes it, and it is derived from TIDAL's name which native/injector.ts sets after this module loads
+let dir = "";
 const entries = new Map<string, Entry>();
 /** Complete files on disk */
 const disk = new Map<string, { size: number; used: number }>();
@@ -151,14 +152,13 @@ const regate = () => {
 	for (const waiter of gateWaiters) waiter();
 	gateWaiters.clear();
 };
+const isTop = (entry: Entry) => {
+	const priority = priorityOf(entry);
+	for (const other of active) if (priorityOf(other) > priority) return false;
+	return true;
+};
 const gate = async (entry: Entry) => {
-	while (true) {
-		const priority = priorityOf(entry);
-		let top = priority;
-		for (const other of active) top = Math.max(top, priorityOf(other));
-		if (priority >= top) return;
-		await new Promise<void>((resolve) => gateWaiters.add(resolve));
-	}
+	while (!isTop(entry)) await new Promise<void>((resolve) => gateWaiters.add(resolve));
 };
 
 const wake = (entry: Entry) => {
@@ -213,7 +213,8 @@ const prune = (): Promise<void> =>
 		.finally(() => (pruning = undefined)));
 
 // Partial files from a previous run are dropped, the bytes they hold aren't known
-const ready = (async () => {
+const ready = electron.app.whenReady().then(async () => {
+	dir = path.join(electron.app.getPath("userData"), "luna-audio-cache");
 	await mkdir(dir, { recursive: true });
 	const names = new Set(await readdir(dir));
 	await Promise.all(
@@ -227,7 +228,7 @@ const ready = (async () => {
 		}),
 	);
 	await prune();
-})().catch((err) => console.error("[Luna.native] [AudioCache] Failed to read the cache folder", err));
+}).catch((err) => console.error("[Luna.native] [AudioCache] Failed to read the cache folder", err));
 
 const completed = async (entry: Entry) => {
 	entry.complete = true;
@@ -247,6 +248,8 @@ const fetchRange = async (entry: Entry, start: number, end: number, keepGoing: (
 	try {
 		const fh = await acquire(entry);
 		try {
+			await gate(entry);
+			if (!keepGoing()) return;
 			const res = await electron.net.fetch(entry.url, {
 				headers: { Range: `bytes=${start}-${end === Infinity ? "" : end - 1}` },
 				signal: abort.signal,
@@ -262,8 +265,8 @@ const fetchRange = async (entry: Entry, start: number, end: number, keepGoing: (
 			job.end = Math.min(job.end, entry.size);
 			wake(entry);
 			for await (const chunk of <AsyncIterable<Uint8Array>>(<unknown>res.body)) {
-				await gate(entry);
-				if (!keepGoing()) break;
+				// An unread response holds its connection (and HTTP/2 window) from the fetches outranking it, so drop it, fill resumes when on top
+				if (!keepGoing() || !isTop(entry)) break;
 				const length = Math.min(chunk.byteLength, job.end - job.pos);
 				await fh.write(chunk, 0, length, job.pos);
 				addRange(entry.have, job.pos, job.pos + length);
@@ -305,7 +308,11 @@ const fill = (entry: Entry) =>
 				await sleep(1000);
 			});
 		}
-	})().finally(() => (entry.filling = undefined)));
+	})().finally(() => {
+		entry.filling = undefined;
+		// Reads waiting on a fill that stopped short (e.g. the track is no longer wanted) ask again
+		wake(entry);
+	}));
 
 /** Resolves once there are new bytes (or an error) for a read at `pos` */
 const need = async (entry: Entry, pos: number) => {
@@ -347,6 +354,9 @@ const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
 	entry.readers++;
 	touch(entry);
 	const fh = acquire(entry);
+	// A read blocked on bytes outranks every other fetch, it must not outlive its connection
+	const onClose = () => wake(entry);
+	res.once("close", onClose);
 	try {
 		const rangeHeader = req.headers.range;
 		const requestedStart = Number(/^bytes=(\d+)-/.exec(rangeHeader ?? "")?.[1] ?? 0);
@@ -374,10 +384,15 @@ const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
 			if (bytesRead === 0) throw new Error(`Audio file ${entry.id} is shorter than held`);
 			stats.servedBytes += bytesRead;
 			pos += bytesRead;
-			if (!res.write(buffer.subarray(0, bytesRead))) await new Promise((resolve) => (res.once("drain", resolve), res.once("close", resolve)));
+			if (!res.write(buffer.subarray(0, bytesRead)))
+				await new Promise<void>((resolve) => {
+					const done = () => (res.off("drain", done), res.off("close", done), resolve());
+					res.on("drain", done).on("close", done);
+				});
 		}
 		res.end();
 	} finally {
+		res.off("close", onClose);
 		entry.readers--;
 		release(entry);
 	}

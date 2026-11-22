@@ -24,8 +24,8 @@ export const SettingsTab = React.memo(() => {
 			<LunaSettingsTransfer />
 			<LunaShortcuts />
 			<LunaNativePermissions />
-			<LunaFeatureFlags />
 			<LunaCacheSettings />
+			<LunaFeatureFlags />
 			<LunaSettings title="Luna core plugins" desc="Plugins providing core luna functionality">
 				{corePlugins}
 			</LunaSettings>
