@@ -155,7 +155,7 @@ export class TidalApi {
 	}
 	public static async albumItems(albumId: redux.ItemId) {
 		const albumPage = await this.fetch<AlbumPage>(
-			`https://desktop.tidal.com/v1/pages/album?albumId=${albumId}&countryCode=NZ&locale=en_US&deviceType=DESKTOP`,
+			`https://desktop.tidal.com/v1/pages/album?albumId=${albumId}&${this.queryArgs()}`,
 		);
 		for (const row of albumPage?.rows ?? []) {
 			for (const module of row.modules) {
