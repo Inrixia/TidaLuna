@@ -1,11 +1,13 @@
 import React from "react";
 
-import { requestCache } from "@luna/core";
+import { requestCache, Tracer } from "@luna/core";
 import { AudioCache, type AudioCacheStats } from "@luna/lib";
 
 import Typography from "@mui/material/Typography";
 
 import { LunaButtonSetting, LunaNumberSetting, LunaSettings } from "../../components";
+
+const { trace } = Tracer("[@luna/ui]", null);
 
 const GB = 1024 ** 3;
 const formatBytes = (bytes: number) => (bytes >= GB ? `${(bytes / GB).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`);
@@ -35,10 +37,10 @@ export const LunaCacheSettings = React.memo(() => {
 		pendingGb.current = undefined;
 		AudioCache.setLimit(Math.max(0, gb) * GB)
 			.then(() => AudioCache.stats())
-			.then((stats) => {
-				setAudio(stats);
-				if (pendingGb.current === undefined) setDraftGb(undefined);
-			});
+			.then(setAudio)
+			.catch(trace.msg.err.withContext("Failed to set the audio cache limit"))
+			// Shows the applied limit again, or the old one if setting it failed
+			.finally(() => pendingGb.current === undefined && setDraftGb(undefined));
 	}, []);
 	// Leaving the page applies what was typed
 	React.useEffect(() => applyLimit, []);
