@@ -183,6 +183,8 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
 		event.returnValue = callSync(moduleName, fn, args);
 	});
 	webContents.ipc.on("__LunaNativeHost.result", (_, id, ok, value, isError) => {
+		// A sign of life as well (see `alive` below): a host working through many slow calls answers no ping in between
+		unanswered = 0;
 		const call = pending.get(id);
 		if (call === undefined) return;
 		pending.delete(id);

@@ -72,26 +72,27 @@ const loadInMainWorld = (fileName: string, code: string, modules: Record<string,
 			`${code}
 //# sourceURL=luna://${fileName}`,
 		)(module, module.exports, require, globalThis);
+
+		// Still the code's doing if this throws: what it exported may be no object, or have getters that throw
+		const exports = module.exports;
+		host.ready(
+			Object.keys(exports).filter((name) => typeof exports[name] === "function"),
+			async (exportName, args) => {
+				try {
+					if (!Object.hasOwn(exports, exportName) || typeof exports[exportName] !== "function") {
+						throw new Error(`'${exportName}' is not an exported function of '${fileName}'`);
+					}
+					return { ok: true, value: await (exports[exportName] as (...args: unknown[]) => unknown)(...args) };
+				} catch (err) {
+					if (err instanceof Error) return { ok: false, isError: true, error: { name: err.name, message: err.message, stack: err.stack } };
+					return { ok: false, isError: false, error: err };
+				}
+			},
+		);
 	} catch (err) {
 		// A throw here would reach the preload without its message
 		return err instanceof Error ? (err.stack ?? err.message) : String(err);
 	}
-
-	const exports = module.exports;
-	host.ready(
-		Object.keys(exports).filter((name) => typeof exports[name] === "function"),
-		async (exportName, args) => {
-			try {
-				if (!Object.hasOwn(exports, exportName) || typeof exports[exportName] !== "function") {
-					throw new Error(`'${exportName}' is not an exported function of '${fileName}'`);
-				}
-				return { ok: true, value: await (exports[exportName] as (...args: unknown[]) => unknown)(...args) };
-			} catch (err) {
-				if (err instanceof Error) return { ok: false, isError: true, error: { name: err.name, message: err.message, stack: err.stack } };
-				return { ok: false, isError: false, error: err };
-			}
-		},
-	);
 };
 
 (async () => {
