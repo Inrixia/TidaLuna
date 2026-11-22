@@ -54,6 +54,6 @@ export const matchRoutes = (router: DataRouter, pathname: string) => {
 	// The same walk as React Router's matchRoutes, branches are in rank order
 	for (const branch of router.branches) {
 		const match = matchPath({ path: branch.path, caseSensitive: false, end: true }, pathname);
-		if (match !== null) return { routes: branch.routesMeta.map((meta) => meta.route), params: match.params };
+		if (match !== null) return { path: branch.path, routes: branch.routesMeta.map((meta) => meta.route), params: match.params };
 	}
 };

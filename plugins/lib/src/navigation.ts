@@ -1,6 +1,6 @@
-import { requestCache } from "@luna/core";
+import { ReactiveStore, recursiveSearch, requestCache, tidalModules } from "@luna/core";
 
-import { getRouter, matchRoutes, type DataRoute } from "./helpers/router";
+import { getRouter, matchRoutes, type DataRoute, type DataRouter } from "./helpers/router";
 import { safeTimeout } from "./helpers/safeTimeout";
 import { libTrace, unloads } from "./index.safe";
 import * as redux from "./redux";
@@ -35,6 +35,95 @@ requestCache.onChange(unloads, (url) => {
 	}, 300);
 });
 
+// Pages like artist fetch their data from components (RTK Query hooks), not route loaders, so a loader prefetch misses it.
+// Learn the queries each route path makes, with its id params as placeholders, and replay them for a hovered link of that path.
+type RtkApi = { reducerPath: string; util: { prefetch(endpoint: string, args: unknown, opts: { ifOlderThan: number }): unknown } };
+type RtkQueryState = { endpointName: string; originalArgs: unknown; startedTimeStamp?: number };
+type QueryTemplate = { api: string; endpoint: string; args: unknown };
+const paramMark = "$lunaParam";
+// Persisted so hovers prefetch from the start of a session, not only after visiting a page of the same kind
+let pageQueries: Record<string, QueryTemplate[]> = {};
+ReactiveStore.getStore("@luna/lib")
+	.getReactive<Record<string, QueryTemplate[]>>("pageQueries")
+	.then((stored) => (pageQueries = stored));
+/** Route params naming an item, slugs and view names have no digit */
+const idParams = (params: Record<string, string>) => Object.entries(params).filter(([key, value]) => key !== "*" && /\d/.test(value));
+const mapArgs = (value: unknown, map: (value: unknown) => unknown | undefined): unknown => {
+	const mapped = map(value);
+	if (mapped !== undefined) return mapped;
+	if (Array.isArray(value)) return value.map((item) => mapArgs(item, map));
+	if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, mapArgs(item, map)]));
+	return value;
+};
+const learnPageQueries = (router: DataRouter) => {
+	let learnTimeout: ReturnType<typeof setTimeout> | undefined;
+	let learnedPath = "";
+	unloads.add(() => clearTimeout(learnTimeout));
+	unloads.add(
+		router.subscribe(({ location: { pathname } }) => {
+			if (pathname === learnedPath) return;
+			learnedPath = pathname;
+			clearTimeout(learnTimeout);
+			const match = matchRoutes(router, pathname);
+			if (match === undefined) return;
+			const ids = idParams(match.params);
+			if (ids.length === 0) return;
+			const since = Date.now();
+			// Components mount and query within a few seconds of the location changing
+			learnTimeout = setTimeout(() => {
+				if (location.pathname !== pathname) return;
+				const learned: QueryTemplate[] = [];
+				const state = <Record<string, { queries?: Record<string, RtkQueryState>; config?: unknown }>>(<unknown>redux.store.getState());
+				for (const [api, slice] of Object.entries(state)) {
+					if (slice?.queries === undefined || slice.config === undefined) continue;
+					for (const query of Object.values(slice.queries)) {
+						if ((query?.startedTimeStamp ?? 0) < since) continue;
+						let usesParam = false;
+						const args = mapArgs(query.originalArgs, (value) => {
+							const param = ids.find(([, id]) => String(value) === id);
+							if (param === undefined) return;
+							usesParam = true;
+							return { [paramMark]: param[0], number: typeof value === "number" };
+						});
+						if (usesParam) learned.push({ api, endpoint: query.endpointName, args });
+					}
+				}
+				// Merged, a visit doesn't re-query what RTK still has cached
+				const known = pageQueries[match.path] ?? [];
+				const keys = new Set(known.map((query) => JSON.stringify(query)));
+				const added = learned.filter((query) => !keys.has(JSON.stringify(query)));
+				// shortcut: grows with every distinct query a path makes, capped at 20, add expiry if TIDAL's args churn
+				if (added.length !== 0) pageQueries[match.path] = [...known, ...added].slice(-20);
+			}, 3000);
+		}),
+	);
+};
+const rtkApis = new Map<string, RtkApi>();
+const getRtkApi = (reducerPath: string) => {
+	if (!rtkApis.has(reducerPath)) {
+		const isApi = (_: unknown, value: unknown) =>
+			typeof (<RtkApi>value)?.reducerPath === "string" && typeof (<RtkApi>value).util?.prefetch === "function" && !rtkApis.has((<RtkApi>value).reducerPath);
+		for (const { value } of recursiveSearch<RtkApi>(tidalModules, isApi)) {
+			rtkApis.set(value.reducerPath, value);
+			if (value.reducerPath === reducerPath) break;
+		}
+	}
+	return rtkApis.get(reducerPath);
+};
+const prefetchQueries = (path: string, params: Record<string, string>) => {
+	for (const { api, endpoint, args } of pageQueries[path] ?? []) {
+		const rtkApi = getRtkApi(api);
+		if (rtkApi === undefined) continue;
+		const filled = mapArgs(args, (value) => {
+			const param = (<Record<string, unknown>>value)?.[paramMark];
+			if (typeof param !== "string") return;
+			return (<{ number: boolean }>value).number ? Number(params[param]) : params[param];
+		});
+		// Data newer than a minute is left alone, RTK keeps the result for the page's hook to pick up
+		redux.store.dispatch(<never>rtkApi.util.prefetch(endpoint, filled, { ifOlderThan: 60 }));
+	}
+};
+
 // Prefetch a page when its link is hovered by running TIDAL's own loader for it, which fills the cache, RTK and the store
 // A count, prefetches overlap when the pointer moves over several links
 let prefetching = 0;
@@ -46,6 +135,7 @@ const prefetch = async (href: string) => {
 	if (match === undefined) return;
 	prefetching++;
 	try {
+		prefetchQueries(match.path, match.params);
 		await Promise.all(
 			match.routes.map(async (route) => {
 				// lazy loads the route's code, React Router reuses the module when navigating
@@ -73,6 +163,7 @@ const preloadPages = async (attempt = 0) => {
 		else libTrace.warn("navigation: TIDAL's router not found, not preloading pages");
 		return;
 	}
+	learnPageQueries(router);
 	const routes: DataRoute[] = router.routes.slice();
 	for (let i = 0; i < routes.length; i++) {
 		const route = routes[i];
