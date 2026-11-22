@@ -7,6 +7,8 @@ import mime from "mime";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { transformTidalModule } from "../render/src/tidalTransform";
+
 import Module, { createRequire } from "module";
 
 import { ipcHandle } from "./ipc";
@@ -189,6 +191,37 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 	}
 };
 
+// #region TIDAL module scheme
+// TIDAL's modules load natively from luna-module://<host>/<path>, transformed here. Unlike quartz's blob modules a url gets
+// V8's code cache (checked against a hash of the source), so a reload skips compiling what the last load ran.
+const moduleScheme = "luna-module";
+const moduleSchemes: Electron.CustomScheme[] = [
+	{ scheme: moduleScheme, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, codeCache: true } },
+];
+const registerSchemes = electron.protocol.registerSchemesAsPrivileged.bind(electron.protocol);
+registerSchemes(moduleSchemes);
+// A later call replaces our schemes' privileges, keep them if TIDAL or tidal-hifi register their own
+electron.protocol.registerSchemesAsPrivileged = (schemes) => registerSchemes([...moduleSchemes, ...schemes]);
+
+const tidalModuleHandler = async (req: Request): Promise<Response> => {
+	const url = new URL(req.url);
+	if (!tidalMainHosts.has(url.host)) return new Response(null, { status: 403 });
+	const origin = `https://${url.host}`;
+	const res = await electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true });
+	// shortcut: every .js is taken for a module, TIDAL's workers are inline blobs, check if a classic script ever loads from here
+	if (!res.ok || !url.pathname.endsWith(".js")) {
+		const headers = new Headers(res.headers);
+		headers.set("Access-Control-Allow-Origin", origin);
+		return new Response(res.body, { status: res.status, headers });
+	}
+	// Registers the module's exports in tidalModules (render/src/exposeTidalInternals.ts). On a new line, the source may end in a comment
+	const register = `\nimport * as __lunaSelf from ${JSON.stringify("./" + path.posix.basename(url.pathname))};globalThis.__lunaRegisterModule?.(${JSON.stringify(url.pathname)},__lunaSelf);`;
+	return new Response(transformTidalModule(await res.text()) + register, {
+		headers: { "Content-Type": "text/javascript", "Access-Control-Allow-Origin": origin },
+	});
+};
+// #endregion
+
 const registerHttpsHandler = () => {
 	try {
 		electron.protocol.handle("https", httpsHandler);
@@ -209,6 +242,7 @@ const unregisterHttpsHandler = () => {
 electron.app.whenReady().then(async () => {
 	// Register the HTTPS handler
 	registerHttpsHandler();
+	electron.protocol.handle(moduleScheme, tidalModuleHandler);
 
 	// Force service worker to fetch resources by clearing it's cache.
 	electron.session.defaultSession.clearStorageData({

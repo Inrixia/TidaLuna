@@ -5,11 +5,17 @@ import "./exposeTidalInternals.patchAction";
 
 import { resolveAbsolutePath } from "./helpers/resolvePath";
 
-import { findCreateActionFunction } from "./helpers/findCreateAction";
 import { getOrCreateLoadingContainer } from "./loadingContainer";
-import { applyTidalPatches } from "./tidalPatches";
+import "./nativeScrollbars";
+import { transformTidalModule } from "./tidalTransform";
 
 export const tidalModules: Record<string, object> = {};
+
+// TIDAL's modules load natively from native/injector.ts's luna-module scheme, which gives them V8's code cache, and register themselves here.
+// Quartz is the fallback if that fails.
+let nativeModules = true;
+const nativeModuleUrl = (path: string) => `luna-module://${location.host}${path}`;
+(<{ __lunaRegisterModule?: (path: string, module: object) => void }>globalThis).__lunaRegisterModule = (path, module) => (tidalModules[path] = module);
 
 // Store pending promises to avoid race conditions with circular imports
 const pendingModules: Record<string, Promise<object>> = {};
@@ -38,8 +44,8 @@ const prefetchImports = (path: string, code: string) => {
 	for (const match of code.matchAll(staticImport)) prefetchCode(resolveAbsolutePath(path, match[1]));
 };
 
-// Vite preloads a chunk's dependencies with <link rel="modulepreload">, useless to quartz which runs modules from blobs.
-// Fetch them for quartz instead (all at once), rather than the browser fetching and compiling them for nothing
+// Vite preloads a chunk's dependencies with <link rel="modulepreload">, of their https urls which modules don't run from.
+// Preload the luna-module url instead, or for quartz (which runs modules from blobs) fetch them all at once.
 const linkHref = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "href")!;
 Object.defineProperty(HTMLLinkElement.prototype, "href", {
 	...linkHref,
@@ -47,8 +53,11 @@ Object.defineProperty(HTMLLinkElement.prototype, "href", {
 		if (this.rel === "modulepreload") {
 			const url = new URL(href, location.href);
 			if (url.origin === location.origin) {
-				this.rel = "luna-modulepreload";
-				prefetchCode(url.pathname);
+				if (nativeModules) href = nativeModuleUrl(url.pathname);
+				else {
+					this.rel = "luna-modulepreload";
+					prefetchCode(url.pathname);
+				}
 			}
 		}
 		linkHref.set!.call(this, href);
@@ -124,9 +133,20 @@ const scripts = await waitForScripts();
 
 // Theres usually only 1 script on page that needs injecting (https://desktop.tidal.com/) see native/injector
 // So dw about blocking for loop, their code is fetched all at once
-for (const script of scripts) prefetchCode(new URL(script.src).pathname);
 for (const script of scripts) {
 	const scriptPath = new URL(script.src).pathname;
+	if (nativeModules) {
+		try {
+			await import(nativeModuleUrl(scriptPath));
+			continue;
+		} catch (err) {
+			// Running modules again through quartz would run them twice
+			if (Object.keys(tidalModules).length !== 0) throw err;
+			console.warn("[Luna] Native module loading failed, falling back to quartz", err);
+			nativeModules = false;
+			for (const script of scripts) prefetchCode(new URL(script.src).pathname);
+		}
+	}
 
 	const scriptContent = await takeCode(scriptPath);
 	prefetchImports(scriptPath, scriptContent);
@@ -141,35 +161,7 @@ for (const script of scripts) {
 				// Quartz runs transform > dynamicResolve > resolve
 				plugins: [
 					{
-						transform({ code }) {
-							// Tidal react-dom/client
-							// Lookbehind, not a leading ([\w$]+) which retries at every position of a multi MB bundle (~30ms each vs ~1ms)
-							const createRootExport = /(?<=[\w$])\.createRoot\s*=(?!=)/;
-							code = code.replace(createRootExport, ".createRoot=globalThis.__lunaCreateRoot=");
-							code = applyTidalPatches(code);
-
-							const actionData = findCreateActionFunction(code);
-
-							if (actionData) {
-								const { fnName, startIdx } = actionData;
-								const funcPrefix = "__LunaUnpatched_";
-								const renamedFn = funcPrefix + fnName;
-
-								// Rename the original function declaration by adding a prefix
-								// Example: `prepareAction` becomes `__LunaUnpatched_prepareAction`
-								code = code.slice(0, startIdx) + funcPrefix + code.slice(startIdx);
-
-								// Assuming the declaration starts 9 characters before the function name
-								// (e.g., accounting for "const " or "function ")
-								const declarationStartIdx = startIdx - 9;
-								const patchedDeclaration = `const ${fnName} = patchAction({ _: ${renamedFn} })._;`;
-
-								// Insert the new patched declaration before the original (now renamed) one
-								code = code.slice(0, declarationStartIdx) + patchedDeclaration + code.slice(declarationStartIdx);
-							}
-
-							return code;
-						},
+						transform: ({ code }) => transformTidalModule(code),
 						dynamicResolve,
 						async resolve({ name, moduleId, config, accessor, store }) {
 							(store as any).exports = await dynamicResolve({ name, moduleId, config });
@@ -193,3 +185,5 @@ for (const script of scripts) {
 
 	delete pendingModules[scriptPath];
 }
+
+setTimeout(() => (loadingContainer.style.opacity = "0"), 2000);

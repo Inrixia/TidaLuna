@@ -1,6 +1,5 @@
-// Fixes for performance bugs in TIDAL's bundled code, applied to each module's source as quartz loads it.
+// Fixes for performance bugs in TIDAL's bundled code, applied to each module's source as it loads (tidalTransform.ts).
 // Patterns are tied to library source shapes, not minified names. A patch that stops matching after a TIDAL update is skipped.
-import "./nativeScrollbars";
 
 type Patch ={ name: string; marker: string; find: RegExp; replace: string };
 
@@ -32,14 +31,8 @@ const patches: Patch[] = [
 	},
 ];
 
-const applied = new Set<string>();
+// Per module, no state, so the same source always gives the same output
 export const applyTidalPatches = (code: string) => {
-	for (const patch of patches) {
-		if (applied.has(patch.name) || !code.includes(patch.marker)) continue;
-		const patched = code.replace(patch.find, patch.replace);
-		if (patched === code) continue;
-		applied.add(patch.name);
-		code = patched;
-	}
+	for (const patch of patches) if (code.includes(patch.marker)) code = code.replace(patch.find, patch.replace);
 	return code;
 };
