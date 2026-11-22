@@ -1,6 +1,8 @@
 // Fixes for performance bugs in TIDAL's bundled code, applied to each module's source as quartz loads it.
 // Patterns are tied to library source shapes, not minified names. A patch that stops matching after a TIDAL update is skipped.
-type Patch = { name: string; marker: string; find: RegExp; replace: string };
+import "./nativeScrollbars";
+
+type Patch ={ name: string; marker: string; find: RegExp; replace: string };
 
 const patches: Patch[] = [
 	{
@@ -20,6 +22,13 @@ const patches: Patch[] = [
 		find:
 			/(\{threshold:[\w$]+,delay:[\w$]+,trackVisibility:[\w$]+,rootMargin:[\w$]+,root:[\w$]+,triggerOnce:([\w$]+),[^]{0,300}?\.useEffect\(\(\)=>\{if\(([\w$]+)\.current===void 0&&\(\3\.current=[\w$]+\),[\w$]+\|\|![\w$]+)\)return;/,
 		replace: "$1||$2&&$3.current)return;",
+	},
+	{
+		// overlayscrollbars-react useOverlayScrollbars: initialise native scrolling (nativeScrollbars.ts) instead of an OverlayScrollbars instance
+		name: "OverlayScrollbars to native scrolling",
+		marker: "data-overlayscrollbars-initialize",
+		find: /(=>\{let ([\w$]+)=([\w$]+)\.current;if\(([\w$]+)\.valid\(\2\)\)return;let [^;]{0,160}?=\(\)=>\3\.current=)\4\(/,
+		replace: "$1globalThis.__lunaNativeScroll(",
 	},
 ];
 
