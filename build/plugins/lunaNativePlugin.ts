@@ -4,7 +4,14 @@ import { defaultBuildOptions, TidalNodeVersion } from "../index";
 import { dynamicExternalsPlugin } from "./dynamicExternals";
 import { fileUrlPlugin } from "./fileUrl";
 
-export const lunaNativePlugin = (pluginEntryPoint: string, pkgName: string): Plugin => ({
+/**
+ * @param onNativeCode Called with each native module's name and built code, which is what `__Luna.registerNative` receives
+ */
+export const lunaNativePlugin = (
+	pluginEntryPoint: string,
+	pkgName: string,
+	onNativeCode?: (fileName: string, code: string) => void,
+): Plugin => ({
 	name: "lunaNativePlugin",
 	setup(build) {
 		pluginEntryPoint = pluginEntryPoint.replaceAll("\\", "/");
@@ -57,6 +64,7 @@ export const lunaNativePlugin = (pluginEntryPoint: string, pkgName: string): Plu
 
 			// sanitize output.entryPoint by removing pluginEntryPoint path from it making it relative
 			const entryPoint = nativeEntry ? pkgName : output.entryPoint?.replaceAll(path.dirname(pluginEntryPoint), pkgName);
+			if (entryPoint !== undefined) onNativeCode?.(entryPoint, outputFiles![0].text);
 
 			return {
 				contents: `

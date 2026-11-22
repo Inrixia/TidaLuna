@@ -19,8 +19,43 @@ const fetchCode = async (path: string) => {
 	return `${await res.text()}\n//# sourceURL=${path}`;
 };
 
+// Quartz resolves a module's imports one after another, so their code is fetched ahead of time
+const prefetchedCode = new Map<string, Promise<string>>();
+const prefetchCode = (path: string) => {
+	if (tidalModules[path] || path in pendingModules || prefetchedCode.has(path)) return;
+	const fetching = fetchCode(path);
+	fetching.catch(() => prefetchedCode.delete(path));
+	prefetchedCode.set(path, fetching);
+};
+const takeCode = (path: string) => {
+	const prefetched = prefetchedCode.get(path);
+	prefetchedCode.delete(path);
+	return prefetched?.catch(() => fetchCode(path)) ?? fetchCode(path);
+};
+const staticImport = /(?:\bfrom|\bimport)\s*["'](\.{1,2}\/[^"']+)["']/g;
+const prefetchImports = (path: string, code: string) => {
+	for (const match of code.matchAll(staticImport)) prefetchCode(resolveAbsolutePath(path, match[1]));
+};
+
+// Vite preloads a chunk's dependencies with <link rel="modulepreload">, useless to quartz which runs modules from blobs.
+// Fetch them for quartz instead (all at once), rather than the browser fetching and compiling them for nothing
+const linkHref = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "href")!;
+Object.defineProperty(HTMLLinkElement.prototype, "href", {
+	...linkHref,
+	set(this: HTMLLinkElement, href: string) {
+		if (this.rel === "modulepreload") {
+			const url = new URL(href, location.href);
+			if (url.origin === location.origin) {
+				this.rel = "luna-modulepreload";
+				prefetchCode(url.pathname);
+			}
+		}
+		linkHref.set!.call(this, href);
+	},
+});
+
 let loading = 0;
-const messageContainer = getOrCreateLoadingContainer().messageContainer;
+const { loadingContainer, messageContainer } = getOrCreateLoadingContainer();
 
 const dynamicResolve: QuartzPlugin["dynamicResolve"] = async ({ name, moduleId, config }) => {
 	const path = resolveAbsolutePath(moduleId, name);
@@ -31,12 +66,14 @@ const dynamicResolve: QuartzPlugin["dynamicResolve"] = async ({ name, moduleId, 
 	// If already loading, wait for the same promise instead of reloading
 	if (path in pendingModules) return pendingModules[path];
 
-	messageContainer.innerText += `Loading ${path}\n`;
+	// Appended, reading innerText forces a layout on every module load
+	messageContainer.append(`Loading ${path}`, document.createElement("br"));
 	loading++;
 
 	// Create and store the promise BEFORE starting the async work
 	const loadPromise = (async () => {
-		const code = await fetchCode(path);
+		const code = await takeCode(path);
+		prefetchImports(path, code);
 		// Load each js module and store it in the cache so we can access its exports
 		const module = await quartz(code, config, path);
 		tidalModules[path] = module;
@@ -48,7 +85,7 @@ const dynamicResolve: QuartzPlugin["dynamicResolve"] = async ({ name, moduleId, 
 	loading--;
 
 	delete pendingModules[path];
-	setTimeout(() => (document.getElementById("tidaluna-loading")!.style.opacity = "0"), 2000);
+	setTimeout(() => (loadingContainer.style.opacity = "0"), 2000);
 	return result;
 };
 
@@ -85,11 +122,13 @@ messageContainer.innerText = "Waiting for tidal scripts to load...\n";
 const scripts = await waitForScripts();
 
 // Theres usually only 1 script on page that needs injecting (https://desktop.tidal.com/) see native/injector
-// So dw about blocking for loop
+// So dw about blocking for loop, their code is fetched all at once
+for (const script of scripts) prefetchCode(new URL(script.src).pathname);
 for (const script of scripts) {
 	const scriptPath = new URL(script.src).pathname;
 
-	const scriptContent = await fetchCode(scriptPath);
+	const scriptContent = await takeCode(scriptPath);
+	prefetchImports(scriptPath, scriptContent);
 
 	// Create and store the promise BEFORE executing quartz to prevent race conditions
 	// This ensures that if dynamicResolve is called for this module during execution,

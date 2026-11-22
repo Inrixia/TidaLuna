@@ -117,9 +117,14 @@ const bundleFile = async (url: string): Promise<[Buffer, ResponseInit]> => {
 	return [content, { headers: { "Content-Type": mime.getType(fileName)! } }];
 };
 
-// Preload bundle files for https://luna/
-const lunaBundle = bundleFile("https://luna/luna.mjs").then(([content]) => content);
-ipcHandle("__Luna.renderJs", () => lunaBundle);
+// Read luna.mjs ahead of the first page load; later loads read it again, so a page reload picks up a rebuilt render bundle
+const readLunaBundle = () => bundleFile("https://luna/luna.mjs").then(([content]) => content);
+let lunaBundle: Promise<Buffer> | undefined = readLunaBundle();
+ipcHandle("__Luna.renderJs", () => {
+	const bundle = lunaBundle ?? readLunaBundle();
+	lunaBundle = undefined;
+	return bundle;
+});
 
 // #region HTTPS Handler
 const tidalMainHosts = new Set(["listen.tidal.com", "tidal.com", "desktop.tidal.com", "stage.tidal.com"]);
@@ -256,9 +261,11 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 
 		const window = new target(options);
 
-		// Allow opening dev tools with F12 without interfering with Tidal's own shortcuts (e.g., Ctrl+Shift+I)
+		// Open dev tools with F12 or Ctrl+Shift+I (Cmd+Alt+I on macOS), overriding TIDAL's own use of them
 		window.webContents.on("before-input-event", (event, input) => {
-			if (input.key === "F12") {
+			if (input.type !== "keyDown") return;
+			const ctrlShiftI = input.code === "KeyI" && (process.platform === "darwin" ? input.meta && input.alt : input.control && input.shift);
+			if (input.key === "F12" || ctrlShiftI) {
 				window.webContents.toggleDevTools();
 				event.preventDefault();
 			}

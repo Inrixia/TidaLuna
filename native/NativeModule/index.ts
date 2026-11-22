@@ -8,6 +8,7 @@ import { ipcHandle } from "../ipc";
 
 import { createHash } from "crypto";
 import * as expose from "../expose";
+import { isCoreNative } from "./coreNatives";
 import { secureLoad } from "./secureLoad";
 
 declare global {
@@ -28,6 +29,8 @@ export type NativeModuleInfo = {
 	hash: string;
 	/** Url of the plugin that registers the code, as the renderer names it (see LunaPlugin.loadExports). Not trusted as is */
 	url?: string;
+	/** Luna's own core native code, trusted without prompts (see coreNatives.ts) */
+	isCore: boolean;
 };
 
 const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: string, code: string, url?: string) => {
@@ -38,6 +41,7 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 		fileName,
 		code,
 		url,
+		isCore: await isCoreNative(hash),
 	};
 
 	let exports;

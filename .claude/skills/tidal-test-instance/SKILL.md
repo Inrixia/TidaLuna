@@ -1,7 +1,8 @@
 ---
 name: tidal-test-instance
-description: Launch a side-by-side TIDAL test instance running this repo's Luna build (dist/), then inspect it over CDP (evaluate JS, take screenshots) to verify a change in the real client. Use when asked to run, start or test Luna or TIDAL, to check that plugins load, to reproduce a runtime bug, or to screenshot the UI. Windows and Linux (tidal-hifi).
+description: Launch a side-by-side TIDAL test instance running this repo's Luna build (dist/), then drive it over CDP: evaluate JS in the page or the main process, read console logs, live reload, dump TIDAL's render and native sources, take screenshots, make raw DevTools Protocol calls (click/type, navigate, profile, debug). Use when asked to run, start or test Luna or TIDAL, to check that plugins load, to reproduce or debug a runtime bug, to find TIDAL internals to hook, or to screenshot the UI. Windows and Linux (tidal-hifi).
 ---
+
 # TIDAL test instance
 
 Separate TIDAL client: own install copy, own profile, this repo's `dist/` as Luna. Runs beside user's daily client, lives in `.tidal-test/<n>/` (gitignored). Drive with:
@@ -10,30 +11,55 @@ Separate TIDAL client: own install copy, own profile, this repo's `dist/` as Lun
 node .claude/skills/tidal-test-instance/tidal.mjs [--instance <n>] <command>
 ```
 
-| Command                 | Does                                                                                                                                                                                         |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setup [installDir]`    | Copies TIDAL install (default: newest `%LOCALAPPDATA%\TIDAL\app-*` on Windows, `/opt/tidal-hifi` on Linux), links its `resources/app` to `dist/`. Copies several hundred MB: ask user first. |
-| `start`                 | Launches instance if not running, waits for Luna load. Logged out: copies daily client login (its `Local Storage`), restarts, so instance logged in as user.                                 |
-| `eval "<expression>"`   | Evaluates in page, awaits promises, prints result as JSON (return plain data, not DOM nodes).                                                                                                |
-| `screenshot <file.png>` | Saves screenshot. Write to scratchpad, Read it to see UI.                                                                                                                                    |
-| `stop`                  | Kills only this instance's processes.                                                                                                                                                        |
+| Command                                         | Does                                                                                                                                                                                         |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setup [installDir]`                            | Copies TIDAL install (default: newest `%LOCALAPPDATA%\TIDAL\app-*` on Windows, `/opt/tidal-hifi` on Linux), links its `resources/app` to `dist/`. Copies several hundred MB: ask user first. |
+| `start`                                         | Launches instance if not running, waits for Luna load. Logged out: copies daily client login (its `Local Storage`), restarts, so instance logged in as user.                                 |
+| `reload`                                        | Reloads page, waits for Luna. Picks up rebuilt `luna.mjs` (`render/`), `preload.mjs`, all plugins.                                                                                           |
+| `eval "<expression>"`                           | Evaluates in page (renderer), awaits promises, prints result as JSON (return plain data, not DOM nodes).                                                                                     |
+| `native "<expression>"`                         | Same in Electron main process (Node inspector). `require` available.                                                                                                                         |
+| `logs [seconds]`                                | Prints page console so far (incl. forwarded `[Luna.native]` logs, exceptions), then follows for `seconds` (default 0). Pipe through `grep`/`tail`.                                           |
+| `dump [dir]`                                    | Writes TIDAL's loaded web modules to `<dir>/render`, main-process sources (`original.asar`, no `node_modules`) to `<dir>/native`. Default `.tidal-test/<n>/sources`.                         |
+| `screenshot <file.png>`                         | Saves screenshot. Write to scratchpad, Read it to see UI.                                                                                                                                    |
+| `cdp [--native] <method> ['<params json>'] ...` | Raw DevTools Protocol calls on page (or main process with `--native`), in order on one session, prints each result. See below.                                                               |
+| `stop`                                          | Kills only this instance's processes.                                                                                                                                                        |
 
-Instance `n` uses CDP port `9230 + n` (default instance 1, port 9231).
+Instance `n` uses CDP port `9230 + n`, main-process inspector port `9330 + n` (instance 1: 9231, 9331). Main-process stdout/stderr go to `.tidal-test/<n>/main.log`: live native console (all native logs incl. before window exists, crashes), follow with `tail -f`. Page `logs` also shows native logs forwarded once window exists.
+
+## DevTools Protocol
+
+All Chrome DevTools does goes over these ports. Full schema (types, descriptions, every domain/method/event): `curl http://127.0.0.1:9231/json/protocol` (page), `:9331/json/protocol` (main process, Node's subset: Runtime, Debugger, Profiler, HeapProfiler…). `cdp` calls any of it; put `<Domain>.enable` first when method needs it. Examples:
+
+- Click/type in UI: `cdp Input.dispatchMouseEvent '{"type":"mousePressed","x":100,"y":200,"button":"left","clickCount":1}' Input.dispatchMouseEvent '{"type":"mouseReleased","x":100,"y":200,"button":"left","clickCount":1}'`, `cdp Input.insertText '{"text":"query"}'`. Get coordinates from `eval` (`getBoundingClientRect()`) or screenshot.
+- Navigate in app: `eval 'luna.lib.redux.actions["router/PUSH"]({ pathname: "/my-collection/albums", search: "", replace: false })'`. (`cdp Page.navigate` does full page load, like `reload`.)
+- Metrics/memory: `cdp Performance.enable Performance.getMetrics`, `cdp --native Runtime.getHeapUsage`.
+- Calls needing open session (pausing breakpoints, profiling across user actions, event streams) don't fit one-shot `cdp`: write short Node script reusing `connect` from `tidal.mjs`, or use `eval`/`native` (e.g. wrap function to log calls).
+
+User can attach real Chrome DevTools too (live consoles, sources with Luna sourcemaps, breakpoints, profiler): `chrome://inspect` → Configure → add `127.0.0.1:9231` and `127.0.0.1:9331`. F12 or Ctrl+Shift+I in window opens its page DevTools.
 
 ## Workflow
 
 1. Run `setup` if `.tidal-test/1/app` missing (ask first).
-2. Build with `pnpm exec tsx ./esbuild.config.ts`. Same as `pnpm run build` minus deleting `dist/` first — matters because dev's daily client often runs from this `dist/` too. Every build reaches daily client on next load: revert and rebuild when done with test change.
+2. Build with `pnpm exec tsx ./esbuild.config.ts` (add `--watch`, run in background to rebuild on change). Same as `pnpm run build`/`watch` minus deleting `dist/` first — matters since dev's daily client often runs from this `dist/` too. Every build reaches daily client on next load: revert and rebuild when done with test change.
 3. Run `start`.
-4. After rebuilding core plugin, reload in place: `eval 'luna.core.LunaPlugin.getByName("@luna/ui").reload()'`. Changes to `native/` or `render/` need `stop` then `start`.
-5. Check result with `eval` and `screenshot`, then `stop`.
+4. Apply changes, fastest first:
+   - Plugins: `eval 'Object.values(luna.core.LunaPlugin.plugins).forEach((p) => (p.liveReload = true))'` once (saved in test profile); with `--watch` running, each plugin reloads ~1s after rebuild, native code included. Or reload one: `eval 'luna.core.LunaPlugin.getByName("@luna/ui").reload()'`.
+   - `render/`, `native/preload.ts`: `reload`.
+   - Rest of `native/` (main process): `stop` then `start`.
+5. Check result with `eval`, `native`, `logs`, `screenshot`, then `stop`.
 
-Useful expressions:
+## Hooks into the client
 
+- Page: `luna.core` (`@luna/core`: `LunaPlugin`, `modules`, `tidalModules`, `reduxStore` …) and every loaded plugin's exports in `luna.core.modules[<package name>]` (core plugins also on `luna.lib`, `luna.ui`, `luna.dev`). Call any export directly, e.g. Redux state `luna.lib.redux.store.getState()`.
+- Main process: global `luna` holds Luna's exposed native functions and `luna.modules[<file>]`, every plugin's loaded `*.native.ts` exports (call directly). `require("electron")` for windows, sessions, app. Electron's `fs` reads inside asars: `require("fs").readdirSync(process.resourcesPath + "/original.asar")`.
+- Find TIDAL code to hook: `dump`, then grep `.tidal-test/<n>/sources`. Only modules TIDAL loaded so far get dumped: navigate (or trigger feature) first for lazy ones. Luna's own bundles (with sourcemaps) in `dist/`.
 - Plugins and load errors: `Object.values(luna.core.LunaPlugin.plugins).map((p) => ({ name: p.name, enabled: p.enabled, loadError: p.loadError._ }))`
 - Open Luna Settings: `luna.ui.settingsPage.open()`, pick tab with `luna.ui.SettingsTabs.open("Themes")`.
-
-Main-process (`native/`) logs reach page console with `[Luna.native]` prefix.
+- Redux: every TIDAL action type is key of `luna.core.buildActions`; dispatch with `luna.lib.redux.actions[type](payload)`, state via `luna.lib.redux.store.getState()`.
+- `@luna/dev` (`luna.dev`) exists for this; read `plugins/dev/src` for current exports. Main ones:
+  - Logging, saved in `luna.dev.storage` (persists, applied on plugin load; set then `luna.core.LunaPlugin.getByName("@luna/dev").reload()`): `logReduxEvents` (every Redux action with payload, filtered by regex `logInterceptsRegex`), `logIPCFromNative` (Native → Render IPC), `logIPCFromRender` (Render → Native IPC). IPC logs also toggle directly: `luna.dev.startNativeIPCLog()`/`stopNativeIPCLog()`, `startRenderIpcLog()`/`stopRenderIpcLog()`. Read with `logs`/`main.log`; turn off when done.
+  - TIDAL IPC channel names: `luna.dev.getNativeIPCEvents()`, `luna.dev.getRenderIPCEvents()`.
+  - `luna.dev.startNativeDebugging()` starts main-process inspector in client launched without `--inspect`, e.g. user's daily client. Test instance already has one on 9331.
 
 ## Don't
 

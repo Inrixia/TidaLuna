@@ -74,6 +74,8 @@ export class NativeTrust {
 		if (this.active) return;
 		this.active = true;
 		this.settling = false;
+		// Luna's own code needs no answers, old or new (see decide)
+		if (this.info.isCore) return;
 		// So a module first used later can be allowed for updates (see askNow), and old answers move to the plugin url's entry
 		void this.verify().finally(() => this.adoptLegacy());
 	}
@@ -134,13 +136,15 @@ export class NativeTrust {
 	/** Before the first run: an update allowed "also for updates" needs the url checked, or its run fails and is repeated */
 	public async prepare() {
 		const { fileName, hash, url } = this.info;
-		if (url === undefined) return;
+		if (url === undefined || this.info.isCore) return;
 		const claimed = getStore().natives[recordKey(fileName, hash, url)];
 		const forUpdates = Object.values(claimed?.categories ?? {}).some(({ answer, hashes }) => answer === "allowUpdates" && !hashes.includes(hash));
 		if (forUpdates) await this.verify();
 	}
 
 	private decide(moduleName: string): boolean | undefined {
+		// Luna's own code, built together with this injector: still sandboxed, just no window or prompt
+		if (this.info.isCore) return true;
 		const category = categoryOf(moduleName);
 		const decided = this.decided.get(category);
 		if (decided !== undefined) return decided;

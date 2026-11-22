@@ -1,12 +1,15 @@
 packages:
- - "./native"
- - "./render"
- - "./plugins/*"
+  - "./native"
+  - "./render"
+  - "./plugins/*"
 
 overrides:
- yaml@<1.10.3: ">=1.10.3"
+  yaml@<1.10.3: ">=1.10.3"
 
 allowBuilds:
- "@biomejs/biome": true
- electron: true
- esbuild: true
+  "@biomejs/biome": true
+  electron: true
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@inrixia/helpers@3.22.0'
