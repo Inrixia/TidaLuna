@@ -2,6 +2,8 @@ import { unloadableEmitter, type AnyFn } from "@inrixia/helpers";
 
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 
+import { tidalMainHosts } from "./tidalHosts";
+
 const ipcRendererUnloadable = unloadableEmitter(ipcRenderer, null, "ipcRenderer");
 
 // Support both contextIsolation: true (official Tidal) and false (tidal-hifi)
@@ -16,13 +18,18 @@ const expose = (name: string, value: any) => {
 // Expose platform for OS-specific plugins
 expose("__platform", process.platform);
 
+// This preload runs for every page the session loads (popups, TIDAL's crash and error pages, anything a window navigates to).
+// Only TIDAL's own pages, the ones Luna loads into, get the IPC bridge: it reaches every handler in the main process
+const isTidalPage = location.protocol === "https:" && tidalMainHosts.has(location.hostname);
+
 // Allow render side to execute invoke
-expose("__ipcRenderer", {
-	invoke: ipcRenderer.invoke,
-	send: ipcRenderer.send,
-	on: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onU(null, channel, (_, ...args) => listener(...args)),
-	once: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onceU(null, channel, (_, ...args) => listener(...args)),
-});
+if (isTidalPage)
+	expose("__ipcRenderer", {
+		invoke: ipcRenderer.invoke,
+		send: ipcRenderer.send,
+		on: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onU(null, channel, (_, ...args) => listener(...args)),
+		once: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onceU(null, channel, (_, ...args) => listener(...args)),
+	});
 
 type ConsoleMethodName = {
 	[K in keyof Console]: Console[K] extends (...args: any[]) => any ? K : never;
@@ -37,6 +44,7 @@ ipcRenderer.on("__Luna.console", (_event, prop: ConsoleMethodName, args: any[]) 
 
 // Load the luna.js renderer code and store it in window.luna.core
 (async () => {
+	if (!isTidalPage) return;
 	try {
 		await webFrame.executeJavaScript(
 			`(async () => {

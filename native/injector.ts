@@ -11,6 +11,7 @@ import Module, { createRequire } from "module";
 
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
+import { tidalMainHosts } from "./tidalHosts";
 
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 
@@ -127,7 +128,6 @@ ipcHandle("__Luna.renderJs", () => {
 });
 
 // #region HTTPS Handler
-const tidalMainHosts = new Set(["listen.tidal.com", "tidal.com", "desktop.tidal.com", "stage.tidal.com"]);
 const lunaPages = new Set<string>();
 ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
 
