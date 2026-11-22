@@ -33,11 +33,12 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 		if (downloads[itemId] !== undefined) return downloads[itemId]!.promise;
 		try {
 			if (Array.isArray(path)) path = join(...path);
-			// Dont download if file already exists
-			if (await fileExists(path)) return;
 			const parsedPath = parse(path);
-			await mkdir(parsedPath.dir, { recursive: true });
+			// The file is written under its sanitized name, so that is the path to check
 			const filePath = join(parsedPath.dir, sanitize(parsedPath.base));
+			// Dont download if file already exists
+			if (await fileExists(filePath)) return;
+			await mkdir(parsedPath.dir, { recursive: true });
 
 			const progress = { total: 0, downloaded: 0 };
 			const stream = await fetchMediaItemStream(playbackInfo, {
