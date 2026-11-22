@@ -366,11 +366,15 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			rendererAlive = false;
 			_console.error(consolePrefix, `Renderer process gone: ${details.reason}`);
 		});
+		// Code that reads a console method and later writes it back (Sentry does on every unhandled rejection) leaves one of these
+		// wrappers on the real console. Wrapping it again would prefix and forward every log once more each time
+		const wrappers = new WeakSet<Function>();
 		console = new Proxy(_console, {
 			get(target, prop, receiver) {
 				const originalValue = target[prop as keyof typeof target];
 				if (typeof originalValue === "function") {
-					return (...args: any[]) => {
+					if (wrappers.has(originalValue)) return originalValue;
+					const wrapper = (...args: any[]) => {
 						if (args.length > 0) {
 							args = [consolePrefix, ...args];
 						}
@@ -385,6 +389,8 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 							}
 						}
 					};
+					wrappers.add(wrapper);
+					return wrapper;
 				}
 				// Return non-function properties directly
 				return Reflect.get(target, prop, receiver);
