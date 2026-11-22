@@ -67,6 +67,8 @@ const hosts = new Map<string, Host>();
 // fileName -> number of the load asked for last. Loads finish in any order, the one asked for last has to win.
 // A load that is not the last one any more is given up (see startHost): whoever asked last gets the answer.
 const lastLoad = new Map<string, number>();
+// fileName -> number of the newest load asked for. Never taken back, unlike `lastLoad` (see startHost)
+const asked = new Map<string, number>();
 // fileName -> number of the load whose host served the file last, running or died
 const served = new Map<string, number>();
 // Load numbers are never given out twice: a load that was given up must not match `lastLoad` again later
@@ -79,16 +81,10 @@ export class LoadedAgain extends Error {
 	}
 }
 
-/** Stops the process that runs `fileName`, if any */
-/** Changes whenever a load of `fileName` is asked for: a slower load of it that sees another value has been outrun */
-export const isolatedLoadOf = (fileName: string) => lastLoad.get(fileName);
-export const stopIsolated = (fileName: string) => hosts.get(fileName)?.stop(new LoadedAgain(fileName));
-
-/** @param restartOf Load number of a host whose process died: its restart is the same load, so it never outranks a later one */
-const startHost = async (moduleInfo: NativeModuleInfo, restartOf?: number): Promise<Host> => {
+/** @param load A new number, or that of a host whose process died: its restart is the same load, so it never outranks a later one */
+const startHost = async (moduleInfo: NativeModuleInfo, load: number): Promise<Host> => {
 	const { fileName } = moduleInfo;
 	const before = lastLoad.get(fileName) ?? 0;
-	const load = restartOf ?? ++loads;
 	lastLoad.set(fileName, Math.max(load, before));
 	try {
 		return await loadHost(moduleInfo, load);
@@ -219,10 +215,24 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
  * `require` only knows the modules in ./syncModules.ts, everything else is what a web page has, without network.
  * The process is identified by its webContents, so nothing it sends can make it act as another module.
  * Loading a `fileName` again stops the process that ran it before.
+ *
+ * @param fallback Loads the code some other way if no host could load it. A load of the file asked for meanwhile still wins.
  */
-export const isolatedLoad = async (moduleInfo: NativeModuleInfo): Promise<NativeExports> => {
+export const isolatedLoad = async (moduleInfo: NativeModuleInfo, fallback?: (err: unknown) => Promise<NativeExports>): Promise<NativeExports> => {
 	const { fileName } = moduleInfo;
-	let host = await startHost(moduleInfo);
+	const load = ++loads;
+	asked.set(fileName, load);
+	let host: Host;
+	try {
+		host = await startHost(moduleInfo, load);
+	} catch (err) {
+		if (fallback === undefined || err instanceof LoadedAgain) throw err;
+		const exports = await fallback(err);
+		if (asked.get(fileName) !== load) throw new LoadedAgain(fileName);
+		// Only now: had the fallback failed too, the host that ran the file before would keep answering
+		hosts.get(fileName)?.stop(new LoadedAgain(fileName));
+		return exports;
+	}
 	let restart: Promise<Host> | undefined;
 
 	// No prototype: the export name comes from the renderer and must not find Object.prototype's functions

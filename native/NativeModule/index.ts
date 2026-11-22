@@ -9,7 +9,7 @@ import { ipcHandle } from "../ipc";
 import { createHash } from "crypto";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
-import { isIsolatedNative, isolatedLoad, isolatedLoadOf, LoadedAgain, stopIsolated } from "./isolated";
+import { isIsolatedNative, isolatedLoad } from "./isolated";
 import { secureLoad } from "./secureLoad";
 
 declare global {
@@ -36,16 +36,12 @@ export type NativeModuleInfo = {
 
 // Luna's own code is trusted wherever it runs, so it still loads where no isolated process can start (e.g. an older Electron).
 // Anyone else's code named isolated was never allowed into the main process.
-const isolatedLoadFailed = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow) => async (err: unknown) => {
-	if (!moduleInfo.isCore || err instanceof LoadedAgain) throw err;
-	console.warn(`[Luna.native] Can't isolate '${moduleInfo.fileName}', loading it in the main process`, err);
-	const asked = isolatedLoadOf(moduleInfo.fileName);
-	const exports = await secureLoad(moduleInfo, parent);
-	// A newer load of the file was asked for meanwhile: it wins, as between two isolated loads
-	if (isolatedLoadOf(moduleInfo.fileName) !== asked) throw new LoadedAgain(moduleInfo.fileName);
-	// Only now: if this load failed too, the host that ran the file before keeps answering
-	stopIsolated(moduleInfo.fileName);
-	return exports;
+const mainProcessFallback = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow) => {
+	if (!moduleInfo.isCore) return undefined;
+	return (err: unknown) => {
+		console.warn(`[Luna.native] Can't isolate '${moduleInfo.fileName}', loading it in the main process`, err);
+		return secureLoad(moduleInfo, parent);
+	};
 };
 
 const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: string, code: string, url?: string) => {
@@ -63,7 +59,7 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 	try {
 		const parent = BrowserWindow.fromWebContents(event.sender) ?? undefined;
 		exports = isIsolatedNative(fileName)
-			? await isolatedLoad(moduleInfo).catch(isolatedLoadFailed(moduleInfo, parent))
+			? await isolatedLoad(moduleInfo, mainProcessFallback(moduleInfo, parent))
 			: await secureLoad(moduleInfo, parent);
 	} catch (err) {
 		const isDepricatedModule = Error.isError(err) && /Cannot use import statement outside a module/i.test(err.message);
