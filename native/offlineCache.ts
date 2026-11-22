@@ -20,6 +20,8 @@ const v1Hosts = new Set(["api.tidal.com", "desktop.tidal.com"]);
 const isTidalHost = (url: URL) => url.hostname === "tidal.com" || url.hostname.endsWith(".tidal.com");
 const isTidalApi = (url: URL) =>
 	url.hostname === "api.tidal.com" || url.hostname === "openapi.tidal.com" || (tidalMainHosts.has(url.hostname) && /^\/v[12]\//.test(url.pathname));
+// Only TIDAL's api and app say whether it is online, one image or cdn failing is not being offline
+const tellsOnline = (url: URL) => isTidalApi(url) || tidalMainHosts.has(url.hostname);
 // Both hosts serve the same v1 api (TIDAL uses api., Luna uses desktop.), share their cache entries like requestCache.ts does
 const keyOf = (url: URL) => {
 	if (!isTidalHost(url)) return url.href;
@@ -72,7 +74,7 @@ export const staleIfError = async (url: string, fetch: () => Promise<Response>, 
 		res = await fetch();
 	} catch (err) {
 		if (req?.signal.aborted) throw err;
-		if (isTidalHost(parsedUrl)) {
+		if (tellsOnline(parsedUrl)) {
 			isOffline = true;
 			globalThis.luna?.sendToRender?.("__Luna.offlineStatus", true);
 		}
@@ -102,7 +104,7 @@ export const staleIfError = async (url: string, fetch: () => Promise<Response>, 
 		}
 		throw err;
 	}
-	if ((isTidalApi(parsedUrl) || tidalMainHosts.has(parsedUrl.hostname)) && (isOffline || parsedUrl.pathname === "/v1/ping")) {
+	if (tellsOnline(parsedUrl) && (isOffline || parsedUrl.pathname === "/v1/ping")) {
 		isOffline = false;
 		globalThis.luna?.sendToRender?.("__Luna.offlineStatus", false);
 	}
