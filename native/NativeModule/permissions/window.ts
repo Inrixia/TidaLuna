@@ -20,10 +20,14 @@ const escapeHtml = (text: string) =>
 const SUBMIT = "luna-permissions:";
 
 const keptText: Record<PermissionAnswer, string> = {
-	allow: "allowed",
-	allowUpdates: "allowed, also for updates",
+	allow: "allowed for this version",
+	allowUpdates: "allowed for all versions",
 	deny: "denied",
 };
+
+/** Shown before "All versions" is taken, here and in the message box of a module first used after the load */
+export const ALL_VERSIONS_WARNING =
+	"Every future update from this source gets this access without asking. If the plugin's author, or anyone who takes over its repository or release, ships harmful code, it runs with this access.";
 
 const buildHtml = ({ fileName, url, claimedUrl, rows, kept }: PermissionRequest) => {
 	// "DiscordRPC/discord.native.ts" -> plugin "DiscordRPC", file "discord.native.ts"
@@ -41,13 +45,13 @@ const buildHtml = ({ fileName, url, claimedUrl, rows, kept }: PermissionRequest)
 			const { label, description } = categoryInfo(category);
 			const updates =
 				url !== undefined
-					? `<label title="Also allow future versions from this source"><input type="radio" name="r${i}" value="allowUpdates"> Allow, also for updates</label>`
+					? `<label class="risky" title="Also allow future versions from this source, after a confirmation"><input type="radio" name="r${i}" value="allowUpdates"> All versions</label>`
 					: "";
 			return `<div class="row">
 	<div class="what"><div class="name">${escapeHtml(label)}</div><div class="desc">${escapeHtml(description)}</div><div class="modules">${escapeHtml(modules.join(", "))}</div></div>
 	<div class="choices">
 		<label><input type="radio" name="r${i}" value="deny"> Deny</label>
-		<label><input type="radio" name="r${i}" value="allow"> Allow</label>
+		<label><input type="radio" name="r${i}" value="allow"> This version</label>
 		${updates}
 	</div>
 </div>`;
@@ -88,6 +92,13 @@ h2 { font-size:16px; margin-bottom:12px; }
 .actions { display:flex; justify-content:flex-end; }
 button { padding:8px 16px; border:none; border-radius:4px; background:#eb1e32; color:#fff; cursor:pointer; font-size:13px; }
 button:disabled { background:#333; color:#777; cursor:default; }
+.choices .risky { color:#ff5a5a; }
+#confirm { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); align-items:center; justify-content:center; padding:24px; }
+#confirm.open { display:flex; }
+#confirm .box { background:#2a1414; border:1px solid #eb1e32; border-radius:6px; padding:16px 18px; font-size:13px; color:#eee; line-height:1.5; max-width:520px; }
+#confirm .box h3 { color:#ff5a5a; font-size:15px; margin-bottom:8px; }
+#confirm .buttons { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+#confirm .cancel { background:#444; }
 </style>
 </head>
 <body>
@@ -102,16 +113,47 @@ ${keptHtml}
 <div class="warn">
 	Only allow what you trust this plugin with. Allowed native code may get FULL SYSTEM ACCESS.
 	<ul>
-		<li>Allow: until an update changes this file, or the plugin is reinstalled</li>
-		${url !== undefined ? "<li>Allow, also for updates: until the plugin is reinstalled</li>" : ""}
+		<li>This version: until an update changes this file, or the plugin is reinstalled</li>
+		${url !== undefined ? "<li>All versions: also for later updates from this source, until the plugin is reinstalled (asks for a confirmation)</li>" : ""}
 		<li>Deny: ${url !== undefined ? "until the plugin is reinstalled" : "until an update changes this file, or the plugin is reinstalled"}</li>
 	</ul>
 	<div style="margin-top:6px">Answers can be revoked in Luna Settings. Closing this window answers nothing: you will be asked again next time.</div>
 </div>
 <div class="actions"><button id="validate" disabled>Validate</button></div>
+<div id="confirm"><div class="box">
+	<h3>Allow <span id="confirm-what"></span> for all versions?</h3>
+	<div>${escapeHtml(ALL_VERSIONS_WARNING)}</div>
+	<div class="buttons"><button class="cancel" id="confirm-no">Cancel</button><button id="confirm-yes">Allow all versions</button></div>
+</div></div>
 <script>
 const count = ${rows.length};
+const labels = ${JSON.stringify(rows.map(({ category }) => categoryInfo(category).label)).replace(/</g, "\\u003c")};
 const validate = document.getElementById("validate");
+const confirmBox = document.getElementById("confirm");
+// "All versions" stays picked only once confirmed: Cancel puts back the row's previous choice
+let pendingRisky;
+const previous = new Map();
+document.addEventListener("change", (event) => {
+	const input = event.target;
+	if (input.value === "allowUpdates") {
+		pendingRisky = input;
+		document.getElementById("confirm-what").textContent = labels[Number(input.name.slice(1))];
+		confirmBox.classList.add("open");
+	} else previous.set(input.name, input);
+}, true);
+document.getElementById("confirm-yes").addEventListener("click", () => {
+	previous.set(pendingRisky.name, pendingRisky);
+	pendingRisky = undefined;
+	confirmBox.classList.remove("open");
+});
+document.getElementById("confirm-no").addEventListener("click", () => {
+	pendingRisky.checked = false;
+	const before = previous.get(pendingRisky.name);
+	if (before !== undefined) before.checked = true;
+	pendingRisky = undefined;
+	confirmBox.classList.remove("open");
+	validate.disabled = answers() === undefined;
+});
 const answers = () => {
 	const chosen = [];
 	for (let i = 0; i < count; i++) {
@@ -123,6 +165,7 @@ const answers = () => {
 };
 document.addEventListener("change", () => (validate.disabled = answers() === undefined));
 validate.addEventListener("click", () => {
+	if (pendingRisky !== undefined) return;
 	const chosen = answers();
 	if (chosen !== undefined) document.title = "${SUBMIT}" + JSON.stringify(chosen);
 });

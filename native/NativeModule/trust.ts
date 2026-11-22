@@ -13,7 +13,7 @@ import {
 	type PermissionAnswer,
 } from "./permissions/store";
 import { verifySource } from "./permissions/verifySource";
-import { askPermissions } from "./permissions/window";
+import { ALL_VERSIONS_WARNING, askPermissions } from "./permissions/window";
 
 import type { NativeModuleInfo } from ".";
 
@@ -25,6 +25,15 @@ const live = new Set<WeakRef<NativeTrust>>();
 // call into other loaded files (e.g. luna.lib.native): their calls that need an answer are asked after its run too
 let running: NativeTrust | undefined;
 const waiting = new Set<NativeTrust>();
+
+/**
+ * An entry is about to be replaced by one for `hash`: the other builds it named drop out of the record, so revoke and
+ * uninstall could no longer retire their old answers. Retire them now (those builds are asked again if they ever load)
+ */
+const retireReplaced = (existing: NativeRecord["categories"][string] | undefined, hash: string) => {
+	const others = existing?.hashes.filter((other) => other !== hash) ?? [];
+	if (others.length > 0) retireLegacy(new Set(others));
+};
 
 /**
  * Permissions of one load of a native file. Node modules are asked for by category (see permissions/categories.ts),
@@ -200,6 +209,7 @@ export class NativeTrust {
 		const record = (natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
 		rows.forEach(({ category, modules }, i) => {
 			const answer = answers[i];
+			retireReplaced(record.categories[category], hash);
 			record.categories[category] = { answer, hashes: [hash], modules, at: Date.now() };
 			this.decided.set(category, answer !== "deny");
 			// Old answers for every module of the category, also those the code did not use, must not outlive it
@@ -223,9 +233,10 @@ export class NativeTrust {
 			const record = (getStore().natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
 			const existing = record.categories[category];
 			// One build per entry: old answers were given per build and module, so another build's modules must not add up
-			if (existing === undefined || (existing.onlyModules && !existing.hashes.includes(hash)))
+			if (existing === undefined || (existing.onlyModules && !existing.hashes.includes(hash))) {
+				retireReplaced(existing, hash);
 				record.categories[category] = { answer: "allow", hashes: [hash], modules: adopted, onlyModules: true, at: Date.now() };
-			else if (existing.onlyModules) existing.modules = [...new Set([...existing.modules, ...adopted])];
+			} else if (existing.onlyModules) existing.modules = [...new Set([...existing.modules, ...adopted])];
 			else continue;
 			migrateLegacy(hash, adopted);
 			changed = true;
@@ -279,10 +290,10 @@ export class NativeTrust {
 		const { label, description } = categoryInfo(category);
 		// "Not now" (also Esc or closing) saves nothing: denied for this load, asked again next time
 		const answers: (PermissionAnswer | undefined)[] = [undefined, "deny", "allow"];
-		const buttons = ["Not now", "Deny", "Allow"];
+		const buttons = ["Not now", "Deny", "This version"];
 		if (this.verifiedUrl !== undefined) {
 			answers.push("allowUpdates");
-			buttons.push("Allow, also for updates");
+			buttons.push("All versions...");
 		}
 		// Not owned by a hidden or minimized window: the box would be hidden with it while it blocks the main process
 		const win = [BrowserWindow.getFocusedWindow(), this.parent].find((w) => w != null && !w.isDestroyed() && w.isVisible() && !w.isMinimized());
@@ -297,12 +308,27 @@ export class NativeTrust {
 Module: ${moduleName}
 Source: ${this.verifiedUrl ?? this.info.url ?? "unknown"}
 If allowed, this may grant FULL SYSTEM ACCESS (Files, Network, Processes, etc).
-Only click "Allow" if you trust this!`,
+Only allow it if you trust this plugin!`,
 			noLink: true,
 			normalizeAccessKeys: true,
 		};
-		const response = win != null ? dialog.showMessageBoxSync(win, options) : dialog.showMessageBoxSync(options);
-		const answer = answers[response];
+		const show = (options: Electron.MessageBoxSyncOptions) =>
+			win != null ? dialog.showMessageBoxSync(win, options) : dialog.showMessageBoxSync(options);
+		let answer = answers[show(options)];
+		// Allowing all versions must be confirmed: later code from this source gets it without asking
+		if (answer === "allowUpdates") {
+			const confirmed = show({
+				type: "warning",
+				buttons: ["Cancel", "Allow all versions"],
+				defaultId: 0,
+				cancelId: 0,
+				title: "Allow all versions?",
+				message: `Allow ${label} for all versions of '${this.fileName}'?`,
+				detail: `${ALL_VERSIONS_WARNING}\nSource: ${this.verifiedUrl}`,
+				noLink: true,
+			});
+			if (confirmed !== 1) answer = undefined;
+		}
 		if (answer === undefined) {
 			this.decided.set(category, false);
 			return false;

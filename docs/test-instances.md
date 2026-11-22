@@ -130,7 +130,8 @@ logging in.
   such as `fs`, `http`, `electron` or `child_process`, Luna asks once per native file in a window of its own,
   listing what the file wants by category (Network Access, Filesystem, …). The plugin waits for the answer, so keep
   the instance's windows visible while installing or enabling such plugins. A rebuilt plugin asks again only for
-  categories allowed for one version; "Allow, also for updates" keeps the answer for later builds from the same url.
+  categories allowed for "This version"; "All versions" (confirmed in a second step) keeps the answer for later
+  builds from the same url.
   A module first used after the file has loaded is still asked in a modal message box, which blocks the main
   process (CDP calls time out) until it is answered. Answers are listed, and can be revoked, in Luna Settings.
 - **TIDAL Connect** uses fixed local ports, so only one instance (daily or test) can offer it at a time.

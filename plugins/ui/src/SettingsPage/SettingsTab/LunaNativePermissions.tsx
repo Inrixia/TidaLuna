@@ -10,13 +10,13 @@ import type { NativePermissionEntry } from "../../../../../native/NativeModule/t
 
 const answerText = {
 	allow: "Allowed for this version",
-	allowUpdates: "Allowed, also for updates",
+	allowUpdates: "Allowed for all versions",
 	deny: "Denied",
 } as const;
 
 const answerColor = {
 	allow: "text.primary",
-	allowUpdates: "success.main",
+	allowUpdates: "warning.main",
 	deny: "error.main",
 } as const;
 
