@@ -35,6 +35,7 @@ export type NativeModuleInfo = {
 };
 
 // Luna's own code is trusted wherever it runs, so it still loads where no isolated process can start (e.g. an older Electron).
+// Not if the code itself threw while it loaded in one: that is a bug of the code, to be seen.
 // Anyone else's code named isolated was never allowed into the main process.
 const mainProcessFallback = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow) => {
 	if (!moduleInfo.isCore) return undefined;
@@ -45,6 +46,8 @@ const mainProcessFallback = (moduleInfo: NativeModuleInfo, parent?: Electron.Bro
 };
 
 const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: string, code: string, url?: string) => {
+	// From the renderer: anything else than a string would be told apart by identity where files are kept by name
+	if (typeof fileName !== "string" || typeof code !== "string") throw new TypeError("Native module name and code must be strings");
 	const hash = createHash("sha256").update(code, "utf8").digest("hex");
 	// Before the first await, so loads of one file are numbered in the order they were asked for
 	const isolated = isIsolatedNative(fileName) ? isolatedLoadAsked(fileName) : undefined;

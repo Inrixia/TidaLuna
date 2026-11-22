@@ -7,7 +7,7 @@ import { ipcRefused } from "../../ipc";
 import { callSync, hostModules } from "./syncModules";
 
 type NativeExports = Record<string, (...args: unknown[]) => Promise<unknown>>;
-type LoadResult = { exportNames: unknown } | { error: string };
+type LoadResult = { exportNames: unknown } | { error: string; thrownByCode?: unknown };
 type Host = {
 	exportNames: string[];
 	call: (exportName: string, args: unknown[]) => Promise<unknown>;
@@ -22,6 +22,8 @@ type Host = {
 const preload = path.join(path.dirname(fileURLToPath(import.meta.url)), "nativeHost.preload.mjs");
 /** Seconds a host has to load its code */
 const loadTimeout = 10;
+/** Seconds a host with calls waiting may give no sign of life */
+const callTimeout = 30;
 
 /**
  * Native files named `*.isolated.native.*` are loaded by `isolatedLoad` instead of `secureLoad`.
@@ -74,12 +76,20 @@ const served = new Map<string, number>();
 // Load numbers are never given out twice: a load that was given up must not match `lastLoad` again later
 let loads = 0;
 
+/** A load that was asked for (see isolatedLoadAsked) */
+export type AskedLoad = { load: number; exports: Promise<NativeExports>; settle: (exports: Promise<NativeExports>) => void };
+// fileName -> the load asked for last
+const newest = new Map<string, AskedLoad>();
+
 /** Thrown for a load that a later load of the same file has replaced. Nothing failed: the later load decides. */
 class LoadedAgain extends Error {
 	constructor(fileName: string) {
 		super(`Native module '${fileName}' was loaded again`);
 	}
 }
+
+/** Thrown when the code itself threw while it loaded in a host: loading it some other way would hide that */
+class CodeFailed extends Error {}
 
 /** @param load A new number, or that of a host whose process died: its restart is the same load, so it never outranks a later one */
 const startHost = async (moduleInfo: NativeModuleInfo, load: number): Promise<Host> => {
@@ -126,6 +136,7 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
 		if (stopped !== undefined) return;
 		stopped = reason;
 		failLoad(reason);
+		clearInterval(alive);
 		for (const { reject } of pending.values()) reject(reason);
 		pending.clear();
 		views.delete(view);
@@ -179,6 +190,19 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
 		else call.reject(isError === true ? toError(value) : value);
 	});
 
+	// A host stuck in its code (e.g. an endless loop) would leave every call waiting. While calls wait it is asked for a
+	// sign of life: its preload answers on the thread the code runs on. Counted in ticks, like the load timeout below
+	let unanswered = 0;
+	const alive = setInterval(() => {
+		if (pending.size === 0) return void (unanswered = 0);
+		if (++unanswered > callTimeout) return gone("not responding");
+		try {
+			webContents.send("__LunaNativeHost.ping");
+		} catch {}
+	}, 1000);
+	webContents.ipc.on("__LunaNativeHost.pong", () => (unanswered = 0));
+
+	let started = false;
 	const exportNames = new Promise<string[]>((resolve, reject) => {
 		// Counted in ticks, not on the clock: a trust prompt blocks this process for as long as the user reads it,
 		// and afterwards the answer of a host that loaded long ago is still waiting behind the timer.
@@ -190,9 +214,15 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
 			clearInterval(timer);
 			reject(err);
 		};
-		webContents.ipc.handle("__LunaNativeHost.init", () => ({ fileName, code, modules: hostModules }));
+		webContents.ipc.handle("__LunaNativeHost.init", () => {
+			// The page was loaded again (location.reload() is not a navigation that can be refused): the code that
+			// answered the calls is gone, like after a crash
+			if (started) return gone("reloaded");
+			started = true;
+			return { fileName, code, modules: hostModules };
+		});
 		webContents.ipc.handle("__LunaNativeHost.loaded", (_, result: LoadResult) => {
-			if ("error" in result) return stop(new Error(String(result.error)));
+			if ("error" in result) return stop(new (result.thrownByCode === true ? CodeFailed : Error)(String(result.error)));
 			clearInterval(timer);
 			resolve(Array.isArray(result.exportNames) ? result.exportNames.filter((name) => typeof name === "string") : []);
 		});
@@ -216,10 +246,15 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
  * Numbers a load of `fileName`. To be called as soon as the load is asked for, before anything is awaited:
  * of two loads of one file the one numbered last wins, whichever finishes first.
  */
-export const isolatedLoadAsked = (fileName: string): number => {
-	const load = ++loads;
-	asked.set(fileName, load);
-	return load;
+export const isolatedLoadAsked = (fileName: string): AskedLoad => {
+	let settle!: AskedLoad["settle"];
+	const exports = new Promise<NativeExports>((resolve) => (settle = resolve));
+	// Nobody may be waiting for it when it fails
+	exports.catch(() => {});
+	const askedLoad = { load: ++loads, exports, settle };
+	asked.set(fileName, askedLoad.load);
+	newest.set(fileName, askedLoad);
+	return askedLoad;
 };
 
 /**
@@ -228,10 +263,28 @@ export const isolatedLoadAsked = (fileName: string): number => {
  * The process is identified by its webContents, so nothing it sends can make it act as another module.
  * Loading a `fileName` again stops the process that ran it before.
  *
- * @param load Its number, from isolatedLoadAsked
- * @param fallback Loads the code some other way if no host could load it. A load of the file asked for meanwhile still wins.
+ * @param askedLoad From isolatedLoadAsked
+ * @param fallback Loads the code some other way if no host could start. A load of the file asked for meanwhile still wins.
  */
-export const isolatedLoad = async (
+export const isolatedLoad = (
+	moduleInfo: NativeModuleInfo,
+	askedLoad: AskedLoad,
+	fallback?: (err: unknown) => Promise<NativeExports>,
+): Promise<NativeExports> => {
+	const { fileName } = moduleInfo;
+	askedLoad.settle(
+		loadIsolated(moduleInfo, askedLoad.load, fallback).catch((err) => {
+			// Replaced by a later load of the file. Nothing failed, so this one gives what that one gives (two plugins that
+			// register one file at the same time both load, as they do in the main process)
+			const winner = newest.get(fileName);
+			if (err instanceof LoadedAgain && winner !== undefined && winner !== askedLoad) return winner.exports;
+			throw err;
+		}),
+	);
+	return askedLoad.exports;
+};
+
+const loadIsolated = async (
 	moduleInfo: NativeModuleInfo,
 	load: number,
 	fallback?: (err: unknown) => Promise<NativeExports>,
@@ -243,7 +296,7 @@ export const isolatedLoad = async (
 	try {
 		host = await startHost(moduleInfo, load);
 	} catch (err) {
-		if (fallback === undefined || err instanceof LoadedAgain) throw err;
+		if (fallback === undefined || err instanceof LoadedAgain || err instanceof CodeFailed) throw err;
 		const exports = await fallback(err);
 		if (asked.get(fileName) !== load) throw new LoadedAgain(fileName);
 		// No host serves the file from here on: one that died earlier must not be started again by a call

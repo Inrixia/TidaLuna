@@ -39,6 +39,9 @@ ipcRenderer.on("__LunaNativeHost.call", async (_, id: number, exportName: string
 	}
 });
 
+// The main process asks for it while calls wait: no answer means the code keeps this thread busy (see ./index.ts)
+ipcRenderer.on("__LunaNativeHost.ping", () => ipcRenderer.send("__LunaNativeHost.pong"));
+
 // Runs in the main world, passed there as source text: must not use anything outside its own body.
 const loadInMainWorld = (fileName: string, code: string, modules: Record<string, HostModule>) => {
 	const host: typeof bridge = (globalThis as any).__lunaNativeHost;
@@ -92,14 +95,16 @@ const loadInMainWorld = (fileName: string, code: string, modules: Record<string,
 };
 
 (async () => {
+	let thrownByCode = false;
 	try {
 		const { fileName, code, modules }: HostInit = await ipcRenderer.invoke("__LunaNativeHost.init");
 		const error: string | undefined = await webFrame.executeJavaScript(
 			`(${loadInMainWorld})(${JSON.stringify(fileName)}, ${JSON.stringify(code)}, ${JSON.stringify(modules)})`,
 		);
+		thrownByCode = error !== undefined;
 		if (error !== undefined) throw new Error(error);
 		await ipcRenderer.invoke("__LunaNativeHost.loaded", { exportNames });
 	} catch (err) {
-		await ipcRenderer.invoke("__LunaNativeHost.loaded", { error: err instanceof Error ? err.message : String(err) });
+		await ipcRenderer.invoke("__LunaNativeHost.loaded", { error: err instanceof Error ? err.message : String(err), thrownByCode });
 	}
 })();
