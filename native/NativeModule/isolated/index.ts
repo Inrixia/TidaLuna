@@ -64,8 +64,8 @@ const toError = (thrown: unknown) => {
 const views = new Set<Electron.WebContentsView>();
 // fileName -> the host that currently runs it
 const hosts = new Map<string, Host>();
-// fileName -> number of the load asked for last. Loads finish in any order, the one asked for last has to win.
-// A load that is not the last one any more is given up (see startHost): whoever asked last gets the answer.
+// fileName -> number of the load that may serve the file: the newest asked for or, once that one has failed, the one that
+// served before it. Loads finish in any order: one that is not this load any more is given up (see startHost).
 const lastLoad = new Map<string, number>();
 // fileName -> number of the newest load asked for. Never taken back, unlike `lastLoad` (see startHost)
 const asked = new Map<string, number>();
@@ -75,7 +75,7 @@ const served = new Map<string, number>();
 let loads = 0;
 
 /** Thrown for a load that a later load of the same file has replaced. Nothing failed: the later load decides. */
-export class LoadedAgain extends Error {
+class LoadedAgain extends Error {
 	constructor(fileName: string) {
 		super(`Native module '${fileName}' was loaded again`);
 	}
@@ -84,8 +84,7 @@ export class LoadedAgain extends Error {
 /** @param load A new number, or that of a host whose process died: its restart is the same load, so it never outranks a later one */
 const startHost = async (moduleInfo: NativeModuleInfo, load: number): Promise<Host> => {
 	const { fileName } = moduleInfo;
-	const before = lastLoad.get(fileName) ?? 0;
-	lastLoad.set(fileName, Math.max(load, before));
+	lastLoad.set(fileName, load);
 	try {
 		return await loadHost(moduleInfo, load);
 	} catch (err) {
@@ -232,6 +231,8 @@ export const isolatedLoad = async (
 		if (fallback === undefined || err instanceof LoadedAgain) throw err;
 		const exports = await fallback(err);
 		if (asked.get(fileName) !== load) throw new LoadedAgain(fileName);
+		// No host serves the file from here on: one that died earlier must not be started again by a call
+		lastLoad.set(fileName, load);
 		// Only now: had the fallback failed too, the host that ran the file before would keep answering
 		hosts.get(fileName)?.stop(new LoadedAgain(fileName));
 		return exports;
