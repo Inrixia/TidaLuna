@@ -34,10 +34,13 @@ const changeListeners = new Set<(url: string) => void>();
 /** Keys a `get` fetcher is fetching */
 const fetching = new Set<string>();
 
-/** A response served from the cache is re-fetched in the background when older than this */
-const revalidateAfterMs = 5_000;
-/** and not served at all once older than this */
-const maxServeAgeMs = 10 * 60_000;
+/** A response served from the cache is re-fetched in the background when older than this, so going back and forth doesn't re-fetch every page */
+const revalidateAfterMs = 60_000;
+/**
+ * and not served at all once older than this. Long, as a served page is re-fetched in the background and re-renders when it changed,
+ * and mutations drop what they change, so a page revisited after a break shows at once instead of waiting on the network
+ */
+const maxServeAgeMs = 12 * 60 * 60_000;
 const maxEntries = 10_000;
 const stats = { served: 0, fetched: 0 };
 
@@ -224,7 +227,7 @@ const fromCache = (url: URL, key: string, input: FetchInput, init: FetchInit): P
 	const entry = entries.get(key);
 	if (entry?.raw === undefined) return;
 	const age = Date.now() - entry.time;
-	if (age > maxServeAgeMs) return;
+	if (age > Math.min(maxServeAgeMs, maxAgeOf(url.href))) return;
 	if (age > revalidateAfterMs && !entry.revalidating) revalidate(url, key, entry, input, init);
 	const fallback = () => fill(url, key, input, init);
 	return entry.raw.then((raw) => {

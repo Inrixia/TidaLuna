@@ -34,8 +34,14 @@ test("swr: serves TIDAL's requests from the cache and re-fetches them in the bac
 	// Luna's get() shares the entry
 	assert.deepEqual(await requestCache.get(page, async () => assert.fail("fetched")), { v: 1 });
 
+	// Fresh: served without re-fetching
+	mock.timers.tick(30_000);
+	assert.deepEqual(await (await fetch(page)).json(), { v: 1 });
+	await settle();
+	assert.equal(requests.length, 1);
+
 	// Stale and unchanged: served, re-fetched, no change
-	mock.timers.tick(6_000);
+	mock.timers.tick(31_000);
 	assert.deepEqual(await (await fetch(page)).json(), { v: 1 });
 	await settle();
 	assert.equal(requests.length, 2);
@@ -43,30 +49,36 @@ test("swr: serves TIDAL's requests from the cache and re-fetches them in the bac
 
 	// Stale and changed: the old response is served, the new one reported and served next
 	bodies.set("/v1/pages/album", `{"v":2}`);
-	mock.timers.tick(6_000);
+	mock.timers.tick(61_000);
 	assert.deepEqual(await (await fetch(page)).json(), { v: 1 });
 	await settle();
 	assert.deepEqual(changed, [page]);
 	assert.deepEqual(await (await fetch(page)).json(), { v: 2 });
 	assert.equal(requests.length, 3);
 
-	// Too old to serve
-	mock.timers.tick(11 * 60_000);
-	await fetch(page);
+	// Hours old is still served (and re-fetched)
+	mock.timers.tick(2 * 60 * 60_000);
+	assert.deepEqual(await (await fetch(page)).json(), { v: 2 });
+	await settle();
 	assert.equal(requests.length, 4);
+
+	// Too old to serve
+	mock.timers.tick(13 * 60 * 60_000);
+	await fetch(page);
+	assert.equal(requests.length, 5);
 	// cache: "no-store" isn't served
 	await fetch(page, { cache: "no-store" });
-	assert.equal(requests.length, 5);
+	assert.equal(requests.length, 6);
 
 	// Same json with keys in another order isn't a change
 	changed.length = 0;
 	bodies.set("/v1/pages/album", `{"v":2,"w":{"b":1,"a":2}}`);
 	await fetch(page, { cache: "no-store" });
 	bodies.set("/v1/pages/album", `{"w":{"a":2,"b":1},"v":2}`);
-	mock.timers.tick(6_000);
+	mock.timers.tick(61_000);
 	await fetch(page);
 	await settle();
-	assert.equal(requests.length, 7);
+	assert.equal(requests.length, 8);
 	assert.deepEqual(changed, []);
 });
 
@@ -141,4 +153,18 @@ test("respond rules answer TIDAL from any fresh entry, without answering their o
 	assert.deepEqual(await requestCache.get(info, () => fetch(info).then((res) => res.json())), { id: 1 });
 	assert.equal(requests.length, 3);
 	assert.equal(requestCache.stats().served > 0, true);
+});
+
+test("an swr rule's maxAgeMs caps how long it is served", async () => {
+	requestCache.clear();
+	requests.length = 0;
+	const mix = "https://api.tidal.com/v1/mixes/0019136b/items?countryCode=US";
+	requestCache.register(unloads, { pattern: /\/v1\/mixes\//, swr: true, maxAgeMs: 30_000 });
+	bodies.set("/v1/mixes/0019136b/items", `{}`);
+	await fetch(mix);
+	await fetch(mix);
+	assert.equal(requests.length, 1);
+	mock.timers.tick(31_000);
+	await fetch(mix);
+	assert.equal(requests.length, 2);
 });
