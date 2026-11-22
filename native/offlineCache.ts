@@ -8,26 +8,19 @@ import { createHash } from "crypto";
 import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import path from "path";
 
-import { tidalMainHosts } from "./tidalHosts";
+import { tidalMainHosts, tidalRequestKey } from "./tidalHosts";
 
 const cacheDir = () => path.join(electron.app.getPath("userData"), "luna-offline-cache");
 // What the page renders from. Leaves out audio/video (audioCache.ts keeps audio) and anything streamed
 const cacheableType = /json|javascript|text\/|image\/|font/;
 // Headers that describe the original transfer, not the kept body
 const droppedHeaders = ["set-cookie", "content-encoding", "content-length", "transfer-encoding"];
-const v1Hosts = new Set(["api.tidal.com", "desktop.tidal.com"]);
 
 const isTidalHost = (url: URL) => url.hostname === "tidal.com" || url.hostname.endsWith(".tidal.com");
 const isTidalApi = (url: URL) =>
 	url.hostname === "api.tidal.com" || url.hostname === "openapi.tidal.com" || (tidalMainHosts.has(url.hostname) && /^\/v[12]\//.test(url.pathname));
-// Both hosts serve the same v1 api (TIDAL uses api., Luna uses desktop.), share their cache entries like requestCache.ts does
-const keyOf = (url: URL) => {
-	if (!isTidalHost(url)) return url.href;
-	const host = v1Hosts.has(url.hostname) && url.pathname.startsWith("/v1/") ? "tidal-v1" : url.host;
-	const search = new URLSearchParams(url.search);
-	search.sort();
-	return `${host}${url.pathname}?${search}`;
-};
+// Keyed like requestCache.ts, so both api hosts share their entries
+const keyOf = (url: URL) => (isTidalHost(url) ? tidalRequestKey(url) : url.href);
 
 let isOffline = false;
 

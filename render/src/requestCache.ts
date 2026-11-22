@@ -1,3 +1,4 @@
+import { tidalRequestKey, tidalRequestPath } from "../../native/tidalHosts";
 import type { LunaUnloads } from "./helpers/unloadSet";
 
 export type RequestCacheRule = {
@@ -47,14 +48,8 @@ const maxAgeOf = (href: string) => {
 	return maxAge;
 };
 
-// Both hosts serve the same v1 api, TIDAL uses api. and Luna desktop.
-const tidalHosts = new Set(["api.tidal.com", "desktop.tidal.com"]);
-const pathOf = (url: URL) => `${tidalHosts.has(url.hostname) ? "tidal-v1" : url.host}${url.pathname}`;
-const keyOf = (url: URL) => {
-	const search = new URLSearchParams(url.search);
-	search.sort();
-	return `${pathOf(url)}?${search}`;
-};
+const pathOf = tidalRequestPath;
+const keyOf = tidalRequestKey;
 
 const parse = (raw: RawResponse) => {
 	if (raw.status >= 200 && raw.status < 300) return JSON.parse(raw.body);
