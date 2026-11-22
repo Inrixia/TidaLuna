@@ -2,6 +2,8 @@ import { app, safeStorage } from "electron";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 
+import { categoryOf } from "./categories";
+
 /**
  * - allow: this build of the file only (its code hash)
  * - allowUpdates: any build the plugin's url serves, until the plugin is reinstalled or this is revoked
@@ -15,6 +17,8 @@ export type CategoryRecord = {
 	hashes: string[];
 	/** Modules the code asked for in this category */
 	modules: string[];
+	/** Moved from the old per-module store: allows only `modules`, not the whole category */
+	onlyModules?: true;
 	at: number;
 };
 
@@ -72,6 +76,16 @@ export const migrateLegacy = (hash: string, modules: Iterable<string>) => {
 	for (const moduleName of modules) {
 		const key = `${hash}::${moduleName}`;
 		if (getLegacy().get(key) === true && !legacyMigrated.includes(key)) legacyMigrated.push(key);
+	}
+};
+/** Old answers of these builds no longer count, for one category or all (revoke, uninstall) */
+export const retireLegacy = (hashes: Set<string>, category?: string) => {
+	const { legacyMigrated } = getStore();
+	for (const [key, allowed] of getLegacy()) {
+		const at = key.indexOf("::");
+		if (!allowed || at === -1 || !hashes.has(key.slice(0, at)) || legacyMigrated.includes(key)) continue;
+		if (category !== undefined && categoryOf(key.slice(at + 2)) !== category) continue;
+		legacyMigrated.push(key);
 	}
 };
 

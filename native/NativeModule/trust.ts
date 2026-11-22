@@ -2,7 +2,16 @@ import { BrowserWindow, dialog } from "electron";
 
 import { ipcHandle } from "../ipc";
 import { categoryInfo, categoryOf } from "./permissions/categories";
-import { getStore, legacyAllowed, migrateLegacy, recordKey, saveStore, type NativeRecord, type PermissionAnswer } from "./permissions/store";
+import {
+	getStore,
+	legacyAllowed,
+	migrateLegacy,
+	recordKey,
+	retireLegacy,
+	saveStore,
+	type NativeRecord,
+	type PermissionAnswer,
+} from "./permissions/store";
 import { verifySource } from "./permissions/verifySource";
 import { askPermissions } from "./permissions/window";
 
@@ -11,9 +20,6 @@ import type { NativeModuleInfo } from ".";
 // The trust of every load of a native file, so a revoke takes effect at once. Every load: code of an earlier load
 // (or of another plugin naming the same url) can still be running
 const live = new Set<WeakRef<NativeTrust>>();
-
-// Every module of a category, also those the code did not use (old per-module answers for them must not outlive it)
-const categoryModules = (category: string, used: Iterable<string>) => new Set([...used, ...categoryInfo(category).modules]);
 
 // The file whose code runs under the vm timeout right now (vm runs are synchronous, so one at a time). Its code can
 // call into other loaded files (e.g. luna.lib.native): their calls that need an answer are asked after its run too
@@ -59,8 +65,8 @@ export class NativeTrust {
 		if (this.active) return;
 		this.active = true;
 		this.settling = false;
-		// So a module first used later can be allowed for updates (see askNow)
-		void this.verify();
+		// So a module first used later can be allowed for updates (see askNow), and old answers move to the plugin url's entry
+		void this.verify().finally(() => this.adoptLegacy());
 	}
 
 	public get fileName() {
@@ -98,9 +104,31 @@ export class NativeTrust {
 		for (const record of Object.values(natives)) {
 			if (record.fileName !== fileName) continue;
 			const decision = record.categories[category];
-			if (decision !== undefined && decision.answer !== "deny" && decision.hashes.includes(hash)) return true;
+			if (decision === undefined || decision.onlyModules) continue;
+			if (decision.answer !== "deny" && decision.hashes.includes(hash)) return true;
 		}
 		return undefined;
+	}
+
+	/** Old per-module answers moved into the store (see adoptLegacy): they allow their modules only */
+	private adoptedAllows(moduleName: string): boolean {
+		const { fileName, hash } = this.info;
+		const category = categoryOf(moduleName);
+		return Object.values(getStore().natives).some((record) => {
+			const decision = record.fileName === fileName ? record.categories[category] : undefined;
+			return (
+				decision?.onlyModules === true && decision.answer !== "deny" && decision.hashes.includes(hash) && decision.modules.includes(moduleName)
+			);
+		});
+	}
+
+	/** Before the first run: an update allowed "also for updates" needs the url checked, or its run fails and is repeated */
+	public async prepare() {
+		const { fileName, hash, url } = this.info;
+		if (url === undefined) return;
+		const claimed = getStore().natives[recordKey(fileName, hash, url)];
+		const forUpdates = Object.values(claimed?.categories ?? {}).some(({ answer, hashes }) => answer === "allowUpdates" && !hashes.includes(hash));
+		if (forUpdates) await this.verify();
 	}
 
 	private decide(moduleName: string): boolean | undefined {
@@ -114,11 +142,15 @@ export class NativeTrust {
 		}
 		// Answers from before categories, per module
 		if (this.legacy.has(moduleName)) return true;
+		if (this.adoptedAllows(moduleName)) {
+			this.legacy.add(moduleName);
+			return true;
+		}
 		if (legacyAllowed(this.info.hash, moduleName)) {
 			this.legacy.add(moduleName);
 			// Also modules only used after the load (or never required, like WebAssembly): moved into the store, so they can be revoked
 			this.seen(moduleName);
-			if (this.active) this.adoptLegacy();
+			if (this.active) void this.verify().finally(() => this.adoptLegacy());
 			return true;
 		}
 		return undefined;
@@ -155,6 +187,8 @@ export class NativeTrust {
 		if (url === undefined) return Promise.resolve(false);
 		return (this.verifying ??= verifySource(url, fileName, hash).then((ok) => {
 			if (ok) this.verifiedUrl = url;
+			// A failed check (e.g. offline) is tried again next time
+			else this.verifying = undefined;
 			return ok;
 		}));
 	}
@@ -168,19 +202,36 @@ export class NativeTrust {
 			const answer = answers[i];
 			record.categories[category] = { answer, hashes: [hash], modules, at: Date.now() };
 			this.decided.set(category, answer !== "deny");
-			migrateLegacy(hash, categoryModules(category, modules));
+			// Old answers for every module of the category, also those the code did not use, must not outlive it
+			retireLegacy(new Set([hash]), category);
 		});
 		saveStore();
 	}
 
-	/** Moves categories that only old per-module answers allow into the new store, so they show in settings and can be revoked */
+	/**
+	 * Moves old per-module answers of the modules the code used into the new store, so they show in settings and can be
+	 * revoked. They keep allowing those modules only: an old "your SYSTEM" answer for v8 must not allow all of Debugging
+	 */
 	public adoptLegacy() {
-		const rows = [];
+		const { fileName, hash, url: claimedUrl } = this.info;
+		let changed = false;
 		for (const [category, modules] of this.modules) {
 			if (this.saved(category) !== undefined) continue;
-			if ([...modules].every((moduleName) => legacyAllowed(this.info.hash, moduleName))) rows.push({ category, modules: [...modules] });
+			const adopted = [...modules].filter((moduleName) => legacyAllowed(hash, moduleName));
+			if (adopted.length === 0) continue;
+			const url = this.verifiedUrl;
+			const record = (getStore().natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
+			const existing = record.categories[category];
+			if (existing === undefined)
+				record.categories[category] = { answer: "allow", hashes: [hash], modules: adopted, onlyModules: true, at: Date.now() };
+			else if (existing.onlyModules) {
+				existing.modules = [...new Set([...existing.modules, ...adopted])];
+				if (!existing.hashes.includes(hash)) existing.hashes.push(hash);
+			} else continue;
+			migrateLegacy(hash, adopted);
+			changed = true;
 		}
-		if (rows.length > 0) this.save(rows, Array(rows.length).fill("allow"));
+		if (changed) saveStore();
 	}
 
 	/** Asks for every pending category in one window. While one is open, waits for it */
@@ -192,7 +243,8 @@ export class NativeTrust {
 		if (this.pending().length === 0) return;
 		this.asking = true;
 		try {
-			await this.askWindow();
+			// Again if calls made while it was open need more (every row is decided once a window has answered or closed)
+			while (this.pending().length > 0) await this.askWindow();
 		} finally {
 			this.asking = false;
 		}
@@ -231,7 +283,8 @@ export class NativeTrust {
 			answers.push("allowUpdates");
 			buttons.push("Allow, also for updates");
 		}
-		const win = BrowserWindow.getFocusedWindow() ?? this.parent;
+		// Not owned by a hidden or minimized window: the box would be hidden with it while it blocks the main process
+		const win = [BrowserWindow.getFocusedWindow(), this.parent].find((w) => w != null && !w.isDestroyed() && w.isVisible() && !w.isMinimized());
 		const options: Electron.MessageBoxSyncOptions = {
 			type: "warning",
 			buttons,
@@ -247,7 +300,7 @@ Only click "Allow" if you trust this!`,
 			noLink: true,
 			normalizeAccessKeys: true,
 		};
-		const response = win !== undefined && !win.isDestroyed() ? dialog.showMessageBoxSync(win, options) : dialog.showMessageBoxSync(options);
+		const response = win != null ? dialog.showMessageBoxSync(win, options) : dialog.showMessageBoxSync(options);
 		const answer = answers[response];
 		if (answer === undefined) {
 			this.decided.set(category, false);
@@ -276,6 +329,7 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 	// Calls between runs and activation wait for answers too (see check)
 	trust.settling = true;
 	try {
+		await trust.prepare();
 		for (let run = 1; ; run++) {
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
 			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
@@ -309,14 +363,12 @@ const runOnce = async <T>(trust: NativeTrust, load: () => T): Promise<T | typeof
 	for (const other of others) await other.ask();
 	if (trust.pending().length === 0 && !trust.deferred) {
 		if (failed) throw error;
-		trust.adoptLegacy();
 		trust.activate();
 		return exports!;
 	}
 	await trust.ask();
 	// A call that needed an answer threw, even if the code caught it
 	if (!failed && !trust.deferred) {
-		trust.adoptLegacy();
 		trust.activate();
 		return exports!;
 	}
@@ -329,7 +381,7 @@ export type NativePermissionEntry = {
 	fileName: string;
 	url?: string;
 	claimedUrl?: string;
-	categories: { category: string; label: string; answer: PermissionAnswer; modules: string[]; at: number }[];
+	categories: { category: string; label: string; answer: PermissionAnswer; modules: string[]; onlyModules: boolean; at: number }[];
 };
 
 ipcHandle("__Luna.nativePermissions.list", (): NativePermissionEntry[] =>
@@ -338,11 +390,12 @@ ipcHandle("__Luna.nativePermissions.list", (): NativePermissionEntry[] =>
 		fileName,
 		url,
 		claimedUrl,
-		categories: Object.entries(categories).map(([category, { answer, modules, at }]) => ({
+		categories: Object.entries(categories).map(([category, { answer, modules, onlyModules, at }]) => ({
 			category,
 			label: categoryInfo(category).label,
 			answer,
 			modules,
+			onlyModules: onlyModules === true,
 			at,
 		})),
 	})),
@@ -362,7 +415,7 @@ const removeCategory = (key: string, record: NativeRecord, category: string) => 
 	const answer = record.categories[category];
 	if (answer === undefined) return;
 	// Old per-module answers for the same code would allow it again
-	for (const hash of answer.hashes) migrateLegacy(hash, categoryModules(category, answer.modules));
+	retireLegacy(new Set(answer.hashes), category);
 	delete record.categories[category];
 	if (Object.keys(record.categories).length === 0) delete getStore().natives[key];
 };
@@ -378,6 +431,8 @@ ipcHandle("__Luna.nativePermissions.revoke", (_, key: string, category?: string)
 		if (otherKey !== key && (other.fileName !== record.fileName || ![...hashesOf(other)].some((hash) => hashes.has(hash)))) continue;
 		for (const name of category === undefined ? Object.keys(other.categories) : [category]) removeCategory(otherKey, other, name);
 	}
+	// Also old answers for modules the code has not used yet
+	if (category === undefined) retireLegacy(hashes);
 	saveStore();
 	resetLive();
 });
@@ -388,6 +443,7 @@ ipcHandle("__Luna.nativePermissions.forget", (_, url: string) => {
 	let changed = false;
 	for (const [key, record] of Object.entries(natives)) {
 		if (record.url !== url && record.claimedUrl !== url) continue;
+		retireLegacy(hashesOf(record));
 		for (const category of Object.keys(record.categories)) removeCategory(key, record, category);
 		changed = true;
 	}

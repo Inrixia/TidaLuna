@@ -186,6 +186,9 @@ export const askPermissions = (request: PermissionRequest, parent?: BrowserWindo
 			// The page is ours and static: nothing in it may navigate or open windows
 			win.webContents.on("will-navigate", (event) => event.preventDefault());
 			win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+			// A window that can't show would hold up every later one (see queue)
+			win.webContents.once("render-process-gone", () => !win.isDestroyed() && win.destroy());
+			win.webContents.once("did-fail-load", () => !win.isDestroyed() && win.destroy());
 			win.once("ready-to-show", () => win.show());
 			win.once("closed", () => resolve(answered));
 			win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildHtml(request))}`).catch((err) => {
