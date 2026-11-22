@@ -46,7 +46,7 @@ export class NativeTrust {
 	// Decisions of this load, per category. Never key this by the function being called: e.g. require("os").hostname is the same object for every plugin.
 	private readonly decided = new Map<string, boolean>();
 	private readonly legacy = new Set<string>();
-	// Modules the code required or called, per category
+	// What the window asks for, per category: modules the code required or called or its source names, and MAIN_PROCESS
 	private readonly modules = new Map<string, Set<string>>();
 	/** While true (the code runs under the vm timeout, see secureLoad) a call that needs an answer throws instead of asking */
 	public loading = false;
@@ -415,16 +415,21 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 	trust.settling = true;
 	try {
 		await trust.prepare();
+		// Uninstalled while it loaded: no exports, so a reinstall loads it anew (and asks) instead of reusing this load
+		const uninstalled = () => new Error(`[🛑Security🛑] '${trust.fileName}' was uninstalled while it loaded`);
 		for (let run = 1; ; run++) {
-			// Before every run: the answer can be revoked while a later window of this load is open
-			if (!(await trust.mayRun())) {
-				throw new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`);
-			}
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
 			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
+			// Before every run: the answer can be revoked while a later window of this load is open
+			const allowed = await trust.mayRun();
+			if (!trust.mayAsk) throw uninstalled();
+			if (!allowed) {
+				throw new Error(
+					`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`,
+				);
+			}
 			const exports = await runOnce(trust, load);
-			// Uninstalled while it loaded: no exports, so a reinstall loads it anew (and asks) instead of reusing this load
-			if (!trust.mayAsk) throw new Error(`[🛑Security🛑] '${trust.fileName}' was uninstalled while it loaded`);
+			if (!trust.mayAsk) throw uninstalled();
 			if (exports !== retry) return exports;
 		}
 	} finally {
@@ -449,7 +454,7 @@ const runOnce = async <T>(trust: NativeTrust, load: () => T): Promise<T | typeof
 		trust.loading = false;
 		running = undefined;
 	}
-	// Not if the answer to run was taken back while a window was open: the next run is refused (see loadWithPermissions)
+	// Not if the answer to run was taken back while a window was open: it is asked again before the next run, or that run is refused (see loadWithPermissions)
 	const loaded = () => {
 		if (!trust.runAllowed) return retry;
 		trust.activate();
