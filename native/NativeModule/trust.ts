@@ -169,6 +169,10 @@ export class NativeTrust {
 	public check(moduleName: string): boolean {
 		const decision = this.decide(moduleName);
 		if (decision !== undefined) return decision;
+		if (!this.mayAsk) {
+			console.warn(`[🛑Security🛑] '${moduleName}' in '${this.fileName}' denied: its plugin was uninstalled`);
+			return false;
+		}
 		this.seen(moduleName);
 		if (this.loading || this.settling || this.asking || running !== undefined) {
 			if (this.loading || this.settling || this.asking) this.deferred = true;
@@ -342,6 +346,21 @@ Only allow it if you trust this plugin!`,
 		this.decided.clear();
 		this.legacy.clear();
 	}
+
+	/**
+	 * Its plugin was uninstalled: its code may still run (timers, sockets), but nothing is asked for it any more. What it
+	 * needs is denied, a reinstall loads it anew and asks
+	 */
+	public uninstalled(url: string) {
+		if (this.info.url !== url) return;
+		this.removed = true;
+		this.reset();
+	}
+	private removed = false;
+	/** Whether it may ask: not for code of a plugin uninstalled since it loaded */
+	public get mayAsk() {
+		return !this.removed;
+	}
 }
 
 const MAX_RUNS = 10;
@@ -474,8 +493,9 @@ ipcHandle("__Luna.nativePermissions.forget", (_, url: string) => {
 		for (const category of Object.keys(record.categories)) removeCategory(key, record, category);
 		changed = true;
 	}
-	if (!changed) return;
-	saveStore();
+	if (changed) saveStore();
 	resetLive();
+	// Code of the uninstalled plugin that still runs must not ask again
+	for (const ref of live) ref.deref()?.uninstalled(url);
 });
 // #endregion
