@@ -316,7 +316,7 @@ export class NativeTrust {
 			buttons,
 			defaultId: 0,
 			cancelId: 0,
-			title: "Plugin Permission Request",
+			title: "Plugin Permission",
 			message: `Allow '${this.fileName}' ${label}?`,
 			detail: `${description}
 Module: ${moduleName}
