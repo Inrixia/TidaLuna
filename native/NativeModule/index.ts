@@ -36,11 +36,13 @@ export type NativeModuleInfo = {
 
 // Luna's own code is trusted wherever it runs, so it still loads where no isolated process can start (e.g. an older Electron).
 // Anyone else's code named isolated was never allowed into the main process.
-const isolatedLoadFailed = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow) => (err: unknown) => {
+const isolatedLoadFailed = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow) => async (err: unknown) => {
 	if (!moduleInfo.isCore || err instanceof LoadedAgain) throw err;
 	console.warn(`[Luna.native] Can't isolate '${moduleInfo.fileName}', loading it in the main process`, err);
+	const exports = await secureLoad(moduleInfo, parent);
+	// Only now: if this load failed too, the host that ran the file before keeps answering
 	stopIsolated(moduleInfo.fileName);
-	return secureLoad(moduleInfo, parent);
+	return exports;
 };
 
 const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: string, code: string, url?: string) => {
