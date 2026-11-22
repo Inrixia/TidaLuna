@@ -52,7 +52,7 @@ User can attach real Chrome DevTools too (live consoles, sources with Luna sourc
 
 ## Hooks into the client
 
-- Page: `luna.core` (`@luna/core`: `LunaPlugin`, `modules`, `tidalModules`, `reduxStore` …) and every loaded plugin's exports in `luna.core.modules[<package name>]` (core plugins also on `luna.lib`, `luna.ui`, `luna.dev`). Call any export directly, e.g. Redux state `luna.lib.redux.store.getState()`.
+- Page: global `luna` console variable (`window.luna` / `globalThis.luna`) exposes all core functionality for debugging: `luna.core` (`@luna/core`: `LunaPlugin`, `modules`, `tidalModules`, `reduxStore` …), `luna.lib` (`@luna/lib`), `luna.ui` (`@luna/ui`), `luna.dev` (`@luna/dev`), `luna.native` (`@luna/lib.native`), and every loaded plugin's exports in `luna.core.modules[<package name>]`. Call any export directly, e.g. Redux state `luna.lib.redux.store.getState()`.
 - Main process: global `luna` holds Luna's exposed native functions and `luna.modules[<file>]`, every plugin's loaded `*.native.ts` exports (call directly). `require("electron")` for windows, sessions, app. Electron's `fs` reads inside asars: `require("fs").readdirSync(process.resourcesPath + "/original.asar")`.
 - Find TIDAL code to hook: `dump`, then grep `.tidal-test/<n>/sources`. Only modules TIDAL loaded so far get dumped: navigate (or trigger feature) first for lazy ones. Luna's own bundles (with sourcemaps) in `dist/`.
 - Plugins and load errors: `Object.values(luna.core.LunaPlugin.plugins).map((p) => ({ name: p.name, enabled: p.enabled, loadError: p.loadError._ }))`

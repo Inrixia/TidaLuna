@@ -24,6 +24,7 @@ Three runtimes, all built by `esbuild.config.ts` into `dist/`:
   - `modules.ts` = runtime module registry (`luna.core.modules`) plugins import `@luna/*`, react, oby from.
   - `LunaPlugin.ts` = plugin lifecycle: fetch `<url>.json` + `<url>.mjs`, import code from blob, track `unloads` + dependants, live reload. At runtime install/enable/disable/reload plugins and edit plugin stores through it (`luna.core.LunaPlugin`), not by fetching plugin urls by hand; see tidal-test-instance skill.
   - `ReactiveStore.ts` persists reactive (oby) stores to IndexedDB. `trace/` holds loggers.
+  - `window.core.ts` exposes `luna` as a global console variable on `window`/`globalThis` for debugging, giving direct access to all core functionality (`luna.core`, `luna.lib`, `luna.ui`, `luna.dev`, `luna.native`, and any loaded plugin via `luna.core.modules[<pkg>]`). In the main process, `globalThis.luna` (`native/NativeModule/index.ts`) similarly exposes `luna.modules[<file>]`, `sendToRender`, and `native/expose.ts` helpers.
 - **`plugins/*`** = core plugins:
   - `lib`: Redux intercepts + actions with typed payloads, classes like `MediaItem`, `PlayState`, `TidalApi`, helpers.
   - `lib.native`: main-process helpers.
