@@ -30,7 +30,7 @@ export class PlayState {
 	public static lastPlayStart?: number;
 
 	private static readonly trace: Tracer = libTrace.withSource(".PlayState").trace;
-	private static activePlayer?: { currentTime: number };
+	private static playerModule: { activePlayer: { currentTime: number } } | VoidLike;
 
 	public static get playbackControls() {
 		return redux.store.getState().playbackControls;
@@ -48,11 +48,9 @@ export class PlayState {
 	 * Unlike `playTime` (from Redux state), this is the live player position.
 	 */
 	public static get currentTime(): number {
-		if (this.activePlayer === undefined) {
-			const mod = findModuleByProperty<{ activePlayer: { currentTime: number } }>((key, value) => key === "activePlayer" && typeof value === "object" && value !== null && "currentTime" in value);
-			this.activePlayer = mod?.activePlayer;
-		}
-		return this.activePlayer?.currentTime ?? 0;
+		// The module, not its player: TIDAL swaps activePlayer between shaka and its native player by quality
+		this.playerModule ??= findModuleByProperty<{ activePlayer: { currentTime: number } }>((key, value) => key === "activePlayer" && typeof value === "object" && value !== null && "currentTime" in value);
+		return this.playerModule?.activePlayer?.currentTime ?? 0;
 	}
 	public static nextMediaItem() {
 		const nextItemId = this.playQueue.elements[this.playQueue.currentIndex + 1]?.mediaItemId;
