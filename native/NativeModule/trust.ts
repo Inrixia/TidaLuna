@@ -418,7 +418,9 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 		// Uninstalled while it loaded: no exports, so a reinstall loads it anew (and asks) instead of reusing this load
 		const uninstalled = () => new Error(`[🛑Security🛑] '${trust.fileName}' was uninstalled while it loaded`);
 		const refused = () =>
-			new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`);
+			new Error(
+				`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`,
+			);
 		for (let run = 1; ; run++) {
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
 			if (run > MAX_RUNS) {
