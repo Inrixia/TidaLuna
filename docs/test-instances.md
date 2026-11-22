@@ -129,7 +129,8 @@ logging in.
 - **"Plugin Permission" window.** The first time a plugin's native code (`*.native.ts`) loads, Luna asks once
   per native file in a window of its own, before any of its code runs: whether it may run in TIDAL's main process,
   and what else the file wants by category (Network Access, Filesystem, …) if it requires modules such as `fs`,
-  `http`, `electron` or `child_process`. The plugin waits for the answer, so keep
+  `http`, `electron` or `child_process`. A module the file names only while it runs is asked in a second window
+  after that run, before the file's exports are used. The plugin waits for the answers, so keep
   the instance's windows visible while installing or enabling such plugins. A rebuilt plugin asks again only for
   categories allowed for "This version"; "All versions" (confirmed in a second step) keeps the answer for later
   builds from the same url.

@@ -417,17 +417,18 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 		await trust.prepare();
 		// Uninstalled while it loaded: no exports, so a reinstall loads it anew (and asks) instead of reusing this load
 		const uninstalled = () => new Error(`[🛑Security🛑] '${trust.fileName}' was uninstalled while it loaded`);
+		const refused = () =>
+			new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`);
 		for (let run = 1; ; run++) {
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
-			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
+			if (run > MAX_RUNS) {
+				if (!trust.runAllowed) throw refused();
+				throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
+			}
 			// Before every run: the answer can be revoked while a later window of this load is open
 			const allowed = await trust.mayRun();
 			if (!trust.mayAsk) throw uninstalled();
-			if (!allowed) {
-				throw new Error(
-					`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`,
-				);
-			}
+			if (!allowed) throw refused();
 			const exports = await runOnce(trust, load);
 			if (!trust.mayAsk) throw uninstalled();
 			if (exports !== retry) return exports;
@@ -454,7 +455,8 @@ const runOnce = async <T>(trust: NativeTrust, load: () => T): Promise<T | typeof
 		trust.loading = false;
 		running = undefined;
 	}
-	// Not if the answer to run was taken back while a window was open: it is asked again before the next run, or that run is refused (see loadWithPermissions)
+	// Not if the answer to run was taken back while a window was open:
+	// it is asked again before the next run, or that run is refused (see loadWithPermissions)
 	const loaded = () => {
 		if (!trust.runAllowed) return retry;
 		trust.activate();
