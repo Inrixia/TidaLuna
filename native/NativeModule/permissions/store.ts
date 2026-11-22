@@ -5,6 +5,7 @@ import path from "path";
 import { categoryOf } from "./categories";
 
 /**
+ * Answers hold for the plugin they were given to only, never for another plugin with the same code.
  * - allow: this build of the file only (its code hash)
  * - allowUpdates: any build the plugin's url serves, until the plugin is reinstalled or this is revoked
  * - deny: until the plugin is reinstalled or this is revoked
