@@ -2,10 +2,13 @@ import { objectify } from "@inrixia/helpers";
 import vm from "vm";
 
 import { nativeRequire, type NativeModuleInfo } from ".";
+import { categoryOf } from "./permissions/categories";
 import { loadWithPermissions, NativeTrust } from "./trust";
 
 import type Module from "module";
 import { moduleWhitelist } from "./moduleWhitelist";
+
+const normalize = (moduleName: string) => moduleName.replace(/^node:/, "").replace("/promises", "");
 
 export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow): Promise<Module["exports"]> => {
 	const { fileName, code } = moduleInfo;
@@ -13,7 +16,7 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 
 	const require = new Proxy(nativeRequire, {
 		apply: (target, thisArg, argumentsList: [moduleName: string]) => {
-			const moduleName = argumentsList[0].replace(/^node:/, "").replace("/promises", "");
+			const moduleName = normalize(argumentsList[0]);
 
 			// Whitelist (Pass through directly, no proxy needed)
 			if (moduleWhitelist.has(moduleName)) return target.apply(thisArg, argumentsList);
@@ -242,6 +245,13 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 
 		return sandbox.module.exports as Module;
 	};
+
+	// The file is asked for before its first run (see NativeTrust.mayRun). The modules its source names are put in that
+	// window too, so it stays one window. A guess, so only names with a category: what the code uses is checked as it runs
+	for (const [, name] of code.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)) {
+		const moduleName = normalize(name);
+		if (!moduleWhitelist.has(moduleName) && moduleName !== "process" && !categoryOf(moduleName).startsWith("module:")) trust.seen(moduleName);
+	}
 
 	// Permissions can't be asked while the code runs: the vm timeout counts the time a prompt is open, and once
 	// it has passed V8 stops the code as soon as the prompt returns, so the answer is lost and the load fails.

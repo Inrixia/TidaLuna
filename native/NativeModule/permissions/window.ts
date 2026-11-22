@@ -31,7 +31,7 @@ export const ALL_VERSIONS_WARNING =
 	"Every future update from this source gets this access without asking. If the plugin's author, or anyone who takes over its repository or release, ships harmful code, it runs with this access.";
 
 /** Categories that give the code control of the app or the computer, marked "High risk" */
-const highRisk = new Set(["filesystem", "execute", "electron", "tidal", "debug"]);
+const highRisk = new Set(["main", "filesystem", "execute", "electron", "tidal", "debug"]);
 
 // Line icons (24x24, drawn with the text colour)
 const icon = (paths: string, className = "icon") =>
@@ -46,6 +46,7 @@ const icons = {
 	warning: '<path d="M12 3l10 18H2zM12 10v5M12 18v.01"/>',
 };
 const categoryIcons: Record<string, string> = {
+	main: '<path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6zM12 9v4M12 16v.01"/>',
 	network: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
 	udp: '<circle cx="12" cy="12" r="2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M5 19a10 10 0 0 1 0-14M19 5a10 10 0 0 1 0 14"/>',
 	filesystem: '<path d="M3 6h6l2 2h10v11H3z"/>',

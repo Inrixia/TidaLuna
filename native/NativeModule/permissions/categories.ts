@@ -8,7 +8,17 @@ export type PermissionCategory = {
 	modules: string[];
 };
 
+/** Not a module: what every file loaded into the main process is asked for before any of its code runs (see loadWithPermissions) */
+export const MAIN_PROCESS = "MainProcess";
+
 export const permissionCategories: PermissionCategory[] = [
+	{
+		id: "main",
+		label: "Run in TIDAL's Main Process",
+		description:
+			"Run this file's code inside the TIDAL app itself. Luna asks for what it uses below, but code running there can't be fully contained: allow it only if you trust the plugin with your computer and your TIDAL account.",
+		modules: [MAIN_PROCESS],
+	},
 	{
 		id: "network",
 		label: "Network Access",

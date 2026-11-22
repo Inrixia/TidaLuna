@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog } from "electron";
 
 import { ipcHandle } from "../ipc";
-import { categoryInfo, categoryOf } from "./permissions/categories";
+import { categoryInfo, categoryOf, MAIN_PROCESS } from "./permissions/categories";
 import {
 	getStore,
 	legacyAllowed,
@@ -67,6 +67,8 @@ export class NativeTrust {
 	) {
 		// Also while it loads: a revoke must drop answers it already took
 		live.add(new WeakRef(this));
+		// First, so it is the first row of the window
+		if (!info.isCore) this.seen(MAIN_PROCESS);
 	}
 
 	/** Called once the code has loaded */
@@ -189,6 +191,17 @@ export class NativeTrust {
 			throw new Error(`[🛑Security🛑] '${moduleName}' in '${this.fileName}' needs permission, asking after load`);
 		}
 		return this.askNow(moduleName);
+	}
+
+	/**
+	 * Whether the code may run in the main process at all. Asked before its first run, in the same window as the
+	 * modules passed to `seen` so far: the sandbox it runs in limits what honest code uses, it can't hold code that
+	 * works against it, so nothing of a file the user has not accepted may run there.
+	 */
+	public async mayRun(): Promise<boolean> {
+		if (this.info.isCore) return true;
+		if (this.decide(MAIN_PROCESS) === undefined) await this.ask();
+		return this.decide(MAIN_PROCESS) === true;
 	}
 
 	/** Categories the code required that have no answer yet */
@@ -395,6 +408,7 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 	trust.settling = true;
 	try {
 		await trust.prepare();
+		if (!(await trust.mayRun())) throw new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process`);
 		for (let run = 1; ; run++) {
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
 			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
