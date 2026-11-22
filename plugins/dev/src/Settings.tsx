@@ -1,5 +1,5 @@
 import { LunaButtonSetting, LunaSetting, LunaSettings, LunaSwitch, LunaSwitchSetting } from "@luna/ui";
-import { storage, trace } from ".";
+import { interceptsRegex, storage, trace } from ".";
 import { startNativeDebugging } from "./debug.native";
 import { startReduxLog, stopReduxLog } from "./interceptActions";
 import { startNativeIPCLog, stopNativeIPCLog } from "./ipc";
@@ -42,7 +42,7 @@ export const Settings = () => {
 						checked={logReduxEvents}
 						onChange={async (_, checked) => {
 							if (checked)
-								await startReduxLog(new RegExp(storage.logInterceptsRegex || ".*"), trace.log.withContext("(Redux)")).catch(
+								await startReduxLog(interceptsRegex(), trace.log.withContext("(Redux)")).catch(
 									trace.err.withContext("Failed to start redux event logging").throw,
 								);
 							else await stopReduxLog().catch(trace.err.withContext("Failed to stop redux event logging").throw);
