@@ -119,11 +119,34 @@ export class NativeTrust {
 		this.reset();
 	}
 
-	private saved(category: string): boolean | undefined {
+	/** Where this load saves answers: its plugin url's entry once the url is checked, otherwise its build's */
+	private get ownKey() {
+		return recordKey(this.info.fileName, this.info.hash, this.verifiedUrl, this.info.url);
+	}
+
+	/**
+	 * The entries this load's answers are read from, both of its own plugin: the one of the url the renderer named and
+	 * the one of its build (answered while that url could not be checked). Never another plugin's, even for the same
+	 * code: each plugin is asked on its own
+	 */
+	private ownRecords() {
 		const { fileName, hash, url } = this.info;
 		const { natives } = getStore();
-		const claimed = url === undefined ? undefined : natives[recordKey(fileName, hash, url)];
-		const ownBuild = natives[recordKey(fileName, hash)];
+		return {
+			claimed: url === undefined ? undefined : natives[recordKey(fileName, hash, url)],
+			ownBuild: natives[recordKey(fileName, hash, undefined, url)],
+		};
+	}
+
+	/** Whether this load reads its answers from the entry at `key` */
+	private reads(key: string) {
+		const { fileName, hash, url } = this.info;
+		return (url !== undefined && key === recordKey(fileName, hash, url)) || key === recordKey(fileName, hash, undefined, url);
+	}
+
+	private saved(category: string): boolean | undefined {
+		const { hash } = this.info;
+		const { claimed, ownBuild } = this.ownRecords();
 		// Denials hold for the url the renderer named even if it could not be checked: they only take access away
 		if (claimed?.categories[category]?.answer === "deny" || ownBuild?.categories[category]?.answer === "deny") return false;
 
@@ -138,22 +161,21 @@ export class NativeTrust {
 			return true;
 		}
 
-		// An allow for this exact code holds whoever registers it
-		for (const record of Object.values(natives)) {
-			if (record.fileName !== fileName) continue;
-			const decision = record.categories[category];
-			if (decision === undefined || decision.onlyModules) continue;
-			if (decision.answer !== "deny" && decision.hashes.includes(hash)) return true;
+		// This build allowed for its plugin (also "All versions" remembered for it above, so that holds offline too)
+		for (const record of [claimed, ownBuild]) {
+			const decision = record?.categories[category];
+			if (decision !== undefined && !decision.onlyModules && decision.hashes.includes(hash)) return true;
 		}
 		return undefined;
 	}
 
 	/** Old per-module answers moved into the store (see adoptLegacy): they allow their modules only */
 	private adoptedAllows(moduleName: string): boolean {
-		const { fileName, hash } = this.info;
+		const { hash } = this.info;
 		const category = categoryOf(moduleName);
-		return Object.values(getStore().natives).some((record) => {
-			const decision = record.fileName === fileName ? record.categories[category] : undefined;
+		const { claimed, ownBuild } = this.ownRecords();
+		return [claimed, ownBuild].some((record) => {
+			const decision = record?.categories[category];
 			return (
 				decision?.onlyModules === true && decision.answer !== "deny" && decision.hashes.includes(hash) && decision.modules.includes(moduleName)
 			);
@@ -273,13 +295,10 @@ export class NativeTrust {
 	private save(rows: { category: string; modules: string[] }[], answers: PermissionAnswer[]) {
 		const { fileName, hash, url: claimedUrl } = this.info;
 		const url = this.verifiedUrl;
-		const { natives } = getStore();
-		const record = (natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
-		// category -> builds whose answer for it is replaced here
-		const replaced = new Map<string, string[]>();
+		const key = this.ownKey;
+		const record = (getStore().natives[key] ??= { url, claimedUrl, fileName, categories: {} });
 		rows.forEach(({ category, modules }, i) => {
 			const answer = answers[i];
-			replaced.set(category, record.categories[category]?.hashes ?? []);
 			retireReplaced(record.categories[category], hash);
 			record.categories[category] = { answer, hashes: [hash], modules, at: Date.now() };
 			this.decided.set(category, answer !== "deny");
@@ -288,21 +307,17 @@ export class NativeTrust {
 		});
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
-		for (const ref of live) ref.deref()?.overruled(this, replaced);
+		const categories = rows.map(({ category }) => category);
+		for (const ref of live) ref.deref()?.overruled(this, key, categories);
 	}
 
 	/**
-	 * `by` saved answers for the categories of `replaced`. Where they are about this code or plugin too, or replaced an
-	 * answer that named this build, they replace what this load took before
+	 * `by` saved answers for `categories` in the entry at `key`. If this load reads its answers from that entry (the
+	 * same plugin), they replace what it took before. Another plugin's answers never do, even for the same code
 	 */
-	private overruled(by: NativeTrust, replaced: Map<string, string[]>) {
-		if (by === this || by.info.fileName !== this.info.fileName) return;
-		const sameCode = by.info.hash === this.info.hash;
-		const samePlugin = by.verifiedUrl !== undefined && by.verifiedUrl === this.info.url;
-		for (const [category, hashes] of replaced) {
-			if (!sameCode && !samePlugin && !hashes.includes(this.info.hash)) continue;
-			this.decided.delete(category);
-		}
+	private overruled(by: NativeTrust, key: string, categories: string[]) {
+		if (by === this || !this.reads(key)) return;
+		for (const category of categories) this.decided.delete(category);
 	}
 
 	/**
@@ -319,7 +334,7 @@ export class NativeTrust {
 			const adopted = [...modules].filter((moduleName) => legacyAllowed(hash, moduleName));
 			if (adopted.length === 0) continue;
 			const url = this.verifiedUrl;
-			const record = (getStore().natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
+			const record = (getStore().natives[this.ownKey] ??= { url, claimedUrl, fileName, categories: {} });
 			const existing = record.categories[category];
 			// One build per entry: old answers were given per build and module, so another build's modules must not add up
 			if (existing === undefined || (existing.onlyModules && !existing.hashes.includes(hash))) {
@@ -360,8 +375,8 @@ export class NativeTrust {
 		const shown = await askPermissions(() => {
 			const rows = this.pending();
 			if (rows.length === 0 || this.denyIfRemoved(rows)) return undefined;
-			const claimed = getStore().natives[recordKey(fileName, hash, this.verifiedUrl)];
-			const kept = Object.entries(claimed?.categories ?? {})
+			const own = getStore().natives[this.ownKey];
+			const kept = Object.entries(own?.categories ?? {})
 				.filter(([category]) => !rows.some((row) => row.category === category))
 				// Only answers that hold for this build as a whole: an "allow" of another build, or an old answer for some modules, does not
 				.filter(([, { answer, hashes, onlyModules }]) => !onlyModules && (answer !== "allow" || hashes.includes(hash)))
@@ -597,15 +612,20 @@ const removeCategory = (key: string, record: NativeRecord, category: string) => 
 	if (Object.keys(record.categories).length === 0) delete getStore().natives[key];
 };
 const hashesOf = (record: NativeRecord) => new Set(Object.values(record.categories).flatMap(({ hashes }) => hashes));
+/** The plugin an entry is of: its url, checked or as named (none for code without a url) */
+const pluginOf = (record: NativeRecord) => record.url ?? record.claimedUrl;
 
 ipcHandle("__Luna.nativePermissions.revoke", (_, key: string, category?: string) => {
 	const { natives } = getStore();
 	const record: NativeRecord | undefined = natives[key];
 	if (record === undefined) return;
-	// Answers of other entries for the same code (e.g. given while its url could not be checked) would still allow it
+	// Answers of its plugin's other entries for the same code (given while the url could not be checked) would still
+	// allow it. Not another plugin's: those are its own answers
 	const hashes = hashesOf(record);
+	const plugin = pluginOf(record);
 	for (const [otherKey, other] of Object.entries(natives)) {
-		if (otherKey !== key && (other.fileName !== record.fileName || ![...hashesOf(other)].some((hash) => hashes.has(hash)))) continue;
+		const sibling = other.fileName === record.fileName && pluginOf(other) === plugin && [...hashesOf(other)].some((hash) => hashes.has(hash));
+		if (otherKey !== key && !sibling) continue;
 		for (const name of category === undefined ? Object.keys(other.categories) : [category]) removeCategory(otherKey, other, name);
 	}
 	// Also old answers for modules the code has not used yet

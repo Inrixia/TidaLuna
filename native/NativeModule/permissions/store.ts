@@ -39,10 +39,29 @@ type PermissionStore = {
 };
 
 /**
- * A file of a plugin url, or one build of it when the url is unknown or could not be checked.
- * So a plugin of the same name from another store never shares answers with it.
+ * A file of a plugin url, or one build of it when the url could not be checked (of the url the renderer named, if
+ * any). Answers belong to one plugin: a plugin of the same name from another store, or another plugin with the same
+ * code, never shares them.
  */
-export const recordKey = (fileName: string, hash: string, url?: string) => (url !== undefined ? `${url}::${fileName}` : `${fileName}@${hash}`);
+export const recordKey = (fileName: string, hash: string, url?: string, claimedUrl?: string) =>
+	url !== undefined ? `${url}::${fileName}` : claimedUrl !== undefined ? `${claimedUrl}::${fileName}@${hash}` : `${fileName}@${hash}`;
+
+/**
+ * Builds whose url could not be checked were kept at `${fileName}@${hash}` whatever url was named, so every plugin with
+ * that code read them. Each moves to the key of the url it was answered for (per category, the later answer wins)
+ */
+const keyByClaimedUrl = (natives: Record<string, NativeRecord>) => {
+	for (const [key, record] of Object.entries(natives)) {
+		const { url, claimedUrl, fileName } = record;
+		if (url !== undefined || claimedUrl === undefined || !key.startsWith(`${fileName}@`)) continue;
+		const moved = recordKey(fileName, key.slice(fileName.length + 1), undefined, claimedUrl);
+		const target = (natives[moved] ??= { claimedUrl, fileName, categories: {} });
+		for (const [category, answer] of Object.entries(record.categories)) {
+			if ((target.categories[category]?.at ?? -Infinity) < answer.at) target.categories[category] = answer;
+		}
+		delete natives[key];
+	}
+};
 
 const filePath = (name: string) => path.join(app.getPath("userData"), name);
 const readEncrypted = (name: string): string | undefined => {
@@ -99,6 +118,7 @@ export const getStore = (): PermissionStore => {
 			const parsed = JSON.parse(json);
 			if (parsed?.version === 1 && typeof parsed.natives === "object") {
 				parsed.legacyMigrated ??= [];
+				keyByClaimedUrl(parsed.natives);
 				return (store = parsed as PermissionStore);
 			}
 		}

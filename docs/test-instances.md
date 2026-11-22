@@ -134,7 +134,8 @@ logging in.
   file's exports are used. The plugin waits for the answers, so keep
   the instance's windows visible while installing or enabling such plugins. A rebuilt plugin asks again only for
   categories allowed for "This version"; "All versions" (confirmed in a second step) keeps the answer for later
-  builds from the same url.
+  builds from the same url. Answers belong to the plugin: another plugin with the same native file, even byte for
+  byte, is asked on its own.
   A module first used after the file has loaded is still asked in a modal message box, which blocks the main
   process (CDP calls time out) until it is answered. Answers are listed, and can be revoked, in Luna Settings.
 - **TIDAL Connect** uses fixed local ports, so only one instance (daily or test) can offer it at a time.
