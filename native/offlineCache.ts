@@ -49,9 +49,13 @@ const prune = (): Promise<void> =>
 			names.map(async (name) => {
 				const info = await stat(path.join(dir, name)).catch(() => undefined);
 				if (info === undefined) return;
+				if (name.endsWith(".part")) {
+					// A write in progress is left alone, one older than an hour was cut off (crash, full disk)
+					if (Date.now() - info.mtimeMs > 60 * 60_000) await rm(path.join(dir, name), { force: true });
+					else usage += info.size;
+					return;
+				}
 				usage += info.size;
-				// A write in progress is left alone, its size still counts
-				if (name.endsWith(".part")) return;
 				const key = name.replace(/\.json$/, "");
 				const entry = kept.get(key) ?? { size: 0, used: 0 };
 				entry.size += info.size;
