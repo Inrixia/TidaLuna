@@ -40,24 +40,30 @@ export class NativeTrust {
 	 * and promises still run then). The code may have caught it, so it is loaded again once answered
 	 */
 	public deferred = false;
+	/** From the first run until the code is activated: timers and promises of a run can call in between */
+	public settling = false;
 	private asking = false;
+	private inFlight?: Promise<void>;
 	private active = false;
 
 	constructor(
 		private readonly info: NativeModuleInfo,
 		private readonly parent?: BrowserWindow,
-	) {}
+	) {
+		// Also while it loads: a revoke must drop answers it already took
+		live.add(new WeakRef(this));
+	}
 
 	/** Called once the code has loaded */
 	public activate() {
 		if (this.active) return;
 		this.active = true;
-		live.add(new WeakRef(this));
+		this.settling = false;
 		// So a module first used later can be allowed for updates (see askNow)
 		void this.verify();
 	}
 
-	private get fileName() {
+	public get fileName() {
 		return this.info.fileName;
 	}
 
@@ -82,7 +88,7 @@ export class NativeTrust {
 		if (this.verifiedUrl !== undefined && forUpdates?.answer === "allowUpdates") {
 			if (!forUpdates.hashes.includes(hash)) {
 				// Remembered for this build, so it also holds when the url can't be checked (offline)
-				forUpdates.hashes = [hash];
+				forUpdates.hashes.push(hash);
 				saveStore();
 			}
 			return true;
@@ -110,6 +116,9 @@ export class NativeTrust {
 		if (this.legacy.has(moduleName)) return true;
 		if (legacyAllowed(this.info.hash, moduleName)) {
 			this.legacy.add(moduleName);
+			// Also modules only used after the load (or never required, like WebAssembly): moved into the store, so they can be revoked
+			this.seen(moduleName);
+			if (this.active) this.adoptLegacy();
 			return true;
 		}
 		return undefined;
@@ -120,12 +129,12 @@ export class NativeTrust {
 		const decision = this.decide(moduleName);
 		if (decision !== undefined) return decision;
 		this.seen(moduleName);
-		if (this.loading || this.asking || running !== undefined) {
-			if (this.loading || this.asking) this.deferred = true;
-			else {
-				// Called from another file's run: asked after it, and that file is loaded again
+		if (this.loading || this.settling || this.asking || running !== undefined) {
+			if (this.loading || this.settling || this.asking) this.deferred = true;
+			if (running !== undefined && running !== this) {
+				// Called from another file's run: asked after it (or awaited, if its window is open), and that file is loaded again
 				waiting.add(this);
-				running!.deferred = true;
+				running.deferred = true;
 			}
 			throw new Error(`[🛑Security🛑] '${moduleName}' in '${this.fileName}' needs permission, asking after load`);
 		}
@@ -174,8 +183,12 @@ export class NativeTrust {
 		if (rows.length > 0) this.save(rows, Array(rows.length).fill("allow"));
 	}
 
-	/** Asks for every pending category in one window */
-	public async ask(): Promise<void> {
+	/** Asks for every pending category in one window. While one is open, waits for it */
+	public ask(): Promise<void> {
+		return (this.inFlight ??= this.askOnce().finally(() => (this.inFlight = undefined)));
+	}
+
+	private async askOnce(): Promise<void> {
 		if (this.pending().length === 0) return;
 		this.asking = true;
 		try {
@@ -211,8 +224,9 @@ export class NativeTrust {
 	private askNow(moduleName: string): boolean {
 		const category = categoryOf(moduleName);
 		const { label, description } = categoryInfo(category);
-		const answers: PermissionAnswer[] = ["deny", "allow"];
-		const buttons = ["Deny", "Allow"];
+		// "Not now" (also Esc or closing) saves nothing: denied for this load, asked again next time
+		const answers: (PermissionAnswer | undefined)[] = [undefined, "deny", "allow"];
+		const buttons = ["Not now", "Deny", "Allow"];
 		if (this.verifiedUrl !== undefined) {
 			answers.push("allowUpdates");
 			buttons.push("Allow, also for updates");
@@ -234,7 +248,11 @@ Only click "Allow" if you trust this!`,
 			normalizeAccessKeys: true,
 		};
 		const response = win !== undefined && !win.isDestroyed() ? dialog.showMessageBoxSync(win, options) : dialog.showMessageBoxSync(options);
-		const answer = answers[response] ?? "deny";
+		const answer = answers[response];
+		if (answer === undefined) {
+			this.decided.set(category, false);
+			return false;
+		}
 		this.save([{ category, modules: [...(this.modules.get(category) ?? [moduleName])] }], [answer]);
 		return answer !== "deny";
 	}
@@ -246,45 +264,63 @@ Only click "Allow" if you trust this!`,
 	}
 }
 
+const MAX_RUNS = 10;
+
 /**
  * Runs `load` without asking: a call that needs an answer throws instead (the vm timeout counts the time a prompt
  * is open, and the answer would be lost). Once `load` has stopped, every category it required is asked in one
- * window, and `load` runs again if it failed, until it needs no new answers.
+ * window, and `load` runs again if it failed or a call was refused (the code may have caught it), until it needs no
+ * new answers.
  */
 export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T): Promise<T> => {
-	while (true) {
-		let exports: T | undefined;
-		let error: unknown;
-		let failed = false;
-		trust.loading = true;
-		trust.deferred = false;
-		running = trust;
-		try {
-			exports = load();
-		} catch (err) {
-			failed = true;
-			error = err;
-		} finally {
-			trust.loading = false;
-			running = undefined;
+	// Calls between runs and activation wait for answers too (see check)
+	trust.settling = true;
+	try {
+		for (let run = 1; ; run++) {
+			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
+			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
+			const exports = await runOnce(trust, load);
+			if (exports !== retry) return exports;
 		}
-		const others = [...waiting];
-		waiting.clear();
-		for (const other of others) await other.ask();
-		if (trust.pending().length === 0 && !trust.deferred) {
-			if (failed) throw error;
-			trust.adoptLegacy();
-			trust.activate();
-			return exports!;
-		}
-		await trust.ask();
-		// A call that needed an answer threw, even if the code caught it
-		if (!failed && !trust.deferred) {
-			trust.adoptLegacy();
-			trust.activate();
-			return exports!;
-		}
+	} finally {
+		trust.settling = false;
 	}
+};
+
+const retry = Symbol("retry");
+const runOnce = async <T>(trust: NativeTrust, load: () => T): Promise<T | typeof retry> => {
+	let exports: T | undefined;
+	let error: unknown;
+	let failed = false;
+	trust.loading = true;
+	trust.deferred = false;
+	running = trust;
+	try {
+		exports = load();
+	} catch (err) {
+		failed = true;
+		error = err;
+	} finally {
+		trust.loading = false;
+		running = undefined;
+	}
+	const others = [...waiting];
+	waiting.clear();
+	for (const other of others) await other.ask();
+	if (trust.pending().length === 0 && !trust.deferred) {
+		if (failed) throw error;
+		trust.adoptLegacy();
+		trust.activate();
+		return exports!;
+	}
+	await trust.ask();
+	// A call that needed an answer threw, even if the code caught it
+	if (!failed && !trust.deferred) {
+		trust.adoptLegacy();
+		trust.activate();
+		return exports!;
+	}
+	return retry;
 };
 
 // #region Settings

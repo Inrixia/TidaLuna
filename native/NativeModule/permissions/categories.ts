@@ -47,8 +47,8 @@ export const permissionCategories: PermissionCategory[] = [
 	},
 	{
 		id: "tidal",
-		label: "TIDAL App Code",
-		description: "Run code of the TIDAL app's own main process (e.g. its Connect, mDNS or player modules).",
+		label: "TIDAL and Luna App Code",
+		description: "Run any file of the TIDAL app or of Luna itself in the main process (e.g. TIDAL's Connect, mDNS or player modules).",
 		modules: [],
 	},
 	{
