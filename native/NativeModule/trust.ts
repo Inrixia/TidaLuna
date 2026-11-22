@@ -222,12 +222,11 @@ export class NativeTrust {
 			const url = this.verifiedUrl;
 			const record = (getStore().natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
 			const existing = record.categories[category];
-			if (existing === undefined)
+			// One build per entry: old answers were given per build and module, so another build's modules must not add up
+			if (existing === undefined || (existing.onlyModules && !existing.hashes.includes(hash)))
 				record.categories[category] = { answer: "allow", hashes: [hash], modules: adopted, onlyModules: true, at: Date.now() };
-			else if (existing.onlyModules) {
-				existing.modules = [...new Set([...existing.modules, ...adopted])];
-				if (!existing.hashes.includes(hash)) existing.hashes.push(hash);
-			} else continue;
+			else if (existing.onlyModules) existing.modules = [...new Set([...existing.modules, ...adopted])];
+			else continue;
 			migrateLegacy(hash, adopted);
 			changed = true;
 		}
@@ -260,6 +259,8 @@ export class NativeTrust {
 		const claimed = getStore().natives[recordKey(fileName, hash, this.verifiedUrl)];
 		const kept = Object.entries(claimed?.categories ?? {})
 			.filter(([category]) => !rows.some((row) => row.category === category))
+			// Only answers that hold for this build as a whole: an "allow" of another build, or an old answer for some modules, does not
+			.filter(([, { answer, hashes, onlyModules }]) => !onlyModules && (answer !== "allow" || hashes.includes(hash)))
 			.map(([category, { answer }]) => ({ category, answer }));
 
 		const answers = await askPermissions({ fileName, url: this.verifiedUrl, claimedUrl: url, rows, kept }, this.parent);
