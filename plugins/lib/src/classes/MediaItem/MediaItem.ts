@@ -46,14 +46,18 @@ export class MediaItem extends ContentBase {
 		const clearWarnCatch = redux.intercept("message/MESSAGE_WARN", unloads, (message) => {
 			if (message?.message === "The content is no longer available") return true;
 		});
-		const { mediaItem } = await redux.interceptActionResp(
-			() => redux.actions["content/LOAD_SINGLE_MEDIA_ITEM"]({ id: itemId, itemType: contentType }),
-			unloads,
-			["content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS"],
-			["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
-		);
-		clearWarnCatch();
-		return mediaItem;
+		try {
+			const { mediaItem } = await redux.interceptActionResp(
+				() => redux.actions["content/LOAD_SINGLE_MEDIA_ITEM"]({ id: itemId, itemType: contentType }),
+				unloads,
+				["content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS"],
+				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
+			);
+			return mediaItem;
+		} finally {
+			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
+			clearWarnCatch();
+		}
 	}
 
 	// #region Static Construction
