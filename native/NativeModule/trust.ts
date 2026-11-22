@@ -86,7 +86,7 @@ export class NativeTrust {
 		return this.info.fileName;
 	}
 
-	/** Called when the code requires a module, so the window can ask for it before it is used */
+	/** Called for a module the code requires (or its source names, see secureLoad), so the window can ask for it before it is used */
 	public seen(moduleName: string) {
 		const category = categoryOf(moduleName);
 		let modules = this.modules.get(category);
@@ -201,9 +201,12 @@ export class NativeTrust {
 	 * works against it, so nothing of a file the user has not accepted may run there.
 	 */
 	public async mayRun(): Promise<boolean> {
-		if (this.info.isCore) return true;
-		if (this.decide(MAIN_PROCESS) === undefined) await this.ask();
-		return this.decide(MAIN_PROCESS) === true;
+		if (!this.info.isCore && this.decide(MAIN_PROCESS) === undefined) await this.ask();
+		return this.runAllowed;
+	}
+	/** The answer `mayRun` got, as it stands now: it can be revoked, or denied in a later window of the same load */
+	public get runAllowed() {
+		return this.info.isCore || this.decide(MAIN_PROCESS) === true;
 	}
 
 	/** Categories the code required that have no answer yet */
@@ -402,10 +405,10 @@ Only allow it if you trust this plugin!`,
 const MAX_RUNS = 10;
 
 /**
- * Runs `load` without asking: a call that needs an answer throws instead (the vm timeout counts the time a prompt
- * is open, and the answer would be lost). Once `load` has stopped, every category it required is asked in one
- * window, and `load` runs again if it failed or a call was refused (the code may have caught it), until it needs no
- * new answers.
+ * Asks whether the code may run at all (see NativeTrust.mayRun), then runs `load` without asking: a call that needs
+ * an answer throws instead (the vm timeout counts the time a prompt is open, and the answer would be lost). Once
+ * `load` has stopped, every category it required that is not answered yet is asked in one window, and `load` runs
+ * again if it failed or a call was refused (the code may have caught it), until it needs no new answers.
  */
 export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T): Promise<T> => {
 	// Calls between runs and activation wait for answers too (see check)
@@ -415,7 +418,7 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 		for (let run = 1; ; run++) {
 			// Before every run: the answer can be revoked while a later window of this load is open
 			if (!(await trust.mayRun())) {
-				throw new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (answers are listed in Luna Settings)`);
+				throw new Error(`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`);
 			}
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
 			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
@@ -446,20 +449,22 @@ const runOnce = async <T>(trust: NativeTrust, load: () => T): Promise<T | typeof
 		trust.loading = false;
 		running = undefined;
 	}
+	// Not if the answer to run was taken back while a window was open: the next run is refused (see loadWithPermissions)
+	const loaded = () => {
+		if (!trust.runAllowed) return retry;
+		trust.activate();
+		return exports!;
+	};
 	const others = [...waiting];
 	waiting.clear();
 	for (const other of others) await other.ask();
 	if (trust.pending().length === 0 && !trust.deferred) {
 		if (failed) throw error;
-		trust.activate();
-		return exports!;
+		return loaded();
 	}
 	await trust.ask();
 	// A call that needed an answer threw, even if the code caught it
-	if (!failed && !trust.deferred) {
-		trust.activate();
-		return exports!;
-	}
+	if (!failed && !trust.deferred) return loaded();
 	return retry;
 };
 
@@ -482,7 +487,7 @@ ipcHandle("__Luna.nativePermissions.list", (): NativePermissionEntry[] =>
 			category,
 			label: categoryInfo(category).label,
 			answer,
-			modules,
+			modules: modules.filter((moduleName) => moduleName !== MAIN_PROCESS),
 			onlyModules: onlyModules === true,
 			at,
 		})),
