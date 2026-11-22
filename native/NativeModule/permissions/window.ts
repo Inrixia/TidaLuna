@@ -145,10 +145,13 @@ const closeConfirm = (keep) => {
 		const before = previous.get(pendingRisky.name);
 		if (before !== undefined) before.checked = true;
 	}
+	const row = pendingRisky;
 	pendingRisky = undefined;
 	confirmBox.classList.remove("open");
 	main.inert = false;
 	validate.disabled = answers() === undefined;
+	// Back to the row, not to the hidden button
+	(keep ? row : (previous.get(row.name) ?? row)).focus();
 };
 document.addEventListener("change", (event) => {
 	const input = event.target;
