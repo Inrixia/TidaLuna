@@ -72,7 +72,8 @@ export class AudioCache {
 				const [{ tags }, ext] = await Promise.all([mediaItem.flacTags(), mediaItem.fileExtension(quality)]);
 				const artist = tags.artist?.join(", ") || "Unknown Artist";
 				const title = tags.title || String(trackId);
-				// The track id keeps names unique: download skips a path that already exists, so two tracks with the same artist and title would share one file.
+				// The track id keeps names unique: download skips a path that already exists,
+				// so two tracks with the same artist and title would share one file.
 				// File names are cut to 255 bytes from the end, so the name is shortened first to keep the id and extension
 				filePath = await mediaItem.download([dir, `${fitBytes(`${artist} - ${title}`, 200)} [${trackId}].${ext}`], quality);
 			} finally {
