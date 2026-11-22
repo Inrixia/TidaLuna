@@ -90,8 +90,12 @@ const loadInMainWorld = (fileName: string, code: string, modules: Record<string,
 			},
 		);
 	} catch (err) {
-		// A throw here would reach the preload without its message
-		return err instanceof Error ? (err.stack ?? err.message) : String(err);
+		// A throw here would reach the preload without its message, and not as the code's own
+		try {
+			return String(err instanceof Error ? (err.stack ?? err.message) : err);
+		} catch {
+			return "threw a value that cannot be shown";
+		}
 	}
 };
 
@@ -106,6 +110,7 @@ const loadInMainWorld = (fileName: string, code: string, modules: Record<string,
 		if (error !== undefined) throw new Error(error);
 		await ipcRenderer.invoke("__LunaNativeHost.loaded", { exportNames });
 	} catch (err) {
-		await ipcRenderer.invoke("__LunaNativeHost.loaded", { error: err instanceof Error ? err.message : String(err), thrownByCode });
+		// Nobody is left to tell if the host is being closed (e.g. its load timed out)
+		await ipcRenderer.invoke("__LunaNativeHost.loaded", { error: err instanceof Error ? err.message : String(err), thrownByCode }).catch(() => {});
 	}
 })();
