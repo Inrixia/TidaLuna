@@ -1,5 +1,6 @@
 export * from "./Album";
 export * from "./Artist";
+export * from "./AudioCache";
 export * from "./ContentBase";
 export * from "./ContextMenu";
 export * from "./ImageOverrides";

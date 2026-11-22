@@ -10,6 +10,10 @@ export type RequestCacheRule = {
 	 * and re-fetched in the background when older than a few seconds, a changed response is reported to `requestCache.onChange`
 	 */
 	swr?: true;
+	/** Entries older than this are re-fetched, e.g. while urls in them are valid */
+	maxAgeMs?: number;
+	/** Also answer TIDAL's own matching requests from any cached value (Luna's or TIDAL's), as this json for its request headers */
+	respond?: (value: unknown, headers: Headers) => unknown;
 };
 
 type RawResponse = { status: number; statusText: string; headers: Headers; etag: string | null; body: string };
@@ -27,12 +31,21 @@ const entries = new Map<string, Entry>();
 /** In-flight entries that may fill extraUrls, by path */
 const pending = new Map<Promise<unknown>, string>();
 const changeListeners = new Set<(url: string) => void>();
+/** Keys a `get` fetcher is fetching */
+const fetching = new Set<string>();
 
 /** A response served from the cache is re-fetched in the background when older than this */
 const revalidateAfterMs = 5_000;
 /** and not served at all once older than this */
 const maxServeAgeMs = 10 * 60_000;
 const maxEntries = 10_000;
+const stats = { served: 0, fetched: 0 };
+
+const maxAgeOf = (href: string) => {
+	let maxAge = Infinity;
+	for (const rule of rules) if (rule.maxAgeMs !== undefined && rule.pattern.test(href)) maxAge = Math.min(maxAge, rule.maxAgeMs);
+	return maxAge;
+};
 
 // Both hosts serve the same v1 api, TIDAL uses api. and Luna desktop.
 const tidalHosts = new Set(["api.tidal.com", "desktop.tidal.com"]);
@@ -142,6 +155,10 @@ export const requestCache = {
 	clear() {
 		entries.clear();
 	},
+	/** How many TIDAL requests were answered from the cache and how many went to the network through it */
+	stats() {
+		return { entries: entries.size, ...stats };
+	},
 	/**
 	 * The cached or in-flight value for `url`, otherwise the result of `fetcher` which is cached.
 	 * Concurrent calls (and matching TIDAL requests) share a single request.
@@ -151,14 +168,17 @@ export const requestCache = {
 		const key = keyOf(parsed);
 		const entry = entries.get(key);
 		// A failed entry is already deleted when this runs (e.g. TIDAL aborted its request), so this fetches
-		if (entry !== undefined) return (<Promise<T | undefined>>valueOf(key, entry)).catch(() => requestCache.get(url, fetcher));
+		if (entry !== undefined && Date.now() - entry.time <= maxAgeOf(parsed.href)) return (<Promise<T | undefined>>valueOf(key, entry)).catch(() => requestCache.get(url, fetcher));
 		// A request in flight for the same path may answer this one through extraUrls (e.g. playbackinfo at another quality)
 		const path = pathOf(parsed);
 		const samePath: Promise<unknown>[] = [];
 		pending.forEach((pendingPath, value) => pendingPath === path && samePath.push(value));
 		if (samePath.length !== 0) return Promise.allSettled(samePath).then(() => requestCache.get(url, fetcher));
-		// Run fetcher after the entry is stored so the fetch hook sees its own request as cached
-		return <Promise<T | undefined>>store(parsed, key, Promise.resolve().then(fetcher)).value;
+		// Run fetcher after the entry is stored so the fetch hook sees its own request as cached, and doesn't answer it from itself
+		const value = Promise.resolve()
+			.then(() => (fetching.add(key), fetcher()))
+			.finally(() => fetching.delete(key));
+		return <Promise<T | undefined>>store(parsed, key, value).value;
 	},
 };
 
@@ -167,6 +187,7 @@ type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
 
 const fill = (url: URL, key: string, input: FetchInput, init: FetchInit) => {
+	stats.fetched++;
 	const res = fetch.call(globalThis, input, init);
 	try {
 		// Attached before the caller's handlers, so the clone is taken before the body is read
@@ -208,10 +229,28 @@ const fromCache = (url: URL, key: string, input: FetchInput, init: FetchInit): P
 	const fallback = () => fill(url, key, input, init);
 	return entry.raw.then((raw) => {
 		if (raw.status !== 200) return fallback();
+		stats.served++;
 		const res = new Response(raw.body, { status: raw.status, statusText: raw.statusText, headers: raw.headers });
 		Object.defineProperty(res, "url", { value: url.href });
 		return res;
 	}, fallback);
+};
+
+/** A response for a TIDAL request made by a `respond` rule from a fresh entry, otherwise its fetch */
+const respondFrom = (rule: Required<Pick<RequestCacheRule, "respond">>, url: URL, key: string, input: FetchInput, init: FetchInit) => {
+	const entry = entries.get(key);
+	if (entry === undefined || Date.now() - entry.time > maxAgeOf(url.href)) return fill(url, key, input, init);
+	const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+	return valueOf(key, entry).then(
+		(value) => {
+			if (value === undefined) return fill(url, key, input, init);
+			stats.served++;
+			const res = new Response(JSON.stringify(rule.respond(value, headers)), { headers: { "content-type": "application/json" } });
+			Object.defineProperty(res, "url", { value: url.href });
+			return res;
+		},
+		() => fill(url, key, input, init),
+	);
 };
 
 /** The response for a request the cache handles, `undefined` for the rest */
@@ -230,16 +269,16 @@ const cachedFetch = (input: FetchInput, init: FetchInit): Promise<Response> | un
 	const href = url.href;
 	let matched = false;
 	let swr = false;
+	let responder: Required<Pick<RequestCacheRule, "respond">> | undefined;
 	for (const rule of rules) {
 		if (!rule.pattern.test(href)) continue;
 		matched = true;
-		if (rule.swr) {
-			swr = true;
-			break;
-		}
+		if (rule.swr) swr = true;
+		if (rule.respond !== undefined) responder = <Required<Pick<RequestCacheRule, "respond">>>rule;
 	}
 	if (!matched) return;
 	const key = keyOf(url);
+	if (responder !== undefined && !fetching.has(key)) return respondFrom(responder, url, key, input, init);
 	// An swr entry not served (stale, uncacheable or filled by a Luna fetcher) is replaced, other entries are kept
 	if (swr) return fromCache(url, key, input, init) ?? fill(url, key, input, init);
 	return entries.has(key) ? undefined : fill(url, key, input, init);

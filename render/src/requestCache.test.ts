@@ -116,3 +116,29 @@ test("non-swr rules still only fill the cache", async () => {
 	requestCache.clear();
 	await requestCache.get(track, async () => ({ id: 1 }));
 });
+
+test("respond rules answer TIDAL from any fresh entry, without answering their own fetcher", async () => {
+	requestCache.register(unloads, {
+		pattern: /\/v1\/videos\/\d+\/playbackinfo/,
+		maxAgeMs: 60_000,
+		respond: (value, headers) => ({ ...(<object>value), session: headers.get("x-session") }),
+	});
+	requests.length = 0;
+	bodies.set("/v1/videos/1/playbackinfo", `{"id":1}`);
+	const info = "https://desktop.tidal.com/v1/videos/1/playbackinfo?q=HIGH";
+	// Luna's fetcher goes through the hook to the network
+	assert.deepEqual(await requestCache.get(info, () => fetch(info).then((res) => res.json())), { id: 1 });
+	assert.equal(requests.length, 1);
+	// TIDAL is answered from it with its own header
+	const res = await fetch(info.replace("desktop.", "api."), { headers: { "x-session": "abc" } });
+	assert.deepEqual(await res.json(), { id: 1, session: "abc" });
+	assert.equal(requests.length, 1);
+	// Too old: fetched again, by both
+	mock.timers.tick(61_000);
+	await fetch(info, { headers: { "x-session": "def" } });
+	assert.equal(requests.length, 2);
+	mock.timers.tick(61_000);
+	assert.deepEqual(await requestCache.get(info, () => fetch(info).then((res) => res.json())), { id: 1 });
+	assert.equal(requests.length, 3);
+	assert.equal(requestCache.stats().served > 0, true);
+});

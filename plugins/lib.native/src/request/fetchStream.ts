@@ -1,6 +1,8 @@
 import { rejectNotOk, sleep } from "@inrixia/helpers";
 import type { Decipheriv } from "crypto";
 
+import { audioCacheUrl } from "../native";
+
 export type FetchProgress = { readonly total?: number; readonly downloaded?: number };
 export type TrackStreamOptions = {
 	progress?: FetchProgress;
@@ -37,7 +39,9 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 	if (urls.length === 1 && partialRequest) reqInit.headers.set("Range", `bytes=0-${bytesWanted}`);
 
 	try {
-		for (const url of urls) {
+		for (let url of urls) {
+			// TIDAL's audio is read through the cache, which fills it (or answers from it) for the player too
+			url = audioCacheUrl(url) ?? url;
 			let res = await fetch(url, reqInit);
 			// Retry once on server errors (e.g. CDN 504 Gateway Time-out), after giving the server a moment
 			if (res.status >= 500) {

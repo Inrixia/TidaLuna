@@ -68,6 +68,11 @@ export class TidalApi {
 				actual.searchParams.set("audioquality", audioQuality);
 				return [actual];
 			},
+			// Manifest urls hold a token valid for an hour
+			maxAgeMs: 45 * 60_000,
+			// TIDAL's player starts a track without waiting on the network when it was prefetched (by Luna or TIDAL). Its play reporting
+			// uses the session id it sends, the response carries it back
+			respond: (info, headers) => ({ ...(<object>info), streamingSessionId: headers.get("x-tidal-streamingsessionid") ?? undefined }),
 		});
 		requestCache.register(unloads, { pattern: /^https:\/\/(api|desktop)\.tidal\.com\/v1\/(tracks|albums|artists|playlists)\/[\w-]+(\/lyrics)?\?/ });
 	}
