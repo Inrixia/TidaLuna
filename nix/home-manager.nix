@@ -23,26 +23,23 @@ let
     else
       url;
 
-  # Build the seed settings JSON, a key is only written when its option is set
-  withSettings = lib.filter (p: p.settings != { }) (if cfg.plugins == null then [ ] else cfg.plugins);
-  settingsKey = p: if p.settingsName != null then p.settingsName else p.name;
-  settingsKeys = map settingsKey withSettings;
-  pluginSettings = builtins.listToAttrs (
-    map (p: {
-      name = settingsKey p;
-      value = p.settings;
-    }) withSettings
-  );
+  # `stores` is shorthand for storage."@luna/pluginStores".storeUrls
+  storesKeySet = cfg.storage ? "@luna/pluginStores" && cfg.storage."@luna/pluginStores" ? storeUrls;
+  storage =
+    cfg.storage
+    // lib.optionalAttrs (cfg.stores != null) {
+      "@luna/pluginStores" = (cfg.storage."@luna/pluginStores" or { }) // {
+        storeUrls = lib.unique (map normalizeStoreUrl cfg.stores);
+      };
+    };
 
+  # Build the seed settings JSON, a key is only written when its option is set
   seedSettings =
-    lib.optionalAttrs (cfg.stores != null) {
-      stores = map normalizeStoreUrl cfg.stores;
+    lib.optionalAttrs (cfg.plugins != null) {
+      inherit (cfg) plugins;
     }
-    // lib.optionalAttrs (cfg.plugins != null) {
-      plugins = map (p: p.name) cfg.plugins;
-    }
-    // lib.optionalAttrs (pluginSettings != { }) {
-      inherit pluginSettings;
+    // lib.optionalAttrs (storage != { }) {
+      inherit storage;
     };
 
   seedSettingsFile = pkgs.writeText "luna-settings.json" (builtins.toJSON seedSettings);
@@ -108,42 +105,35 @@ in
     };
 
     plugins = lib.mkOption {
-      type = lib.types.nullOr (
-        lib.types.listOf (
-          lib.types.submodule {
-            options = {
-              name = lib.mkOption {
-                type = lib.types.str;
-                description = ''
-                  Plugin to install: its name as listed in the Plugin Store (e.g. `DiscordRPC`, `meowarex.radiant-lyrics`)
-                  or its package name. Matching ignores case. A plugin that is not found in any store shows an error in TIDAL.
-                '';
-                example = "DiscordRPC";
-              };
-
-              settingsName = lib.mkOption {
-                type = lib.types.nullOr lib.types.str;
-                default = null;
-                description = ''
-                  Key the plugin stores its settings under (case sensitive, e.g. `TidalTags` for `Tidal Tags`).
-                  Defaults to `name` exactly as written, set it when `settings` is set and the key differs.
-                '';
-                example = "RadiantLyrics";
-              };
-
-              settings = lib.mkOption {
-                type = lib.types.attrsOf lib.types.anything;
-                default = { };
-                description = "Plugin settings. Declared keys overwrite the stored values on every startup, other keys are kept.";
-              };
-            };
-          }
-        )
-      );
+      type = lib.types.nullOr (lib.types.listOf lib.types.str);
       default = null;
+      example = [
+        "Shazam"
+        "DiscordRPC"
+      ];
       description = ''
-        Plugins to keep installed. When set, every plugin not in this list is removed on startup and missing ones are installed.
+        Plugins to keep installed: their names as listed in the Plugin Store (e.g. `DiscordRPC`, `meowarex.radiant-lyrics`)
+        or their package names, case is ignored. When set, every plugin not in this list is removed on startup and missing ones
+        are installed, a plugin that is not found in any store shows an error in TIDAL.
         Whether an installed plugin is enabled stays up to you in the UI. `null` leaves the installed plugins as they are.
+      '';
+    };
+
+    storage = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.attrsOf lib.types.anything);
+      default = { };
+      example = lib.literalExpression ''
+        {
+          "@luna/pluginStorage".DiscordRPC = {
+            displayOnPause = false;
+            customStatusText = "{track} by {artist}";
+          };
+        }
+      '';
+      description = ''
+        Values written into TidaLuna's stores on every startup, laid out as devtools shows them (IndexedDB): store name, key, value.
+        An attrset value is merged over the stored one so undeclared keys are kept, any other value replaces it.
+        Stores and keys you don't declare are not touched.
       '';
     };
   };
@@ -151,8 +141,8 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = lib.length (lib.unique settingsKeys) == lib.length settingsKeys;
-        message = "programs.tidaluna.plugins: more than one entry sets settings for the same key (settingsName or name): ${toString settingsKeys}";
+        assertion = !(cfg.stores != null && storesKeySet);
+        message = ''programs.tidaluna: set either `stores` or `storage."@luna/pluginStores".storeUrls`, not both.'';
       }
     ];
 

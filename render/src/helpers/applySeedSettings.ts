@@ -11,12 +11,14 @@ const { trace } = coreTrace.withSource(".applySeedSettings");
  * Every key is optional, a missing key leaves that part of the user's setup untouched.
  */
 export type SeedSettings = {
-	/** Replaces the store list */
-	stores?: string[];
 	/** Plugins to keep installed, any other non core plugin is removed. Matched against the package name or the store entry name */
 	plugins?: string[];
-	/** Settings merged into @luna/pluginStorage, keyed by the plugin's storage name */
-	pluginSettings?: Record<string, Record<string, unknown>>;
+	/**
+	 * Values written into ReactiveStores, laid out as devtools shows them: store name → key → value.
+	 * A plain object is merged over the stored object (undeclared keys are kept), anything else replaces the stored value.
+	 * e.g. `{ "@luna/pluginStores": { "storeUrls": [...] }, "@luna/pluginStorage": { "DiscordRPC": { "displayOnPause": false } } }`
+	 */
+	storage?: Record<string, Record<string, unknown>>;
 };
 
 const urlName = (url?: string) => url?.slice(url.lastIndexOf("/") + 1);
@@ -37,19 +39,15 @@ export async function applySeedSettings(): Promise<void> {
 	trace.log("Applying luna-settings.json");
 
 	try {
-		let storeUrls: string[] | undefined;
-		if (Array.isArray(seed.stores)) {
-			storeUrls = [...new Set(seed.stores.filter((url) => typeof url === "string").map((url) => LunaPlugin.normalizeStoreUrl(url)))];
-			await ReactiveStore.getStore("@luna/pluginStores").set("storeUrls", storeUrls);
-		}
-
-		if (isObject(seed.pluginSettings)) {
-			// Only touch the declared plugins, settings of everything else are kept
-			const pluginStorage = ReactiveStore.getStore("@luna/pluginStorage");
-			for (const [name, settings] of Object.entries(seed.pluginSettings)) {
-				if (!isObject(settings)) continue;
-				const stored = await pluginStorage.get<Record<string, unknown>>(name);
-				await pluginStorage.set(name, { ...stored, ...settings });
+		if (isObject(seed.storage)) {
+			// Only the declared keys are touched, everything else in a store is kept
+			for (const [storeName, values] of Object.entries(seed.storage)) {
+				if (!isObject(values)) continue;
+				const store = ReactiveStore.getStore(storeName);
+				for (const [key, value] of Object.entries(values)) {
+					const stored = await store.get(key);
+					await store.set(key, isObject(value) && isObject(stored) ? { ...stored, ...value } : value);
+				}
 			}
 		}
 
@@ -57,7 +55,7 @@ export async function applySeedSettings(): Promise<void> {
 			const missing = await removeUndeclaredPlugins(seed.plugins.filter((id) => typeof id === "string"));
 			// Install in the background so a slow store doesn't block startup
 			if (missing.size !== 0) {
-				storeUrls ??= await ReactiveStore.getStore("@luna/pluginStores").getReactive<string[]>("storeUrls", []);
+				const storeUrls = await ReactiveStore.getStore("@luna/pluginStores").getReactive<string[]>("storeUrls", []);
 				installPlugins(missing, [...storeUrls]).catch(trace.msg.err.withContext("Failed to install plugins from luna-settings.json"));
 			}
 		}

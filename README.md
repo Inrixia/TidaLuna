@@ -97,9 +97,9 @@ programs.tidaluna = {
 ```
 
 > [!WARNING]
-> Your config is the source of truth: once you set `stores` or `plugins`, TidaLuna applies them on **every** startup.
-> Stores and plugins you add or remove in the UI are reverted on the next start, and declared `settings` overwrite the values changed in the UI.
-> Options you leave unset (`null`, the default) are not touched.
+> Your config is the source of truth: once you set `stores`, `plugins` or `storage`, TidaLuna applies them on **every** startup.
+> Stores and plugins you add or remove in the UI are reverted on the next start, and declared `storage` values overwrite the values changed in the UI.
+> Options you leave unset (the default) are not touched.
 
 ##### Stores
 
@@ -115,9 +115,11 @@ programs.tidaluna = {
 };
 ```
 
-##### Plugins and their settings
+##### Plugins
 
 When `plugins` is set, every plugin not in the list is uninstalled on startup and missing ones are installed from the stores.
+Use the plugin's name as listed in the Plugin Store (e.g. `DiscordRPC`, `Song Downloader`, `meowarex.radiant-lyrics`) or its package name, case is ignored.
+If a plugin is not found in any store, TidaLuna shows an error on startup.
 Settings of plugins you uninstall are kept. Enabling or disabling an installed plugin is still up to you in the UI.
 
 ```nix
@@ -126,38 +128,40 @@ programs.tidaluna = {
   stores = [
     "https://github.com/Inrixia/luna-plugins/releases/download/dev/store.json"
   ];
-  plugins = [
-    { name = "Shazam"; }
-    {
-      name = "DiscordRPC";
-      settings = {
-        displayOnPause = false;
-        displayArtistIcon = true;
-        customStatusText = "{track} by {artist}";
-      };
-    }
-  ];
+  plugins = [ "Shazam" "DiscordRPC" ];
 };
 ```
 
-A plugin entry has these keys:
+##### Storage (plugin settings and anything else)
 
-- `name`: the plugin's name as listed in the Plugin Store (e.g. `DiscordRPC`, `Song Downloader`, `meowarex.radiant-lyrics`) or its package name. Case is ignored.
-  If a plugin is not found in any store, TidaLuna shows an error on startup.
-- `settings` (optional): settings to apply. Only the keys you declare are overwritten, other settings of the plugin are kept.
-- `settingsName` (optional): the key the plugin stores its settings under. It is case sensitive and defaults to `name` exactly as written,
-  so set it when the key differs (e.g. `Tidal Tags` stores its settings as `TidalTags`).
+`storage` writes values into TidaLuna's stores, laid out as devtools shows them: store name, then key, then value.
+Plugin settings live in the `@luna/pluginStorage` store under the plugin's name, but `storage` can override anything a plugin stores.
+An attrset value is merged over the stored one, so only the keys you declare are overwritten. Any other value (a list, a string...) replaces the stored value.
 
-To see the `settingsName` and `settings` of your installed plugins, run this in TIDAL's developer console:
-`console.log(JSON.stringify(await luna.core.ReactiveStore.getStore("@luna/pluginStorage").dump(), null, 2));`
+```nix
+programs.tidaluna.storage = {
+  "@luna/pluginStorage".DiscordRPC = {
+    displayOnPause = false;
+    displayArtistIcon = true;
+    customStatusText = "{track} by {artist}";
+  };
+};
+```
+
+To see what is stored, open TIDAL's devtools: Application, IndexedDB, then a store (e.g. `@luna/pluginStorage`) and its `_` object store.
+Or dump a store in the console: `console.log(JSON.stringify(await luna.core.ReactiveStore.getStore("@luna/pluginStorage").dump(), null, 2));`
+
+`stores` is a shorthand for `storage."@luna/pluginStores".storeUrls`, set only one of them.
 
 The module writes these options to `luna-settings.json` next to TidaLuna's files (`resources/app`). Without Nix you can write that file by hand:
 
 ```json
 {
-  "stores": ["https://github.com/Inrixia/luna-plugins/releases/download/dev"],
   "plugins": ["Shazam", "DiscordRPC"],
-  "pluginSettings": { "DiscordRPC": { "displayOnPause": false } }
+  "storage": {
+    "@luna/pluginStores": { "storeUrls": ["https://github.com/Inrixia/luna-plugins/releases/download/dev"] },
+    "@luna/pluginStorage": { "DiscordRPC": { "displayOnPause": false } }
+  }
 }
 ```
 
