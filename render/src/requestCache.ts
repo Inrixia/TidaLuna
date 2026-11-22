@@ -7,7 +7,7 @@ export type RequestCacheRule = {
 	extraUrls?: (url: URL, value: unknown) => (string | URL)[];
 	/**
 	 * Also answer TIDAL's own matching requests from the cache (stale-while-revalidate): a cached response is returned at once
-	 * and re-fetched in the background when older than a few seconds, a changed response is reported to `requestCache.onChange`
+	 * and re-fetched in the background when older than `revalidateAfterMs`, a changed response is reported to `requestCache.onChange`
 	 */
 	swr?: true;
 	/** Entries older than this are re-fetched, e.g. while urls in them are valid */
