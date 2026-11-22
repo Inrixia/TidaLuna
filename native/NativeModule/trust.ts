@@ -228,6 +228,8 @@ export class NativeTrust {
 	 */
 	public adoptLegacy() {
 		const { fileName, hash, url: claimedUrl } = this.info;
+		// Nothing is kept for a plugin uninstalled since it loaded
+		if (this.removed) return;
 		let changed = false;
 		for (const [category, modules] of this.modules) {
 			if (this.saved(category) !== undefined) continue;
@@ -269,6 +271,7 @@ export class NativeTrust {
 		// Answers for updates count once the url is checked
 		const rows = this.pending();
 		if (rows.length === 0) return;
+		if (this.denyIfRemoved(rows)) return;
 
 		const { fileName, hash, url } = this.info;
 		const claimed = getStore().natives[recordKey(fileName, hash, this.verifiedUrl)];
@@ -279,6 +282,8 @@ export class NativeTrust {
 			.map(([category, { answer }]) => ({ category, answer }));
 
 		const answers = await askPermissions({ fileName, url: this.verifiedUrl, claimedUrl: url, rows, kept }, this.parent);
+		// Uninstalled while the window was open: its answers must not outlive the uninstall
+		if (this.denyIfRemoved(rows)) return;
 		if (answers === undefined) {
 			// Closed: denied for now, asked again next time
 			for (const { category } of rows) this.decided.set(category, false);
@@ -361,6 +366,12 @@ Only allow it if you trust this plugin!`,
 	public get mayAsk() {
 		return !this.removed;
 	}
+	/** Denies these rows for this load, saving nothing, if its plugin was uninstalled */
+	private denyIfRemoved(rows: { category: string }[]): boolean {
+		if (!this.removed) return false;
+		for (const { category } of rows) this.decided.set(category, false);
+		return true;
+	}
 }
 
 const MAX_RUNS = 10;
@@ -380,6 +391,8 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
 			if (run > MAX_RUNS) throw new Error(`[🛑Security🛑] '${trust.fileName}' still needs new permissions after ${MAX_RUNS} loads`);
 			const exports = await runOnce(trust, load);
+			// Uninstalled while it loaded: no exports, so a reinstall loads it anew (and asks) instead of reusing this load
+			if (!trust.mayAsk) throw new Error(`[🛑Security🛑] '${trust.fileName}' was uninstalled while it loaded`);
 			if (exports !== retry) return exports;
 		}
 	} finally {
