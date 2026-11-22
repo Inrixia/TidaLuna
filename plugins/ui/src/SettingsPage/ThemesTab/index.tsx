@@ -9,9 +9,8 @@ import { store as obyStore } from "oby";
 
 export const ThemesTab = React.memo(() => {
 	const [_themes, setThemes] = React.useState(() => ({ ...obyStore.unwrap(themes) }));
-	React.useEffect(() => {
-		obyStore.on(themes, () => setThemes({ ...obyStore.unwrap(themes) }));
-	}, []);
+	// Return the disposer so closing the tab stops listening
+	React.useEffect(() => obyStore.on(themes, () => setThemes({ ...obyStore.unwrap(themes) })), []);
 	return (
 		<Stack spacing={2}>
 			<InstallFromUrl />

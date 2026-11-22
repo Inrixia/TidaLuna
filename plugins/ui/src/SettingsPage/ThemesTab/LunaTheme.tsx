@@ -17,6 +17,17 @@ export type LunaThemeStorage = {
 	css?: string;
 };
 
+type LunaThemeManifest = { name?: string; description?: string; author?: string };
+// Neptune themes can start with a JSON manifest in a comment, most themes have none
+const parseManifest = (css?: string): LunaThemeManifest | undefined => {
+	if (css === undefined) return undefined;
+	try {
+		return JSON.parse(css.slice(css.indexOf("/*") + 2, css.indexOf("*/")));
+	} catch {
+		return undefined;
+	}
+};
+
 export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThemeStorage; url: string; uninstall: VoidFn }) => {
 	const [enabled, setEnabled] = React.useState(theme.enabled);
 	// Sync enabled state when prop changes (e.g., emergency disable shortcut)
@@ -25,7 +36,8 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 	const [loading, setLoading] = React.useState(false);
 	const [themeStyle] = React.useState(() => themeStyles[url] ?? (themeStyles[url] = new StyleTag(url, unloads)));
 	// Neptune theme manifest support
-	const [manifest, setManifest] = React.useState<{ name?: string; description?: string; author?: string } | undefined>();
+	const [manifest, setManifest] = React.useState(() => parseManifest(theme.css));
+	const name = manifest?.name ?? url;
 
 	const toggleEnabled = React.useCallback((_: unknown, checked: boolean) => {
 		setEnabled((themes[url].enabled = checked));
@@ -36,7 +48,9 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 		try {
 			const css = (themes[url].css = await ftch.text(url));
 			setCSS(css);
-			setManifest(JSON.parse(css.slice(css.indexOf("/*") + 2, css.indexOf("*/"))));
+			// Reloading an enabled theme has to restyle the page, not only update what is stored
+			if (themes[url].enabled) themeStyle.css = css;
+			setManifest(parseManifest(css));
 		} finally {
 			setLoading(false);
 		}
@@ -61,7 +75,7 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 			}}
 		>
 			<LunaPluginHeader
-				name={manifest?.name ?? url}
+				name={name}
 				desc={manifest?.description}
 				author={manifest?.author}
 				link={url}
