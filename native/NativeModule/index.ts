@@ -48,7 +48,8 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 	try {
 		exports = await secureLoad(moduleInfo, BrowserWindow.fromWebContents(event.sender) ?? undefined);
 	} catch (err) {
-		const isDepricatedModule = Error.isError(err) && /Cannot use import statement outside a module/i.test(err.message);
+		// Not Error.isError: Electron older than 35 lacks it, and calling it here would replace the real error
+		const isDepricatedModule = /Cannot use import statement outside a module/i.test(String((err as Error | undefined)?.message));
 		if (isDepricatedModule) throw new Error("Plugin using deprecated unsafe native code! Please ask the plugin author to rebuild!");
 		throw err;
 	}
