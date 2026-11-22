@@ -149,7 +149,8 @@ export class NativeTrust {
 			this.decided.set(category, saved);
 			return saved;
 		}
-		// Answers from before categories, per module
+		// Answers from before categories, per module (none for code of a plugin uninstalled since it loaded)
+		if (this.removed) return undefined;
 		if (this.legacy.has(moduleName)) return true;
 		if (this.adoptedAllows(moduleName)) {
 			this.legacy.add(moduleName);
@@ -356,10 +357,13 @@ Only allow it if you trust this plugin!`,
 	 * Its plugin was uninstalled: its code may still run (timers, sockets), but nothing is asked for it any more. What it
 	 * needs is denied, a reinstall loads it anew and asks
 	 */
-	public uninstalled(url: string) {
-		if (this.info.url !== url) return;
+	public uninstalled(url: string): boolean {
+		if (this.info.url !== url) return false;
 		this.removed = true;
 		this.reset();
+		// Old answers of this build not moved into the store yet (it was still loading) must not outlive the uninstall either
+		retireLegacy(new Set([this.info.hash]));
+		return true;
 	}
 	private removed = false;
 	/** Whether it may ask: not for code of a plugin uninstalled since it loaded */
@@ -506,9 +510,9 @@ ipcHandle("__Luna.nativePermissions.forget", (_, url: string) => {
 		for (const category of Object.keys(record.categories)) removeCategory(key, record, category);
 		changed = true;
 	}
-	if (changed) saveStore();
 	resetLive();
 	// Code of the uninstalled plugin that still runs must not ask again
-	for (const ref of live) ref.deref()?.uninstalled(url);
+	for (const ref of live) if (ref.deref()?.uninstalled(url)) changed = true;
+	if (changed) saveStore();
 });
 // #endregion
