@@ -48,6 +48,8 @@ export class NativeTrust {
 	private readonly legacy = new Set<string>();
 	// What the window asks for, per category: modules the code required or called or its source names, and MAIN_PROCESS
 	private readonly modules = new Map<string, Set<string>>();
+	// Modules the source names (see secureLoad): a guess, so only asked for together with whether the code may run
+	private readonly named = new Set<string>();
 	/** While true (the code runs under the vm timeout, see secureLoad) a call that needs an answer throws instead of asking */
 	public loading = false;
 	/**
@@ -60,6 +62,7 @@ export class NativeTrust {
 	private asking = false;
 	private inFlight?: Promise<void>;
 	private active = false;
+	private abandoned = false;
 
 	constructor(
 		private readonly info: NativeModuleInfo,
@@ -92,6 +95,20 @@ export class NativeTrust {
 		let modules = this.modules.get(category);
 		if (modules === undefined) this.modules.set(category, (modules = new Set()));
 		modules.add(moduleName);
+	}
+
+	/** Called for a module the source names, before the first run (see secureLoad) */
+	public names(moduleName: string) {
+		this.named.add(moduleName);
+	}
+
+	/**
+	 * Its load ended without the code being activated (refused, failed, uninstalled). Code of its runs can still be
+	 * running (timers, sockets, promises): from now on it is denied what it calls, and nothing is asked for it
+	 */
+	public abandon() {
+		this.abandoned = true;
+		this.reset();
 	}
 
 	private saved(category: string): boolean | undefined {
@@ -147,6 +164,7 @@ export class NativeTrust {
 	private decide(moduleName: string): boolean | undefined {
 		// Luna's own code, built together with this injector: still sandboxed, just no window or prompt
 		if (this.info.isCore) return true;
+		if (this.abandoned) return false;
 		const category = categoryOf(moduleName);
 		const decided = this.decided.get(category);
 		if (decided !== undefined) return decided;
@@ -209,10 +227,23 @@ export class NativeTrust {
 		return this.info.isCore || this.decide(MAIN_PROCESS) === true;
 	}
 
+	/** Whether a saved answer keeps it from running (not a window closed without one) */
+	public get runDenied() {
+		return !this.info.isCore && this.saved(categoryOf(MAIN_PROCESS)) === false;
+	}
+
 	/** Categories the code required that have no answer yet */
 	public pending(): { category: string; modules: string[] }[] {
+		const asked = new Map(this.modules);
+		// With the question whether it may run, so that stays one window. Never on their own: the code may not reach them
+		if (!this.active && this.decide(MAIN_PROCESS) === undefined) {
+			for (const moduleName of this.named) {
+				const category = categoryOf(moduleName);
+				asked.set(category, new Set([...(asked.get(category) ?? []), moduleName]));
+			}
+		}
 		const pending = [];
-		for (const [category, modules] of this.modules) {
+		for (const [category, modules] of asked) {
 			// Code that already runs is not asked whether it may (e.g. revoked since): the next load asks
 			if (this.active && modules.has(MAIN_PROCESS)) continue;
 			if ([...modules].some((moduleName) => this.decide(moduleName) === undefined)) pending.push({ category, modules: [...modules] });
@@ -245,6 +276,15 @@ export class NativeTrust {
 			retireLegacy(new Set([hash]), category);
 		});
 		saveStore();
+		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
+		for (const ref of live) ref.deref()?.overruled(this, rows);
+	}
+
+	/** `by` saved answers for `rows`: if they are about this code or plugin too, they replace what this load took before */
+	private overruled(by: NativeTrust, rows: { category: string }[]) {
+		if (by === this || by.info.fileName !== this.info.fileName) return;
+		if (by.info.hash !== this.info.hash && (by.info.url === undefined || by.info.url !== this.info.url)) return;
+		for (const { category } of rows) this.decided.delete(category);
 	}
 
 	/**
@@ -419,7 +459,9 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 		const uninstalled = () => new Error(`[🛑Security🛑] '${trust.fileName}' was uninstalled while it loaded`);
 		const refused = () =>
 			new Error(
-				`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (a saved answer can be revoked in Luna Settings)`,
+				`[🛑Security🛑] '${trust.fileName}' was not allowed to run in the main process (${
+					trust.runDenied ? "the saved answer can be revoked in Luna Settings" : "it asks again the next time it loads"
+				})`,
 			);
 		for (let run = 1; ; run++) {
 			// Code that keeps needing new answers (e.g. a new module name every run) is not loaded forever
@@ -435,6 +477,10 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 			if (!trust.mayAsk) throw uninstalled();
 			if (exports !== retry) return exports;
 		}
+	} catch (err) {
+		// After the error was made: it names the answer the load ended on
+		trust.abandon();
+		throw err;
 	} finally {
 		trust.settling = false;
 	}

@@ -250,11 +250,11 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 	// The file is asked for before its first run (see NativeTrust.mayRun). The modules its source names are put in that
 	// window too, so it stays one window. A guess from the text (it also finds a require the code never reaches, and
 	// misses a name put together at run time, asked after the run as before), so only names with a category and Node's
-	// own modules: what the code uses is checked as it runs
+	// own modules, and only in that window: what the code uses is checked as it runs
 	const listed = (moduleName: string) => !categoryOf(moduleName).startsWith("module:") || builtinModules.includes(moduleName);
 	for (const [, name] of moduleInfo.isCore ? [] : code.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)) {
 		const moduleName = normalize(name);
-		if (!moduleWhitelist.has(moduleName) && moduleName !== "process" && listed(moduleName)) trust.seen(moduleName);
+		if (!moduleWhitelist.has(moduleName) && moduleName !== "process" && listed(moduleName)) trust.names(moduleName);
 	}
 
 	// Permissions can't be asked while the code runs: the vm timeout counts the time a prompt is open, and once

@@ -49,13 +49,20 @@ export const LunaNativePermissions = React.memo(() => {
 							</Stack>
 						</LunaSetting>
 						{[...categories]
-							.sort((a, b) => a.label.localeCompare(b.label))
+							// As in the window: whether it may run first
+							.sort((a, b) => Number(b.category === "main") - Number(a.category === "main") || a.label.localeCompare(b.label))
 							.map(({ category, label, answer, modules, onlyModules }) => (
 								<LunaSetting
 									key={category}
 									sx={{ paddingLeft: 3 }}
 									title={label}
-									desc={onlyModules ? `Only ${modules.join(", ")} (answered before permissions had categories)` : modules.join(", ")}
+									desc={
+										category === "main"
+											? "Asked before any of the file's code runs"
+											: onlyModules
+												? `Only ${modules.join(", ")} (answered before permissions had categories)`
+												: modules.join(", ")
+									}
 								>
 									<Stack direction="row" spacing={1} sx={{ flexGrow: 1, alignItems: "center", justifyContent: "flex-end" }}>
 										<Typography variant="body2" sx={{ color: answerColor[answer] }}>
