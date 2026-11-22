@@ -18,6 +18,5 @@ in
 
           mkdir -p "$out/Applications/TIDAL.app/Contents/Resources/app/"
           cp -R ${injection}/* "$out/Applications/TIDAL.app/Contents/Resources/app/"
-          codesign --force --deep --sign - "$out/Applications/TIDAL.app"
         '';
     })
