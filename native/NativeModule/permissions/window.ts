@@ -18,6 +18,7 @@ const escapeHtml = (text: string) =>
 	text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 
 const SUBMIT = "luna-permissions:";
+const FIT = "luna-permissions-fit:";
 
 const keptText: Record<PermissionAnswer, string> = {
 	allow: "allowed for this version",
@@ -160,6 +161,7 @@ h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 .tag.bad { background:#3a2410; color:#f0a040; }
 .tag.risk { background:#3b1215; color:#f87171; padding:2px 7px; margin-left:10px; font-size:11px; vertical-align:middle; }
 .rows { flex:1 1 auto; min-height:120px; overflow-y:auto; display:flex; flex-direction:column; gap:12px; padding-right:2px; }
+.rows > * { flex:none; }
 .row { background:#161616; border-radius:6px; padding:16px; }
 .what { display:flex; gap:14px; }
 .cat-icon { color:#a1a1aa; margin-top:1px; }
@@ -177,7 +179,7 @@ h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 .seg label.risky { color:#f87171; }
 .seg label.risky:has(input:checked) { background:#dc2626; color:#fff; }
 .seg label:has(input:focus-visible) { outline:2px solid #5eead4; outline-offset:1px; }
-.kept { margin-top:12px; color:#d4d4d8; }
+.kept { color:#d4d4d8; }
 .kept summary { list-style:none; display:flex; align-items:center; gap:10px; padding:8px 4px; cursor:pointer; font-size:15px; }
 .kept summary::-webkit-details-marker { display:none; }
 .kept .ok { color:#5eead4; }
@@ -214,8 +216,7 @@ h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 	<button class="x" id="close" title="Close: answers nothing, you will be asked again next time">${icon(icons.close)}</button>
 </header>
 <div class="chips">${chips}</div>
-<div class="rows">${rowsHtml}</div>
-${keptHtml}
+<div class="rows">${rowsHtml}${keptHtml}</div>
 <div class="warn">${icon(icons.warning)}<div>
 	Allowed native code can get <b>full system access</b>. Only allow what you trust this plugin with.
 	<div class="help">This version: until an update changes this file.${url !== undefined ? " All versions: also later updates from this source." : ""} Until the plugin is reinstalled; revoke any time in Luna Settings.</div>
@@ -287,10 +288,28 @@ validate.addEventListener("click", () => {
 });
 document.getElementById("deny-all").addEventListener("click", () => pendingRisky === undefined && submit(Array(count).fill("deny")));
 document.getElementById("close").addEventListener("click", () => window.close());
+// Main fits the window to the opened or closed list (the title must change to be seen)
+document.querySelector("details.kept")?.addEventListener("toggle", () => (document.title = "${FIT}" + Date.now()));
 </script>
 </body>
 </html>`;
 };
+
+const MIN_HEIGHT = 320;
+const MAX_HEIGHT = 860;
+// Height the page needs with every row in view: the body's padding plus each block, the rows at their full height
+const MEASURE = `(() => {
+	const body = getComputedStyle(document.body);
+	let height = parseFloat(body.paddingTop) + parseFloat(body.paddingBottom);
+	for (const el of document.getElementById("main").children) {
+		const style = getComputedStyle(el);
+		// The rows box fills or scrolls whatever height it gets: measure what is in it
+		const kids = el.classList.contains("rows") ? el.children : [];
+		const blockHeight = kids.length > 0 ? kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top : el.getBoundingClientRect().height;
+		height += blockHeight + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+	}
+	return Math.ceil(height);
+})()`;
 
 const answerValues = new Set<string>(["deny", "allow", "allowUpdates"]);
 
@@ -330,8 +349,25 @@ export const askPermissions = (request: PermissionRequest, parent?: BrowserWindo
 				},
 			});
 			win.removeMenu();
+			// Fits the window to its content (up to MAX_HEIGHT, past it the rows scroll), so a short request has no scrollbar
+			const fit = (first: boolean) =>
+				win.webContents
+					.executeJavaScript(MEASURE)
+					.then((height: unknown) => {
+						if (win.isDestroyed() || typeof height !== "number" || !Number.isFinite(height)) return;
+						const [width] = win.getContentSize();
+						win.setContentSize(width, Math.round(Math.min(Math.max(height, MIN_HEIGHT), MAX_HEIGHT)));
+						if (first) win.center();
+					})
+					.catch(() => {});
 			let answered: PermissionAnswer[] | undefined;
 			win.webContents.on("page-title-updated", (event, title) => {
+				// The list of earlier answers was opened or closed: only a size to fit, nothing else is read from it
+				if (title.startsWith(FIT)) {
+					event.preventDefault();
+					void fit(false);
+					return;
+				}
 				if (!title.startsWith(SUBMIT)) return;
 				event.preventDefault();
 				try {
@@ -350,7 +386,7 @@ export const askPermissions = (request: PermissionRequest, parent?: BrowserWindo
 			// A window that can't show would hold up every later one (see queue)
 			win.webContents.once("render-process-gone", () => !win.isDestroyed() && win.destroy());
 			win.webContents.once("did-fail-load", () => !win.isDestroyed() && win.destroy());
-			win.once("ready-to-show", () => win.show());
+			win.once("ready-to-show", () => void fit(true).finally(() => !win.isDestroyed() && win.show()));
 			win.once("closed", () => resolve(answered));
 			win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildHtml(request))}`).catch((err) => {
 				console.error("[🛑Security🛑] Failed to show the permission window", err);
