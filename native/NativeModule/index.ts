@@ -9,7 +9,7 @@ import { ipcHandle } from "../ipc";
 import { createHash } from "crypto";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
-import { isIsolatedNative, isolatedLoad, LoadedAgain, stopIsolated } from "./isolated";
+import { isIsolatedNative, isolatedLoad, isolatedLoadOf, LoadedAgain, stopIsolated } from "./isolated";
 import { secureLoad } from "./secureLoad";
 
 declare global {
@@ -39,7 +39,10 @@ export type NativeModuleInfo = {
 const isolatedLoadFailed = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow) => async (err: unknown) => {
 	if (!moduleInfo.isCore || err instanceof LoadedAgain) throw err;
 	console.warn(`[Luna.native] Can't isolate '${moduleInfo.fileName}', loading it in the main process`, err);
+	const asked = isolatedLoadOf(moduleInfo.fileName);
 	const exports = await secureLoad(moduleInfo, parent);
+	// A newer load of the file was asked for meanwhile: it wins, as between two isolated loads
+	if (isolatedLoadOf(moduleInfo.fileName) !== asked) throw new LoadedAgain(moduleInfo.fileName);
 	// Only now: if this load failed too, the host that ran the file before keeps answering
 	stopIsolated(moduleInfo.fileName);
 	return exports;

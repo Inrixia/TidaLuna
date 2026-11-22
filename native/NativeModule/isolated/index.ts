@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import type { NativeModuleInfo } from "..";
+import { ipcRefused } from "../../ipc";
 import { callSync, hostModules } from "./syncModules";
 
 type NativeExports = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -41,7 +42,11 @@ const getHostSession = () =>
 		// WebRTC is not seen by webRequest. Hosts may only use it through the proxy (see setWebRTCIPHandlingPolicy below), and nothing listens there.
 		await ses.setProxy({ proxyRules: "http://127.0.0.1:1", proxyBypassRules: "<-loopback>" });
 		return ses;
-	})());
+	})().catch((err) => {
+		// Tried again by the next load
+		hostSession = undefined;
+		throw err;
+	}));
 
 const consoleLevels = { info: "log", warning: "warn", error: "error", debug: "debug" } as const;
 const legacyConsoleLevels = ["debug", "log", "warn", "error"] as const;
@@ -75,6 +80,8 @@ export class LoadedAgain extends Error {
 }
 
 /** Stops the process that runs `fileName`, if any */
+/** Changes whenever a load of `fileName` is asked for: a slower load of it that sees another value has been outrun */
+export const isolatedLoadOf = (fileName: string) => lastLoad.get(fileName);
 export const stopIsolated = (fileName: string) => hosts.get(fileName)?.stop(new LoadedAgain(fileName));
 
 /** @param restartOf Load number of a host whose process died: its restart is the same load, so it never outranks a later one */
@@ -110,6 +117,7 @@ const loadHost = async ({ fileName, code }: NativeModuleInfo, load: number): Pro
 	});
 	views.add(view);
 	const { webContents } = view;
+	ipcRefused.add(webContents);
 
 	const pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason: unknown) => void }>();
 	let nextId = 0;
@@ -220,6 +228,8 @@ export const isolatedLoad = async (moduleInfo: NativeModuleInfo): Promise<Native
 	// No prototype: the export name comes from the renderer and must not find Object.prototype's functions
 	const exports: NativeExports = Object.create(null);
 	for (const exportName of host.exportNames) {
+		// This function is async: returning exports with a `then` would call it instead of handing the exports over
+		if (exportName === "then") continue;
 		exports[exportName] = async (...args) => {
 			// A process that died is started again by the next call, unless a new load of the file has been asked for since.
 			// What the module kept in memory is lost.
