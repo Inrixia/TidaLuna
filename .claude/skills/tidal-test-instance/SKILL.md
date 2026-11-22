@@ -56,6 +56,10 @@ User can attach real Chrome DevTools too (live consoles, sources with Luna sourc
 - Main process: global `luna` holds Luna's exposed native functions and `luna.modules[<file>]`, every plugin's loaded `*.native.ts` exports (call directly). `require("electron")` for windows, sessions, app. Electron's `fs` reads inside asars: `require("fs").readdirSync(process.resourcesPath + "/original.asar")`.
 - Find TIDAL code to hook: `dump`, then grep `.tidal-test/<n>/sources`. Only modules TIDAL loaded so far get dumped: navigate (or trigger feature) first for lazy ones. Luna's own bundles (with sourcemaps) in `dist/`.
 - Plugins and load errors: `Object.values(luna.core.LunaPlugin.plugins).map((p) => ({ name: p.name, enabled: p.enabled, loadError: p.loadError._ }))`
+- Manage plugins through `luna.core.LunaPlugin`, the same API Luna Settings uses. Don't curl plugin urls or write IndexedDB by hand:
+  - `const p = await luna.core.LunaPlugin.fromStorage({ url: "<base url, no .mjs/.json>" })` loads one (fetches `<url>.json`), then `p.install()` (persists, enables, swaps out other installed versions of same name), `p.enable()`/`p.disable()`, `p.reload()`, `p.uninstall()`. Existing: `LunaPlugin.getByName(name)`, `LunaPlugin.plugins` (by url), `LunaPlugin.reloadAll()`, `LunaPlugin.dumpStorage()`.
+  - Plugin stores (Plugin Store tab): `const urls = await luna.core.ReactiveStore.getStore("@luna/pluginStores").getReactive("storeUrls")`, an array without `/store.json`; `push`/`splice` it (persists, tab updates). Store contents: fetch `<storeUrl>/store.json`.
+  - Plugin settings: `await luna.core.ReactiveStore.getPluginStorage(name)`, live reactive object the plugin reads.
 - Open Luna Settings: `luna.ui.settingsPage.open()`, pick tab with `luna.ui.SettingsTabs.open("Themes")`.
 - Redux: every TIDAL action type is key of `luna.core.buildActions`; dispatch with `luna.lib.redux.actions[type](payload)`, state via `luna.lib.redux.store.getState()`.
 - `@luna/dev` (`luna.dev`) exists for this; read `plugins/dev/src` for current exports. Main ones:

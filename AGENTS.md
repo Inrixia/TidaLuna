@@ -22,7 +22,7 @@ Three runtimes, all built by `esbuild.config.ts` into `dist/`:
 - **`render/` → `luna.mjs`** = `@luna/core`:
   - `exposeTidalInternals*.ts` re-runs TIDAL module scripts through `@uwu/quartz` to capture modules, Redux store, action creators. Breaks on TIDAL updates.
   - `modules.ts` = runtime module registry (`luna.core.modules`) plugins import `@luna/*`, react, oby from.
-  - `LunaPlugin.ts` = plugin lifecycle: fetch `<url>.json` + `<url>.mjs`, import code from blob, track `unloads` + dependants, live reload.
+  - `LunaPlugin.ts` = plugin lifecycle: fetch `<url>.json` + `<url>.mjs`, import code from blob, track `unloads` + dependants, live reload. At runtime install/enable/disable/reload plugins and edit plugin stores through it (`luna.core.LunaPlugin`), not by fetching plugin urls by hand; see tidal-test-instance skill.
   - `ReactiveStore.ts` persists reactive (oby) stores to IndexedDB. `trace/` holds loggers.
 - **`plugins/*`** = core plugins:
   - `lib`: Redux intercepts + actions with typed payloads, classes like `MediaItem`, `PlayState`, `TidalApi`, helpers.
