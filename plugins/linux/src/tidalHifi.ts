@@ -103,8 +103,7 @@ const sendNotification = (title: string, body: string, icon?: string, replacesTr
 let lastId: string | number | undefined;
 let lastInfo: Record<string, unknown> = {};
 
-const sendUpdateInfo = (status: string) => {
-	const currentSec = safeNum(PlayState.currentTime);
+const sendUpdateInfo = (status: string, currentSec = safeNum(PlayState.currentTime)) => {
 	__ipcRenderer.send("update-info", {
 		...lastInfo,
 		status,
@@ -191,6 +190,12 @@ PlayState.onState(unloads, (state) => {
 	sendUpdateInfo(state === "PLAYING" ? "playing" : "paused");
 });
 
+// MPRIS clients extrapolate position and only resync on tidal-hifi's Seeked signal, which it emits when an update-info position jumps.
+// Without this a seek (in TIDAL or from MPRIS) shows the old position until the next 5s update
+redux.intercept("playbackControls/SEEK", unloads, (time) => {
+	if (lastInfo.title && typeof time === "number") sendUpdateInfo(PlayState.playing ? "playing" : "paused", safeNum(time));
+});
+
 const updateInterval = setInterval(() => {
 	if (!lastInfo.title || !PlayState.playing) return;
 	sendUpdateInfo("playing");
@@ -200,6 +205,9 @@ unloads.add(() => clearInterval(updateInterval));
 // #endregion
 
 // #region Playback Controls (IPC)
+
+const isSeekPayload = (p: unknown): p is { seconds: number; type: "absolute" | "relative" } =>
+	typeof p === "object" && p !== null && typeof (p as { seconds?: unknown }).seconds === "number";
 
 unloads.add(
 	__ipcRenderer.on("globalEvent", (action: string, payload?: unknown) => {
@@ -212,7 +220,12 @@ unloads.add(
 			case "previous": PlayState.previous(); break;
 			case "toggleShuffle": PlayState.shuffle ? PlayState.setShuffle(false, true) : PlayState.setShuffle(true, true); break;
 			case "toggleRepeat": cycleRepeatMode(); break;
-			case "seek": if (typeof payload === "number") PlayState.seek(payload); break;
+			case "seek": {
+				// tidal-hifi sends { seconds, type: "absolute" (SetPosition) | "relative" (Seek) }, older versions a plain number
+				if (typeof payload === "number") PlayState.seek(payload);
+				else if (isSeekPayload(payload)) PlayState.seek(Math.max(0, payload.type === "relative" ? safeNum(PlayState.currentTime) + payload.seconds : payload.seconds));
+				break;
+			}
 		}
 	})
 );
