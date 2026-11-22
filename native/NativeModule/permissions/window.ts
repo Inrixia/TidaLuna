@@ -133,7 +133,11 @@ const buildHtml = ({ fileName, url, claimedUrl, rows, kept }: PermissionRequest)
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; }
-body { background:#0b0b0c; color:#f4f4f5; font-family:system-ui,"Segoe UI",sans-serif; font-size:14px; padding:24px 28px 22px; user-select:none; display:flex; flex-direction:column; }
+:root { color-scheme:dark; }
+::-webkit-scrollbar { width:8px; }
+::-webkit-scrollbar-thumb { background:#3a3a3a; border-radius:4px; }
+::-webkit-scrollbar-track { background:transparent; }
+body { background:#0a0a0a; color:#f4f4f5; font-family:system-ui,"Segoe UI",sans-serif; font-size:14px; padding:24px 28px 22px; user-select:none; display:flex; flex-direction:column; }
 .mono { font-family:ui-monospace,Consolas,monospace; }
 .muted { color:#8b8b93; }
 .icon { width:18px; height:18px; flex:none; }
@@ -146,17 +150,17 @@ header .titles { flex:1; min-width:0; }
 .eyebrow { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#8b8b93; font-weight:600; }
 h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 .sub { color:#a1a1aa; font-size:15px; }
-.x { background:none; color:#a1a1aa; padding:4px; border-radius:6px; }
-.x:hover { color:#fff; background:#1f1f23; }
+.x { background:none; color:#a1a1aa; padding:4px; border-radius:4px; }
+.x:hover { color:#fff; background:#2a2a2a; }
 .chips { display:flex; flex-wrap:wrap; gap:8px; margin:18px 0 16px; }
-.chip { display:inline-flex; align-items:center; gap:8px; background:#18181b; color:#d4d4d8; border-radius:8px; padding:8px 12px; font-size:13px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chip { display:inline-flex; align-items:center; gap:8px; background:#1c1c1c; color:#d4d4d8; border-radius:4px; padding:7px 11px; font-size:13px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chip .icon { width:15px; height:15px; color:#8b8b93; }
-.tag { display:inline-flex; align-items:center; border-radius:8px; padding:6px 10px; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.tag { display:inline-flex; align-items:center; border-radius:4px; padding:6px 9px; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 .tag.local { background:#10302c; color:#5eead4; }
 .tag.bad { background:#3a2410; color:#f0a040; }
-.tag.risk { background:#3b1215; color:#f87171; padding:3px 9px; margin-left:10px; font-size:11px; vertical-align:middle; }
+.tag.risk { background:#3b1215; color:#f87171; padding:2px 7px; margin-left:10px; font-size:11px; vertical-align:middle; }
 .rows { flex:1 1 auto; min-height:120px; overflow-y:auto; display:flex; flex-direction:column; gap:12px; padding-right:2px; }
-.row { background:#141416; border-radius:16px; padding:16px; }
+.row { background:#161616; border-radius:6px; padding:16px; }
 .what { display:flex; gap:14px; }
 .cat-icon { color:#a1a1aa; margin-top:1px; }
 .cat-icon .icon { width:24px; height:24px; }
@@ -164,12 +168,12 @@ h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 .name { font-size:17px; font-weight:700; }
 .desc { color:#b4b4bb; margin-top:6px; line-height:1.45; }
 .modules { color:#71717a; font-size:12px; margin-top:8px; }
-.seg { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin-top:14px; background:#0b0b0c; border:1px solid #27272a; border-radius:999px; padding:4px; }
+.seg { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin-top:14px; background:#0a0a0a; border:1px solid #2a2a2a; border-radius:6px; padding:3px; }
 .seg.two { grid-template-columns:repeat(2,1fr); }
-.seg label { position:relative; text-align:center; padding:9px 6px; border-radius:999px; color:#a1a1aa; font-weight:600; cursor:pointer; white-space:nowrap; }
+.seg label { position:relative; text-align:center; padding:8px 6px; border-radius:3px; color:#a1a1aa; font-weight:600; cursor:pointer; white-space:nowrap; }
 .seg label:hover { color:#fff; }
 .seg input { position:absolute; opacity:0; pointer-events:none; }
-.seg label:has(input:checked) { background:#f4f4f5; color:#0b0b0c; }
+.seg label:has(input:checked) { background:#f4f4f5; color:#0a0a0a; }
 .seg label.risky { color:#f87171; }
 .seg label.risky:has(input:checked) { background:#dc2626; color:#fff; }
 .seg label:has(input:focus-visible) { outline:2px solid #5eead4; outline-offset:1px; }
@@ -185,15 +189,15 @@ h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 .warn b { color:#f4f4f5; }
 .help { font-size:12px; color:#71717a; margin-top:4px; }
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:16px; }
-.pill { padding:11px 22px; border-radius:999px; font-size:15px; font-weight:700; }
-.pill.dark { background:#1f1f23; color:#f4f4f5; }
-.pill.dark:hover { background:#2a2a2f; }
-.pill.light { background:#f4f4f5; color:#0b0b0c; }
+.pill { padding:10px 20px; border-radius:6px; font-size:15px; font-weight:700; }
+.pill.dark { background:#2a2a2a; color:#f4f4f5; }
+.pill.dark:hover { background:#353535; }
+.pill.light { background:#f4f4f5; color:#0a0a0a; }
 .pill.red { background:#dc2626; color:#fff; }
-.pill:disabled { background:#1f1f23; color:#52525b; cursor:default; }
+.pill:disabled { background:#1c1c1c; color:#52525b; cursor:default; }
 #confirm { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.78); align-items:center; justify-content:center; padding:24px; }
 #confirm.open { display:flex; }
-#confirm .box { background:#1a0f10; border:1px solid #7f1d1d; border-radius:16px; padding:20px 22px; color:#e4e4e7; line-height:1.5; max-width:500px; }
+#confirm .box { background:#1a0f10; border:1px solid #7f1d1d; border-radius:8px; padding:20px 22px; color:#e4e4e7; line-height:1.5; max-width:500px; }
 #confirm h3 { color:#f87171; font-size:18px; margin-bottom:10px; }
 #confirm .actions { margin-top:18px; }
 </style>
@@ -313,7 +317,7 @@ export const askPermissions = (request: PermissionRequest, parent?: BrowserWindo
 				maximizable: false,
 				fullscreenable: false,
 				autoHideMenuBar: true,
-				backgroundColor: "#0b0b0c",
+				backgroundColor: "#0a0a0a",
 				title: "Plugin Permission",
 				show: false,
 				webPreferences: {
