@@ -318,11 +318,17 @@ const answerValues = new Set<string>(["deny", "allow", "allowUpdates"]);
 let queue: Promise<unknown> = Promise.resolve();
 
 /**
- * Shows one window for all rows and resolves with an answer per row, in order, or undefined if it was closed.
+ * Shows one window for all rows and resolves with the rows and an answer per row, in order (no answers if it was closed).
  * A window of its own (own session, no preload), so the TIDAL page and its plugins cannot see or click it.
+ *
+ * @param getRequest Called when the window's turn comes: a window before it may have answered what this one was to ask.
+ * Returns undefined if nothing is left to ask, and no window is shown.
  */
-export const askPermissions = (request: PermissionRequest, parent?: BrowserWindow): Promise<PermissionAnswer[] | undefined> => {
-	const ask = () =>
+export const askPermissions = (
+	getRequest: () => PermissionRequest | undefined,
+	parent?: BrowserWindow,
+): Promise<{ rows: PermissionRequest["rows"]; answers: PermissionAnswer[] | undefined } | undefined> => {
+	const show = (request: PermissionRequest) =>
 		new Promise<PermissionAnswer[] | undefined>((resolve) => {
 			// Not owned by a minimized or hidden TIDAL window: it would be hidden with it, and the plugin would wait unseen
 			const owner = parent !== undefined && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized() ? parent : undefined;
@@ -394,6 +400,10 @@ export const askPermissions = (request: PermissionRequest, parent?: BrowserWindo
 				if (!win.isDestroyed()) win.close();
 			});
 		});
+	const ask = async () => {
+		const request = getRequest();
+		return request === undefined ? undefined : { rows: request.rows, answers: await show(request) };
+	};
 	const result = queue.then(ask, ask);
 	queue = result;
 	return result;

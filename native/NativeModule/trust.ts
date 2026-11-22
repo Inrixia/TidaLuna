@@ -267,8 +267,11 @@ export class NativeTrust {
 		const url = this.verifiedUrl;
 		const { natives } = getStore();
 		const record = (natives[recordKey(fileName, hash, url)] ??= { url, claimedUrl, fileName, categories: {} });
+		// Builds whose answer is replaced here
+		const replaced = new Set<string>();
 		rows.forEach(({ category, modules }, i) => {
 			const answer = answers[i];
+			for (const other of record.categories[category]?.hashes ?? []) replaced.add(other);
 			retireReplaced(record.categories[category], hash);
 			record.categories[category] = { answer, hashes: [hash], modules, at: Date.now() };
 			this.decided.set(category, answer !== "deny");
@@ -277,13 +280,18 @@ export class NativeTrust {
 		});
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
-		for (const ref of live) ref.deref()?.overruled(this, rows);
+		for (const ref of live) ref.deref()?.overruled(this, rows, replaced);
 	}
 
-	/** `by` saved answers for `rows`: if they are about this code or plugin too, they replace what this load took before */
-	private overruled(by: NativeTrust, rows: { category: string }[]) {
+	/**
+	 * `by` saved answers for `rows`: if they are about this code or plugin too, or replaced an answer that named this
+	 * build (`replaced`), they replace what this load took before
+	 */
+	private overruled(by: NativeTrust, rows: { category: string }[], replaced: Set<string>) {
 		if (by === this || by.info.fileName !== this.info.fileName) return;
-		if (by.info.hash !== this.info.hash && (by.info.url === undefined || by.info.url !== this.info.url)) return;
+		const sameCode = by.info.hash === this.info.hash || replaced.has(this.info.hash);
+		const samePlugin = by.info.url !== undefined && by.info.url === this.info.url;
+		if (!sameCode && !samePlugin) return;
 		for (const { category } of rows) this.decided.delete(category);
 	}
 
@@ -334,19 +342,24 @@ export class NativeTrust {
 	private async askWindow(): Promise<void> {
 		await this.verify();
 		// Answers for updates count once the url is checked
-		const rows = this.pending();
-		if (rows.length === 0) return;
-		if (this.denyIfRemoved(rows)) return;
+		if (this.pending().length === 0) return;
 
 		const { fileName, hash, url } = this.info;
-		const claimed = getStore().natives[recordKey(fileName, hash, this.verifiedUrl)];
-		const kept = Object.entries(claimed?.categories ?? {})
-			.filter(([category]) => !rows.some((row) => row.category === category))
-			// Only answers that hold for this build as a whole: an "allow" of another build, or an old answer for some modules, does not
-			.filter(([, { answer, hashes, onlyModules }]) => !onlyModules && (answer !== "allow" || hashes.includes(hash)))
-			.map(([category, { answer }]) => ({ category, answer }));
-
-		const answers = await askPermissions({ fileName, url: this.verifiedUrl, claimedUrl: url, rows, kept }, this.parent);
+		// Windows open one at a time, so what is asked is put together when this one's turn comes: a window before it
+		// may have answered it (e.g. another load of this file), and that answer must not be asked for again
+		const shown = await askPermissions(() => {
+			const rows = this.pending();
+			if (rows.length === 0 || this.denyIfRemoved(rows)) return undefined;
+			const claimed = getStore().natives[recordKey(fileName, hash, this.verifiedUrl)];
+			const kept = Object.entries(claimed?.categories ?? {})
+				.filter(([category]) => !rows.some((row) => row.category === category))
+				// Only answers that hold for this build as a whole: an "allow" of another build, or an old answer for some modules, does not
+				.filter(([, { answer, hashes, onlyModules }]) => !onlyModules && (answer !== "allow" || hashes.includes(hash)))
+				.map(([category, { answer }]) => ({ category, answer }));
+			return { fileName, url: this.verifiedUrl, claimedUrl: url, rows, kept };
+		}, this.parent);
+		if (shown === undefined) return;
+		const { rows, answers } = shown;
 		// Uninstalled while the window was open: its answers must not outlive the uninstall
 		if (this.denyIfRemoved(rows)) return;
 		if (answers === undefined) {
