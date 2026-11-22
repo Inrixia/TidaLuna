@@ -10,3 +10,4 @@ export const showMessageBox = dialog.showMessageBox;
 export const showErrorBox = dialog.showErrorBox;
 
 export * from "./update";
+export { audioCacheWindow } from "./audioCache";

@@ -11,6 +11,7 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 
 import Module, { createRequire } from "module";
 
+import { rewritePlayerMessage } from "./audioCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
 import { tidalMainHosts } from "./tidalHosts";
@@ -249,6 +250,13 @@ electron.app.whenReady().then(async () => {
 		storages: ["cachestorage"],
 	});
 });
+
+// #region Audio cache
+// TIDAL's player message handler (native/app/main/playback/player/PlayerController.js) gets audio urls that point at the cache, see audioCache.ts
+const ipcOn = electron.ipcMain.on.bind(electron.ipcMain);
+electron.ipcMain.on = ((channel, listener) =>
+	ipcOn(channel, channel !== "player.message" ? listener : (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message))) as typeof electron.ipcMain.on;
+// #endregion
 
 // #region Proxied BrowserWindow
 // TIDAL builds its window again after a renderer crash, and on macOS when reopened with no window left.
