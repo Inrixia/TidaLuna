@@ -22,6 +22,18 @@ import { PlayState } from "./PlayState";
 
 export type { AudioCacheStats, AudioCacheStatus };
 
+const encoder = new TextEncoder();
+/** Cuts `text` to at most `maxBytes` of UTF-8 without splitting a character */
+const fitBytes = (text: string, maxBytes: number): string => {
+	if (encoder.encode(text).length <= maxBytes) return text;
+	let out = "";
+	for (const char of text) {
+		if (encoder.encode(out + char).length > maxBytes) break;
+		out += char;
+	}
+	return out;
+};
+
 /**
  * The cache TIDAL's native player plays audio from, see native/audioCache.ts. It holds the audio of tracks played, hovered, next and previous
  * in the queue, and of every `MediaItem` read (downloads, formats). Only tracks the native player plays (BTS manifests), DASH plays in the page.
@@ -60,8 +72,9 @@ export class AudioCache {
 				const [{ tags }, ext] = await Promise.all([mediaItem.flacTags(), mediaItem.fileExtension(quality)]);
 				const artist = tags.artist?.join(", ") || "Unknown Artist";
 				const title = tags.title || String(trackId);
-				// The track id keeps names unique: download skips a path that already exists, so two tracks with the same artist and title would share one file
-				filePath = await mediaItem.download([dir, `${artist} - ${title} [${trackId}].${ext}`], quality);
+				// The track id keeps names unique: download skips a path that already exists, so two tracks with the same artist and title would share one file.
+				// File names are cut to 255 bytes from the end, so the name is shortened first to keep the id and extension
+				filePath = await mediaItem.download([dir, `${fitBytes(`${artist} - ${title}`, 200)} [${trackId}].${ext}`], quality);
 			} finally {
 				await audioCachePersist(url, filePath);
 			}
