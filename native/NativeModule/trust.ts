@@ -292,7 +292,10 @@ export class NativeTrust {
 		const sameCode = by.info.hash === this.info.hash;
 		const samePlugin = by.verifiedUrl !== undefined && by.verifiedUrl === this.info.url;
 		for (const [category, hashes] of replaced) {
-			if (sameCode || samePlugin || hashes.includes(this.info.hash)) this.decided.delete(category);
+			if (!sameCode && !samePlugin && !hashes.includes(this.info.hash)) continue;
+			this.decided.delete(category);
+			// Also what is remembered from old answers per module: those are retired with the answer that was replaced
+			for (const moduleName of this.legacy) if (categoryOf(moduleName) === category) this.legacy.delete(moduleName);
 		}
 	}
 
