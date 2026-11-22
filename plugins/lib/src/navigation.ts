@@ -1,9 +1,32 @@
-import { ReactiveStore, recursiveSearch, requestCache, tidalModules } from "@luna/core";
+import { Messager, ReactiveStore, recursiveSearch, requestCache, tidalModules } from "@luna/core";
 
 import { getRouter, matchRoutes, type DataRoute, type DataRouter } from "./helpers/router";
 import { safeTimeout } from "./helpers/safeTimeout";
 import { libTrace, unloads } from "./index.safe";
+import * as ipcRenderer from "./ipc";
 import * as redux from "./redux";
+
+let isOffline = !navigator.onLine;
+const setOffline = (offline: boolean) => {
+	if (offline === isOffline) return;
+	isOffline = offline;
+	if (offline) Messager.Warn("Offline — serving cached content");
+	else Messager.Info("Back online");
+};
+if (isOffline) Messager.Warn("Offline — serving cached content");
+// Keep TIDAL from replacing pages with its offline state when the OS network interface drops
+redux.intercept("network/CONNECTION_LOST", unloads, () => true);
+ipcRenderer.on(unloads, "__Luna.offlineStatus", setOffline);
+const onOffline = () => setOffline(true);
+const onOnline = () => {
+	if (isOffline) fetch("https://api.tidal.com/v1/ping", { cache: "no-store" }).catch(() => {});
+};
+window.addEventListener("offline", onOffline);
+window.addEventListener("online", onOnline);
+unloads.add(() => {
+	window.removeEventListener("offline", onOffline);
+	window.removeEventListener("online", onOnline);
+});
 
 // TIDAL's route loaders wait on these before a page shows, serve them from the cache so revisits are instant
 for (const pattern of [
@@ -18,15 +41,17 @@ redux.intercept("session/LOGOUT", unloads, () => requestCache.clear());
 
 // Re-run the page's loaders when data it shows changed, they get the new response from the cache
 let cancelRevalidate: (() => void) | undefined;
-// The ids in the current path (e.g. a playlist's uuid), otherwise its last segment (e.g. explore, albums)
-const isForCurrentPage = (url: string) => {
-	const segments = location.pathname.split("/").filter(Boolean);
+// The ids in `pathname` (e.g. a playlist's uuid), otherwise its last segment (e.g. explore, albums)
+const isForPage = (url: string, pathname = location.pathname) => {
+	const lower = url.toLowerCase();
+	const segments = pathname.toLowerCase().split("/").filter(Boolean);
 	const ids = segments.filter((segment) => /\d/.test(segment));
-	return (ids.length !== 0 ? ids : segments.length !== 0 ? segments.slice(-1) : ["home"]).some((segment) => url.includes(segment));
+	const keys = ids.length !== 0 ? ids : segments[0] === "search" ? ["search"] : segments.length !== 0 ? segments.slice(-1) : ["home"];
+	return keys.some((segment) => lower.includes(segment));
 };
 requestCache.onChange(unloads, (url) => {
 	// A change to another page (e.g. one prefetched on hover) mustn't reset the scroll of this one
-	if (!isForCurrentPage(url)) return;
+	if (!isForPage(url)) return;
 	cancelRevalidate?.();
 	cancelRevalidate = safeTimeout(
 		unloads,
@@ -162,6 +187,7 @@ const prefetch = async (href: string) => {
 // Payment and sign in pages may load third party scripts when imported, they load when visited
 const noPreload = /stripe|square|oauth|login|checkout|lastfm/i;
 let preloadUnloaded = false;
+let preloadingChunk = false;
 unloads.add(() => (preloadUnloaded = true));
 const idle = () => new Promise((resolve) => requestIdleCallback(resolve, { timeout: 1000 }));
 const preloadPages = async (attempt = 0) => {
@@ -180,15 +206,34 @@ const preloadPages = async (attempt = 0) => {
 		if (route.lazy === undefined || noPreload.test(route.path ?? "")) continue;
 		await idle();
 		if (preloadUnloaded) return;
+		if (isOffline) continue;
+		preloadingChunk = true;
 		try {
 			// React Router reuses the loaded module when navigating
 			await route.lazy();
 		} catch {
 			// The real navigation's to handle
+		} finally {
+			preloadingChunk = false;
 		}
 	}
 };
 preloadPages();
+
+let lastMissPath = "";
+let lastMissAt = 0;
+ipcRenderer.on(unloads, "__Luna.offlineMiss", (url: string) => {
+	if (prefetching !== 0 || preloadingChunk || url.includes("/playbackinfo")) return;
+	const router = getRouter();
+	const targetPath = router?.state.navigation.location?.pathname ?? location.pathname;
+	const isChunkMiss = router?.state.navigation.state === "loading" && url.endsWith(".js");
+	if (!isChunkMiss && !isForPage(url, targetPath)) return;
+	const now = Date.now();
+	if (targetPath === lastMissPath && now - lastMissAt < 2000) return;
+	lastMissPath = targetPath;
+	lastMissAt = now;
+	Messager.Warn("Offline — this page is not in the cache");
+});
 
 // TIDAL's playlist loader sets the displayed page (and logs it as viewed), not something a prefetch should do
 redux.intercept("page/SET_PAGE_ID", unloads, () => prefetching !== 0 && getRouter()?.state.navigation.state === "idle");
@@ -198,6 +243,7 @@ const prefetchedAt = new Map<string, number>();
 let hovered: Element | null = null;
 let cancelHover: (() => void) | undefined;
 const onPointerOver = (event: PointerEvent) => {
+	if (isOffline) return;
 	const link = (<Element>event.target).closest?.(`a[href^="/"]`) ?? null;
 	if (link === hovered) return;
 	hovered = link;

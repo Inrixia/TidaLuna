@@ -58,7 +58,7 @@ const keyOf = (url: URL) => {
 
 const parse = (raw: RawResponse) => {
 	if (raw.status >= 200 && raw.status < 300) return JSON.parse(raw.body);
-	if (raw.status === 403 || raw.status === 404) return undefined;
+	if (!raw.headers.has("x-luna-offline-miss") && (raw.status === 403 || raw.status === 404)) return undefined;
 	throw new Error(`${raw.status} ${raw.statusText}`);
 };
 const drop = (key: string, entry: Entry) => entries.get(key) === entry && entries.delete(key);
@@ -206,7 +206,7 @@ const revalidate = (url: URL, key: string, entry: Entry, input: FetchInput, init
 		.call(globalThis, request)
 		.then(readRaw)
 		.then(async (raw) => {
-			if (entries.get(key) !== entry) return;
+			if (entries.get(key) !== entry || raw.headers.has("x-luna-offline-miss")) return;
 			const old = await entry.raw!;
 			if (raw.status === 304 || sameResponse(old, raw)) return void (entry.time = Date.now());
 			if (raw.status !== 200) return void entries.delete(key);

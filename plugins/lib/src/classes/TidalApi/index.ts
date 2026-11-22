@@ -86,6 +86,7 @@ export class TidalApi {
 					headers: await this.getAuthHeaders(),
 				});
 				if (statusOK(res.status)) return res.json();
+				if (res.headers.has("x-luna-offline-miss")) throw new Error(`${res.status} ${res.statusText}`);
 				if (res.status === 403 || res.status === 404) return undefined;
 				if (!retry) this.trace.err.withContext(url).throw(`${res.status} ${res.statusText}`);
 				retry = false;

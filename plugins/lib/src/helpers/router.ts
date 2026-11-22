@@ -13,7 +13,10 @@ export type DataRouter = {
 	routes: DataRoute[];
 	/** Every route path with the routes it renders (parents first), flattened and ranked by React Router */
 	branches: { path: string; routesMeta: { route: DataRoute }[] }[];
-	state: { location: { pathname: string; search: string }; navigation: { state: "idle" | "loading" | "submitting" } };
+	state: {
+		location: { pathname: string; search: string };
+		navigation: { state: "idle" | "loading" | "submitting"; location?: { pathname: string; search: string } };
+	};
 	navigate(to: string): Promise<void>;
 	revalidate(): Promise<void>;
 	subscribe(listener: (state: DataRouter["state"]) => void): () => void;
