@@ -36,6 +36,15 @@ const buildConfigs: BuildOptions[] = [
 	},
 	{
 		...defaultBuildOptions,
+		entryPoints: ["native/NativeModule/isolated/host.preload.ts"],
+		outfile: "dist/nativeHost.preload.mjs",
+		platform: "node",
+		target: TidalNodeVersion,
+		format: "cjs",
+		external: ["electron"],
+	},
+	{
+		...defaultBuildOptions,
 		entryPoints: ["render/src/index.ts"],
 		outfile: "dist/luna.mjs",
 		target: TidalNodeVersion,

@@ -9,6 +9,7 @@ import { ipcHandle } from "../ipc";
 import { createHash } from "crypto";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
+import { isIsolatedNative, isolatedLoad, LoadedAgain, stopIsolated } from "./isolated";
 import { secureLoad } from "./secureLoad";
 
 declare global {
@@ -33,6 +34,15 @@ export type NativeModuleInfo = {
 	isCore: boolean;
 };
 
+// Luna's own code is trusted wherever it runs, so it still loads where no isolated process can start (e.g. an older Electron).
+// Anyone else's code named isolated was never allowed into the main process.
+const isolatedLoadFailed = (moduleInfo: NativeModuleInfo, parent?: Electron.BrowserWindow) => (err: unknown) => {
+	if (!moduleInfo.isCore || err instanceof LoadedAgain) throw err;
+	console.warn(`[Luna.native] Can't isolate '${moduleInfo.fileName}', loading it in the main process`, err);
+	stopIsolated(moduleInfo.fileName);
+	return secureLoad(moduleInfo, parent);
+};
+
 const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: string, code: string, url?: string) => {
 	const hash = createHash("sha256").update(code, "utf8").digest("hex");
 
@@ -46,7 +56,10 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 
 	let exports;
 	try {
-		exports = await secureLoad(moduleInfo, BrowserWindow.fromWebContents(event.sender) ?? undefined);
+		const parent = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+		exports = isIsolatedNative(fileName)
+			? await isolatedLoad(moduleInfo).catch(isolatedLoadFailed(moduleInfo, parent))
+			: await secureLoad(moduleInfo, parent);
 	} catch (err) {
 		const isDepricatedModule = Error.isError(err) && /Cannot use import statement outside a module/i.test(err.message);
 		if (isDepricatedModule) throw new Error("Plugin using deprecated unsafe native code! Please ask the plugin author to rebuild!");
