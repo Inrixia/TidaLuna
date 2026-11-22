@@ -27,12 +27,20 @@ let running: NativeTrust | undefined;
 const waiting = new Set<NativeTrust>();
 
 /**
+ * Retires old per-module answers of `hashes`, also from what loads of those builds that still run remember of them
+ */
+const retireOld = (hashes: Set<string>, category?: string) => {
+	retireLegacy(hashes, category);
+	for (const ref of live) ref.deref()?.forgetLegacy(hashes, category);
+};
+
+/**
  * An entry is about to be replaced by one for `hash`: the other builds it named drop out of the record, so revoke and
  * uninstall could no longer retire their old answers. Retire them now (those builds are asked again if they ever load)
  */
 const retireReplaced = (existing: NativeRecord["categories"][string] | undefined, hash: string) => {
 	const others = existing?.hashes.filter((other) => other !== hash) ?? [];
-	if (others.length > 0) retireLegacy(new Set(others));
+	if (others.length > 0) retireOld(new Set(others));
 };
 
 /**
@@ -276,7 +284,7 @@ export class NativeTrust {
 			record.categories[category] = { answer, hashes: [hash], modules, at: Date.now() };
 			this.decided.set(category, answer !== "deny");
 			// Old answers for every module of the category, also those the code did not use, must not outlive it
-			retireLegacy(new Set([hash]), category);
+			retireOld(new Set([hash]), category);
 		});
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
@@ -294,8 +302,6 @@ export class NativeTrust {
 		for (const [category, hashes] of replaced) {
 			if (!sameCode && !samePlugin && !hashes.includes(this.info.hash)) continue;
 			this.decided.delete(category);
-			// Also what is remembered from old answers per module: those are retired with the answer that was replaced
-			for (const moduleName of this.legacy) if (categoryOf(moduleName) === category) this.legacy.delete(moduleName);
 		}
 	}
 
@@ -428,6 +434,12 @@ Only allow it if you trust this plugin!`,
 		return answer !== "deny";
 	}
 
+	/** Old per-module answers of `hashes` were retired: forget what this load remembers of them */
+	public forgetLegacy(hashes: Set<string>, category?: string) {
+		if (!hashes.has(this.info.hash)) return;
+		for (const moduleName of this.legacy) if (category === undefined || categoryOf(moduleName) === category) this.legacy.delete(moduleName);
+	}
+
 	/** Forget this load's decisions, so a revoked answer is asked for again on the next use */
 	public reset() {
 		this.decided.clear();
@@ -443,7 +455,7 @@ Only allow it if you trust this plugin!`,
 		this.removed = true;
 		this.reset();
 		// Old answers of this build not moved into the store yet (it was still loading) must not outlive the uninstall either
-		retireLegacy(new Set([this.info.hash]));
+		retireOld(new Set([this.info.hash]));
 		return true;
 	}
 	private removed = false;
@@ -580,7 +592,7 @@ const removeCategory = (key: string, record: NativeRecord, category: string) => 
 	const answer = record.categories[category];
 	if (answer === undefined) return;
 	// Old per-module answers for the same code would allow it again
-	retireLegacy(new Set(answer.hashes), category);
+	retireOld(new Set(answer.hashes), category);
 	delete record.categories[category];
 	if (Object.keys(record.categories).length === 0) delete getStore().natives[key];
 };
@@ -597,7 +609,7 @@ ipcHandle("__Luna.nativePermissions.revoke", (_, key: string, category?: string)
 		for (const name of category === undefined ? Object.keys(other.categories) : [category]) removeCategory(otherKey, other, name);
 	}
 	// Also old answers for modules the code has not used yet
-	if (category === undefined) retireLegacy(hashes);
+	if (category === undefined) retireOld(hashes);
 	saveStore();
 	resetLive();
 });
@@ -608,7 +620,7 @@ ipcHandle("__Luna.nativePermissions.forget", (_, url: string) => {
 	let changed = false;
 	for (const [key, record] of Object.entries(natives)) {
 		if (record.url !== url && record.claimedUrl !== url) continue;
-		retireLegacy(hashesOf(record));
+		retireOld(hashesOf(record));
 		for (const category of Object.keys(record.categories)) removeCategory(key, record, category);
 		changed = true;
 	}
