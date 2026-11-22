@@ -28,6 +28,17 @@ const keyOf = (url: URL) => {
 	search.sort();
 	return `${host}${url.pathname}?${search}`;
 };
+/** The account a request is made as: `uid` from the Bearer token (a JWT). Kept api responses are per account, `/me` urls don't name the user */
+const userOf = (req?: Request): string | undefined => {
+	const auth = req?.headers.get("authorization");
+	if (!auth?.startsWith("Bearer ")) return;
+	try {
+		const uid = JSON.parse(Buffer.from(auth.slice(7).split(".")[1], "base64url").toString()).uid;
+		return uid === undefined ? undefined : String(uid);
+	} catch {
+		return;
+	}
+};
 
 let isOffline = false;
 
@@ -61,12 +72,14 @@ const replay = async (file: string, req?: Request): Promise<Response | undefined
 
 /**
  * Fetches `url` with `fetch`, keeping a good GET response on disk. If `fetch` throws (no network) the kept response is returned instead.
- * Keyed by url only, request headers (e.g. Authorization) are never stored.
+ * Keyed by url and, for TIDAL's api, the account it is made as. Request headers (e.g. Authorization) are never stored.
  */
 export const staleIfError = async (url: string, fetch: () => Promise<Response>, req?: Request): Promise<Response> => {
 	if (req !== undefined && req.method !== "GET") return fetch();
 	const parsedUrl = new URL(url);
-	const file = path.join(cacheDir(), createHash("sha256").update(keyOf(parsedUrl)).digest("hex").slice(0, 40));
+	const user = isTidalApi(parsedUrl) ? userOf(req) : undefined;
+	const key = user === undefined ? keyOf(parsedUrl) : `${user}:${keyOf(parsedUrl)}`;
+	const file = path.join(cacheDir(), createHash("sha256").update(key).digest("hex").slice(0, 40));
 	let res: Response;
 	try {
 		res = await fetch();
