@@ -53,14 +53,14 @@ setTimeout(async () => {
 	// Load ui after lib as it depends on it.
 	await LunaPlugin.fromStorage({ enabled: true, url: "https://luna/luna.ui" });
 
-	// Apply declarative seed settings (e.g. from Nix) before loading user plugins
-	await applySeedSettings();
-
-	// The last good registry lists, so a plugin revoked in one never runs. Awaited in full: plugins come from the same IndexedDB,
-	// so this holds them back no longer than reading them does. The fresh lists are fetched without waiting (never blocking plugins)
-	// and then hourly, a newly revoked plugin is unloaded when they arrive (see LunaRegistry)
+	// The last good registry lists, so a plugin revoked in one never runs (seed plugins below included). Awaited in full: plugins come from the
+	// same IndexedDB, so this holds them back no longer than reading them does. The fresh lists are fetched without waiting (never blocking
+	// plugins) and then hourly, a newly revoked plugin is unloaded when they arrive (see LunaRegistry)
 	await LunaRegistry.loadCached().catch(LunaRegistry.trace.err.withContext("loadCached"));
 	LunaRegistry.refreshEvery();
+
+	// Apply declarative seed settings (e.g. from Nix) before loading user plugins
+	await applySeedSettings();
 
 	// Load all plugins from storage
 	await LunaPlugin.loadStoredPlugins();

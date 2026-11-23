@@ -686,15 +686,26 @@ export class LunaPlugin {
 		this.refusedUpdate = current;
 		return true;
 	}
-	private loadRestored() {
+	/**
+	 * Load the version restoreReplaced put back. Not while a dependency isn't loaded (revoked too, or stopping): that one loads it once it loads,
+	 * and until then the card says why it isn't running (the stored version is not the revoked one)
+	 */
+	private async loadRestored(): Promise<void> {
+		const dependency = this.pendingDependencyOf(this);
+		if (dependency !== undefined) {
+			this.revoked._ = undefined;
+			this.loadError._ =
+				dependency.revoked._ !== undefined ? `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked` : undefined;
+			return;
+		}
 		this.trace.log("Loading the version the revoked update replaced");
 		return this.reload().catch(this.trace.err.withContext("Failed to load the previous version again"));
 	}
 	/** After loadExports found the code it was loading revoked (and unloaded): mark it, and put back the version a revoked accepted update replaced */
 	private stopAsRevoked(entry: RevokedEntry) {
 		this.markRevoked(entry);
-		// Run it again once this load has released the semaphore. Not while a dependency isn't loaded: that one loads it once it loads
-		if (this.restoreReplaced() && this.pendingDependencyOf(this) === undefined) setTimeout(() => void this.loadRestored());
+		// Run it again once this load has released the semaphore
+		if (this.restoreReplaced()) setTimeout(() => void this.loadRestored());
 	}
 	/**
 	 * Unload this plugin because a newly accepted revoked.json revokes its code. It stays enabled: a version that isn't revoked loads again.
@@ -715,8 +726,7 @@ export class LunaPlugin {
 		} finally {
 			release();
 		}
-		// Not while a dependency isn't loaded (revoked too, or stopping): that one loads it once it loads
-		if (restored && this.pendingDependencyOf(this) === undefined) await this.loadRestored();
+		if (restored) await this.loadRestored();
 	}
 	// #endregion
 
