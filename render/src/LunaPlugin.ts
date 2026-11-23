@@ -984,6 +984,16 @@ export class LunaPlugin {
 				await this.unload();
 				return this.stopAsRevoked(late.revoked);
 			}
+			// A dependency unloaded during the import (revoked, or reloading): its unload found no exports here to unload, and it loads this
+			// plugin itself once it loads again. Running now would keep the exports it unloaded
+			const dependency = this.pendingDependencyOf(this);
+			if (dependency !== undefined) {
+				await this.unload();
+				this.loadError._ =
+					dependency.revoked._ !== undefined ? `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked` : undefined;
+				this.trace.log(`Unloaded again: ${dependency.name} was unloaded while this plugin loaded`);
+				return;
+			}
 
 			this.trace.log("Loaded");
 			// Live reload stops while the code is revoked (see startReloadLoop): running code resumes it
