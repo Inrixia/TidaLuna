@@ -74,7 +74,7 @@ export class LunaPlugin {
 	// Storage backing for persisting plugin url/enabled/code etc... See LunaPluginStorage
 	public static readonly pluginStorage: ReactiveStore = ReactiveStore.getStore("@luna/plugins");
 	// Static store for all loaded plugins indexed by URL (allows multiple instances for display)
-	public static readonly plugins: Record<string, LunaPlugin> = {};
+	public static readonly plugins = obyStore<Record<string, LunaPlugin>>({});
 
 	/**
 	 * Find a plugin by name, prioritizing installed versions

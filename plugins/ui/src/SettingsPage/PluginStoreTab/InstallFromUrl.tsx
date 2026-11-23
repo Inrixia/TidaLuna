@@ -43,7 +43,8 @@ export const InstallFromUrl = React.memo(() => {
 				successMessage = `Added store ${url}!`;
 			} else {
 				const plugin = await LunaPlugin.fromStorage({ url });
-				successMessage = `Loaded plugin ${plugin.name}!`;
+				if (!plugin.installed) await plugin.install();
+				successMessage = `Installed plugin ${plugin.name}!`;
 			}
 			setValue(""); // Reset input on success
 			setErr(null);

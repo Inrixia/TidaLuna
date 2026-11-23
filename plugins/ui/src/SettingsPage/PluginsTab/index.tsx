@@ -2,23 +2,18 @@ import React from "react";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import MenuItem from "@mui/material/MenuItem";
-import { store } from "oby";
 
 import { LunaPlugin } from "@luna/core";
 import { LunaPluginSettings } from "./LunaPluginSettings";
 import { ReloadAllPlugins } from "./ReloadAllPlugins";
-import { installedPlugins, matchingPluginNames } from "./installedPlugins";
+import { installedPlugins, matchingPluginNames, watchInstalledPlugins } from "./installedPlugins";
 
-export const PluginsTab = React.memo(({ active }: { active: boolean }) => {
+export const PluginsTab = React.memo(() => {
 	const [query, setQuery] = React.useState("");
 	const [descending, setDescending] = React.useState(false);
-	const [, refresh] = React.useReducer((revision: number) => revision + 1, 0);
-	const registry = Object.values(LunaPlugin.plugins);
-	const eligible = installedPlugins(registry, LunaPlugin.corePlugins, descending);
-	React.useEffect(() => {
-		if (!active) return;
-		return store.on(() => Object.values(LunaPlugin.plugins).map((plugin) => plugin.installed), refresh);
-	}, [active, registry.length]);
+	const readInstalled = () => installedPlugins(Object.values(LunaPlugin.plugins), LunaPlugin.corePlugins, descending);
+	const [eligible, setEligible] = React.useState(readInstalled);
+	React.useEffect(() => watchInstalledPlugins(LunaPlugin.plugins, LunaPlugin.corePlugins, descending, setEligible), [descending]);
 	if (!eligible.length) return "You have no plugins installed!";
 	const visible = matchingPluginNames(eligible, query);
 	return (
