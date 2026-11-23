@@ -406,7 +406,7 @@ test("a dependency that changed while a plugin loaded is found, whichever way it
 });
 
 test("the card says why a plugin waits for a dependency", () => {
-	assert.match(dependencyWaitMessage({ name: "X", revoked: true, loading: true })!, /depends on X, which the Luna plugin registry revoked/);
-	assert.equal(dependencyWaitMessage({ name: "X", revoked: false, loading: true }), undefined);
-	assert.match(dependencyWaitMessage({ name: "X", revoked: false, loading: false })!, /depends on X, which is not loaded/);
+	assert.match(dependencyWaitMessage({ name: "X", revoked: true, pending: true })!, /depends on X, which the Luna plugin registry revoked/);
+	assert.equal(dependencyWaitMessage({ name: "X", revoked: false, pending: true }), undefined);
+	assert.match(dependencyWaitMessage({ name: "X", revoked: false, pending: false })!, /depends on X, which is not loaded/);
 });

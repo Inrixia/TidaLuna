@@ -440,14 +440,20 @@ export class LunaPlugin {
 	/** Counts this plugin's unloads, so a dependant can tell its dependency was unloaded while it was imported */
 	private unloadCount = 0;
 	/**
-	 * Say on the card that this plugin waits for `dependency` to load (it loads this plugin then).
-	 * `failed`: this load failed and its caller stops (the toggle, the update button), so say it even while the dependency loads
+	 * This plugin (not loaded) waits for `dependency`, the one way every path does it: as its dependant, so its next load loads this plugin;
+	 * the card says why unless it is merely on its way (enabled, no load error); and if it is loaded already (its dependants loop may have
+	 * run before this plugin registered, or while this plugin wasn't enabled yet, see enable) this plugin loads again once the caller is done
 	 */
-	private waitFor(dependency: LunaPlugin, failed = false) {
+	private waitFor(dependency: LunaPlugin) {
+		dependency.addDependant(this);
 		this.loadError._ = dependencyWaitMessage({
 			name: dependency.name,
 			revoked: dependency.revoked._ !== undefined,
-			loading: !failed && dependency.loading._,
+			pending: dependency.enabled && dependency.installed !== false && dependency.loadError._ === undefined,
+		});
+		setTimeout(() => {
+			if (dependency.exports === undefined || dependency.unloading !== undefined || this.exports !== undefined) return;
+			this.load().catch(this.trace.err.withContext(`Failed to load after ${dependency.name} loaded`));
 		});
 	}
 	/** The enabled plugin, not loaded, that an import failed to find in luna.core.modules (the build/index.ts shim's error), if any */
@@ -581,9 +587,9 @@ export class LunaPlugin {
 			this.loading._ = true;
 			await this.loadExports();
 			this._enabled._ = true;
-			// Revoked code is refused, not failed: the user's choice is stored (the setter skips it while there is a load error), so the plugin
-			// loads once the revocation is lifted, also after a restart
-			if (this.revoked._ !== undefined) this.store.enabled = true;
+			// Loaded, or refused (revoked) or waiting for a dependency, not failed: the user's choice is stored (the setter skips it while there is
+			// a load error), so the plugin loads once the revocation is lifted or the dependency loads, also after a restart
+			this.store.enabled = true;
 			this.store.installed = true;
 			// Ensure live reload is running it it should be
 			if (this._liveReload._) this.startReloadLoop();
@@ -688,7 +694,7 @@ export class LunaPlugin {
 		// Unloading this plugin unloaded its dependants too: say why on their cards
 		for (const dependant of this.dependants)
 			if (dependant.exports === undefined && dependant.enabled && dependant.installed !== false)
-				dependant.loadError._ = dependencyWaitMessage({ name: this.name, revoked: true, loading: false });
+				dependant.loadError._ = dependencyWaitMessage({ name: this.name, revoked: true, pending: false });
 		// Once per revoked build: live reload calls loadExports every second, and each fetched revoked.json has new entry objects
 		const sha = this.package?.rawSha256;
 		if (this.revokedSha256 === sha && this.revoked._?.reason === entry.reason && this.revoked._?.report === entry.report) return;
@@ -1016,7 +1022,7 @@ export class LunaPlugin {
 			}
 			// The one check for a dependency that changed while this plugin loaded (revoked, disabled, reloaded or still unloading after the
 			// import took its exports, see changedDependency): running now would keep the exports it unloaded. This plugin is in its dependants
-			// since the import, so it loads this plugin once it loads again (a dependency reloaded meanwhile already queued that load)
+			// since the import, so it loads this plugin once it loads again (see waitFor for one loaded already)
 			const dependency = changedDependency(imported, (plugin) => ({
 				unloadCount: plugin.unloadCount,
 				unloading: plugin.unloading !== undefined,
@@ -1051,20 +1057,18 @@ export class LunaPlugin {
 			// Ensure we arnt partially loaded
 			const missing = LunaPlugin.missingDependencyOf(err);
 			if (missing !== undefined) {
-				// A dependency that stopped (revoked or disabled) before this import reached it: wait for it as a dependant, it loads this
-				// plugin once it loads again (its loop removed this plugin from its dependants before loading it)
-				// The card says why (the caller's own error handling assumes it does: the update button, the toggle)
+				// A dependency that stopped (revoked, disabled or reloading) before this import reached it: not a failure, this plugin waits for
+				// it as a changed dependency does above (an accepted update stays accepted and loads with it)
 				await this.unload();
-				missing.addDependant(this);
-				this.waitFor(missing, true);
+				this.waitFor(missing);
 				this.trace.log(`Waiting for ${missing.name}, which is not loaded`);
-			} else {
-				// Set loadError for anyone listening
-				this.loadError._ = (<any>err)?.message ?? err?.toString();
-				// Notify users
-				this.trace.msg.err.withContext(`Failed to load`)(err);
-				await this.unload();
+				return;
 			}
+			// Set loadError for anyone listening
+			this.loadError._ = (<any>err)?.message ?? err?.toString();
+			// Notify users
+			this.trace.msg.err.withContext(`Failed to load`)(err);
+			await this.unload();
 			// An accepted update that fails to load waits again, the version the user had is the one stored (and runs on the next load)
 			if (replaced !== undefined && update !== undefined && this.package?.hash === update.hash) {
 				if (replaced.previous !== undefined) this.package = replaced.previous;

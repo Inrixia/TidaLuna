@@ -268,10 +268,13 @@ export const changedDependency = <P>(
 	return undefined;
 };
 
-/** Why a plugin waits for a dependency: revoked, not loaded (failed or off), or nothing to say while it is loading (it loads the plugin next) */
-export const dependencyWaitMessage = (dependency: { name: string; revoked: boolean; loading: boolean }): string | undefined => {
+/**
+ * Why a plugin waits for a dependency: revoked, not loaded (failed or off), or nothing to say while it is pending (enabled without a load
+ * error: on its way, it loads the plugin next)
+ */
+export const dependencyWaitMessage = (dependency: { name: string; revoked: boolean; pending: boolean }): string | undefined => {
 	if (dependency.revoked) return `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked`;
-	if (dependency.loading) return undefined;
+	if (dependency.pending) return undefined;
 	return `Not running: it depends on ${dependency.name}, which is not loaded`;
 };
 
