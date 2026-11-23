@@ -6,6 +6,7 @@
 // checks that use the registry (NativeModule/index.ts, worlds.ts) hold for any caller.
 import { app, net } from "electron";
 
+import { lookup } from "dns/promises";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import path from "path";
 
@@ -105,12 +106,21 @@ ipcHandle("__LunaCore.uninstall", async (_, url: unknown) => {
 });
 ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => registry().moveUrl(from, to));
 
-// luna.fetch (net.ts). Node's fetch, not Electron's net: no TIDAL session, so no cookies of the user's account are sent
-export const lunaNet = createNet({ hostsOf: (url) => registry().hostsOf(url), fetch: (url, init) => fetch(url, init as RequestInit) });
+// luna.fetch (net.ts). Node's fetch, not Electron's net: no session and no cookie jar, so no cookies of the user's
+// account are sent, and none a response sets reach another plugin. It doesn't use the system's proxy settings
+export const lunaNet = createNet({
+	hostsOf: (url) => registry().hostsOf(url),
+	fetch: (url, init) => fetch(url, init as RequestInit),
+	resolve: async (hostname) => (await lookup(hostname, { all: true })).map(({ address }) => address),
+});
 // The page names the plugin (render/src/lunaFetch.ts finds it from the stack): attribution, not a boundary, see net.ts
 ipcHandle("__LunaCore.fetch", (_, pluginUrl: unknown, request: unknown) => lunaNet.fetch(pluginUrl, "page", request));
 ipcHandle("__LunaCore.networkLog", () => lunaNet.log());
-/** CSP sources for the hosts enabled plugins declare (injector.ts adds them to the report-only header). None if the registry can't be read */
+
+/**
+ * CSP sources for the hosts enabled plugins declare (injector.ts adds them to the report-only header when the TIDAL
+ * shell loads: a plugin enabled later is listed from the next reload). None if the registry can't be read
+ */
 export const pluginCspHosts = (): string[] => {
 	try {
 		return cspSources(registry().declaredHosts());
@@ -119,4 +129,3 @@ export const pluginCspHosts = (): string[] => {
 		return [];
 	}
 };
-ipcHandle("__LunaCore.clearNetworkLog", () => lunaNet.clearLog());

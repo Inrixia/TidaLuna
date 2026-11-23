@@ -497,7 +497,7 @@ describe("core registry", () => {
 		const yes = asker(true);
 		await registry.install(URL, yes);
 		const lines = yes.asked[0].lines;
-		assert.ok(lines.some((line) => line.startsWith("Network: api.last.fm, *.example.com.")));
+		assert.ok(lines.some((line) => line === "Network: the plugin says it connects to api.last.fm, *.example.com."));
 		assert.ok(lines.some((line) => line === "Ignored, not valid hosts: *"));
 		assert.deepStrictEqual(registry.info(URL)?.hosts, ["api.last.fm", "*.example.com"]);
 		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", hosts: ["api.last.fm", "*.example.com"] });

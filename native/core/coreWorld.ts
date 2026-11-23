@@ -182,7 +182,6 @@ export const exposeCore = () => {
 		// luna.fetch for page code (render/src/lunaFetch.ts), which names the calling plugin
 		fetch: (pluginUrl: unknown, request: unknown): Promise<NetResponse> => ipcRenderer.invoke("__LunaCore.fetch", pluginUrl, request),
 		networkLog: (): Promise<NetLogEntry[]> => ipcRenderer.invoke("__LunaCore.networkLog"),
-		clearNetworkLog: (): Promise<void> => ipcRenderer.invoke("__LunaCore.clearNetworkLog"),
 	});
 };
 // #endregion

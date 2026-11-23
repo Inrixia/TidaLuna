@@ -153,12 +153,52 @@ describe("luna.fetch", () => {
 		assert.match(net.log().at(-1)?.error ?? "", /larger/);
 	});
 
-	it("keeps only the newest 500 log entries, and clears them", async () => {
+	it("keeps the newest 100 entries of each plugin: one plugin can't push another's out", async () => {
+		const { net } = fakeNet(plugins, { "https://anything.org/": () => new Response("ok") });
+		await net.fetch("https://store/compat", "page", { url: "https://anything.org/" });
+		for (let i = 0; i < 110; i++) await net.fetch("https://store/declared", "page", { url: `https://other${i}.com/` }).catch(() => {});
+		for (let i = 0; i < 110; i++) await net.fetch(`https://forged/${i}`, "page", { url: "https://a.org/" }).catch(() => {});
+		const log = net.log();
+		assert.equal(log.filter((entry) => entry.plugin === "https://store/declared").length, 100);
+		assert.equal(log.filter((entry) => entry.plugin === "https://store/compat").length, 1);
+		// Requests naming no enabled plugin share one bucket
+		assert.equal(log.filter((entry) => entry.plugin.startsWith("https://forged/")).length, 100);
+		assert.equal(log.find((entry) => entry.plugin === "https://store/declared")?.target, "https://other10.com/");
+	});
+
+	it("clips what the page names before logging it, and refuses very long urls", async () => {
 		const { net } = fakeNet(plugins, {});
-		for (let i = 0; i < 510; i++) await net.fetch("https://store/declared", "page", { url: `https://other${i}.com/` }).catch(() => {});
-		assert.equal(net.log().length, 500);
-		assert.equal(net.log()[0].target, "https://other10.com/");
-		net.clearLog();
-		assert.equal(net.log().length, 0);
+		await assert.rejects(net.fetch("x".repeat(100000), "page", { url: "https://a.org/" }), /not an enabled plugin/);
+		assert.ok(net.log()[0].plugin.length < 400);
+		await assert.rejects(net.fetch("https://store/compat", "page", { url: `https://a.org/${"p".repeat(10000)}` }), /longer than/);
+		await assert.rejects(net.fetch("https://store/compat", "page", { url: 5 }), /Not a url/);
+	});
+
+	it("drops credentials on a redirect to another origin", async () => {
+		const { net, calls } = fakeNet(plugins, {
+			"https://a.org/r": () => new Response(null, { status: 302, headers: { location: "https://b.org/" } }),
+			"https://b.org/": () => new Response("ok"),
+		});
+		await net.fetch("https://store/compat", "page", {
+			url: "https://a.org/r",
+			headers: { Authorization: "Bearer t", "x-api-key": "k", Cookie: "c" },
+		});
+		assert.deepEqual(calls[0].headers, { Authorization: "Bearer t", "x-api-key": "k", Cookie: "c" });
+		assert.deepEqual(calls[1].headers, { "x-api-key": "k" });
+	});
+
+	it("refuses a name that resolves to a local address in compatibility mode", async () => {
+		const resolved: Record<string, string[]> = { "rebind.example": ["192.168.1.1"], "public.example": ["93.184.215.14"] };
+		const { net, calls } = fakeNet(
+			plugins,
+			{ "https://public.example/": () => new Response(null, { status: 302, headers: { location: "https://rebind.example/" } }) },
+			{ resolve: async (hostname) => resolved[hostname] ?? [] },
+		);
+		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://rebind.example/" }), /local address/);
+		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://public.example/" }), /redirect.*local address/);
+		assert.deepEqual(
+			calls.map((call) => call.url),
+			["https://public.example/"],
+		);
 	});
 });

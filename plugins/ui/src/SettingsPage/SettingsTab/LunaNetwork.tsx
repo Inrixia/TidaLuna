@@ -9,7 +9,7 @@ import type { CorePluginInfo } from "../../../../../native/core/registry";
 import type { NetLogEntry } from "../../../../../native/core/net";
 
 /** How many of the newest requests are shown */
-const shown = 100;
+const shown = 200;
 
 const time = (ms: number) => new Date(ms).toLocaleTimeString();
 
@@ -23,11 +23,6 @@ export const LunaNetwork = React.memo(() => {
 		setLog(entries);
 	}, []);
 	React.useEffect(() => void refresh(), [refresh]);
-	const clear = React.useCallback(async () => {
-		await __LunaCore.clearNetworkLog();
-		await refresh();
-	}, [refresh]);
-
 	const names = new Map(plugins.map((plugin) => [plugin.url, plugin.name]));
 	return (
 		<LunaSettings
@@ -53,10 +48,12 @@ export const LunaNetwork = React.memo(() => {
 						</Typography>
 					</LunaSetting>
 				))}
-			<LunaSetting title="Requests" desc={`The newest ${shown} luna.fetch requests since TIDAL started (origin and path, without the query)`}>
+			<LunaSetting
+				title="Requests"
+				desc={`The newest ${shown} luna.fetch requests since TIDAL started, at most 100 per plugin (origin and path, without the query). Kept until TIDAL restarts`}
+			>
 				<Stack direction="row" spacing={1}>
 					<LunaButton onClick={refresh}>Refresh</LunaButton>
-					<LunaButton onClick={clear}>Clear</LunaButton>
 				</Stack>
 			</LunaSetting>
 			{log.length === 0 ? (

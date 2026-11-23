@@ -70,8 +70,7 @@ declare global {
 		unloadWorld(url: string): Promise<void>;
 		/** luna.fetch for `pluginUrl` (see native/core/net.ts). Use lunaFetch instead */
 		fetch(pluginUrl: string, request: import("../../native/core/net").NetRequest): Promise<import("../../native/core/net").NetResponse>;
-		/** luna.fetch requests since TIDAL started, the newest last */
+		/** luna.fetch requests since TIDAL started (the newest 100 of each plugin), the newest last */
 		networkLog(): Promise<import("../../native/core/net").NetLogEntry[]>;
-		clearNetworkLog(): Promise<void>;
 	};
 }

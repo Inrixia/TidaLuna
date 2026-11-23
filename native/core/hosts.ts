@@ -88,15 +88,23 @@ export const hostAllowed = (hosts: string[], url: URL) =>
 		return rule !== undefined && ruleMatches(rule, url);
 	});
 
+// Names only a local network answers for (RFC 6761/6762/8375 and common router defaults)
+const privateSuffixes = ["localhost", "local", "lan", "home", "home.arpa", "internal", "intranet", "corp", "localdomain", "private"];
+
 /**
  * A host luna.fetch never reaches for a plugin in compatibility mode: loopback, private and link-local addresses, and
  * names for them. Unlike a fetch from the page, luna.fetch runs in the main process without CORS, so it could read the
  * answers of services on this computer or network. A plugin that needs one names it in `hosts`.
- * By literal only: a public name that resolves to a private address isn't caught.
+ * Addresses, single-label names (`http://router/`) and the usual private suffixes. A public name that resolves to a
+ * private address is checked by net.ts once resolved.
  */
 export const isLocalHost = (hostname: string) => {
-	const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-	if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "") return true;
+	const host = hostname
+		.replace(/^\[|\]$/g, "")
+		.replace(/\.$/, "")
+		.toLowerCase();
+	if (host === "" || privateSuffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))) return true;
+	if (!host.includes(".") && !host.includes(":")) return true;
 	const v4 = ipv4.exec(host);
 	if (v4 !== null) {
 		const [a, b] = [Number(v4[1]), Number(v4[2])];

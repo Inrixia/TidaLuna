@@ -30,6 +30,8 @@ let nextWorldId = 1001;
 const owned = new Map<string, { exports: Record<string, unknown>; world: string }>();
 
 const ownedKey = (url: string, fileName: string) => `${url}\n${fileName}`;
+/** url -> the accepted world text of its last finished load (luna.fetch from a world checks it, as invoke checks `owned`) */
+const loadedWorlds = new Map<string, string>();
 // Loads of each url still running: a url's names are freed only once none of them is
 const loadsInFlight = new Map<string, number>();
 // The latest load of each url: an older one still waiting on the user fills nothing (see release)
@@ -52,6 +54,7 @@ const releaseModules = (url: string, keep: ReadonlySet<string> = new Set()) => {
 onPluginStopped((url) => {
 	nextGeneration(url);
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
+	loadedWorlds.delete(url);
 	releaseModules(url);
 });
 
@@ -83,6 +86,7 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 
 	// Natives of an earlier load of this url can't be called any more, whatever happens below
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
+	loadedWorlds.delete(url);
 
 	// The answer for a native covers the world code too: the world decides what its natives are called with
 	const worldHash = sha256(bundle.code);
@@ -118,14 +122,19 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 		}
 	}
 
+	// The newest load of this url, still accepted (a world without natives waits on nothing above)
+	if (generations.get(url) === generation && registry().acceptedWorld(url) === accepted) loadedWorlds.set(url, accepted);
 	return { worldId: nextWorldId++, code: bundle.code };
 });
 
 // luna.fetch from a plugin world: the url is the one the preload fixed in the world's bridge, so the plugin's accepted
-// hosts hold for its world code (core/net.ts)
+// hosts hold for its world code (core/net.ts). Disabled, or an update accepted since its world loaded: refused until the
+// new world loads, as invoke is
 ipcHandle("__LunaWorld.fetch", async (event, url: unknown, request: unknown) => {
 	checkIsolated(event.sender);
-	if (typeof url !== "string" || registry().acceptedWorld(url) === undefined) throw new Error(`[🛑Security🛑] ${String(url)} has no loaded world`);
+	const loaded = typeof url === "string" ? loadedWorlds.get(url) : undefined;
+	if (loaded === undefined || registry().acceptedWorld(url as string) !== loaded)
+		throw new Error(`[🛑Security🛑] ${String(url)} has no world loaded at its accepted version`);
 	return lunaNet.fetch(url, "world", request);
 });
 

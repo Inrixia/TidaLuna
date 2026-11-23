@@ -73,6 +73,11 @@ describe("plugin hosts", () => {
 			"[fd00::1]",
 			"[fe80::1]",
 			"[::ffff:127.0.0.1]",
+			"router",
+			"nas.lan",
+			"fritz.box.home.arpa",
+			"db.internal",
+			"localhost.",
 		])
 			assert.equal(isLocalHost(host), true, host);
 		for (const host of ["api.last.fm", "8.8.8.8", "172.32.0.1", "[2606:4700::1111]"]) assert.equal(isLocalHost(host), false, host);

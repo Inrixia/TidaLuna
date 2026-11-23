@@ -129,12 +129,15 @@ const hostsOfVersion = (version: Version | undefined) => (version === undefined 
 /** What the confirmation says about a version's network hosts */
 const describeHosts = (version: Version): string[] => {
 	const declared = declaredHosts(version.package.hosts);
+	// Only Luna's fetch is checked: code in the page can still use the page's own network, so this is what the plugin
+	// says, not a limit on it
+	const notALimit = "Requests it makes through Luna (luna.fetch) are checked against this list; the page's own network isn't limited yet.";
 	if (declared === undefined)
-		return ["Network: doesn't list the hosts it connects to. Compatibility mode: luna.fetch lets it reach any public host, and marks its requests in the log."];
+		return ["Network: the plugin doesn't list the hosts it connects to. Compatibility mode: its luna.fetch requests may go to any public host and are marked in the log."];
 	const lines =
 		declared.hosts.length === 0
-			? ["Network: none. luna.fetch refuses every host for it."]
-			: [`Network: ${declared.hosts.join(", ")}. luna.fetch refuses any other host for it.`];
+			? ["Network: the plugin says it connects to no host.", notALimit]
+			: [`Network: the plugin says it connects to ${declared.hosts.join(", ")}.`, notALimit];
 	if (declared.invalid.length !== 0) lines.push(`Ignored, not valid hosts: ${declared.invalid.join(", ")}`);
 	return lines;
 };
@@ -366,7 +369,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (changes.added.length !== 0) lines.push(`New native files: ${changes.added.join(", ")}`);
 		if (changes.removed.length !== 0) lines.push(`Removed native files: ${changes.removed.join(", ")}`);
 		const acceptedHosts = hostsOfVersion(accepted);
-		if (acceptedHosts === undefined && changes.hosts !== undefined) lines.push("Now lists its network hosts: other hosts are refused from now on.");
+		if (acceptedHosts === undefined && changes.hosts !== undefined) lines.push("Now lists its network hosts: luna.fetch refuses other hosts for it from now on.");
 		else if (acceptedHosts !== undefined && changes.hosts === undefined)
 			lines.push("No longer lists its network hosts: compatibility mode, any public host.");
 		else {
