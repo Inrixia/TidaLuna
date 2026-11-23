@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 
-import { compareVersions, coreNativeQuestion, coreNativeRule } from "./policy";
+import { compareVersions, coreNativeArgsError, coreNativeQuestion, coreNativeRule } from "./policy";
 
 describe("core native rules", () => {
 	it("denies or confirms the dangerous core natives", () => {
@@ -33,5 +33,13 @@ describe("core native rules", () => {
 		assert.ok(compareVersions("1.9.0", "1.10.0") < 0);
 		assert.ok(compareVersions("1.25.0-beta.2", "1.25.0-beta.10") < 0);
 		assert.equal(compareVersions("v1.2.3", "1.2.3"), 0);
+	});
+
+	it("refuses update arguments that would fail before asking", () => {
+		assert.equal(coreNativeArgsError("update", ["1.26.0-beta"]), undefined);
+		assert.match(coreNativeArgsError("update", ["../other/repo"]) ?? "", /invalid version/);
+		assert.match(coreNativeArgsError("update", ["1.0 then restart"]) ?? "", /invalid version/);
+		assert.match(coreNativeArgsError("update", [["1.0.0"]]) ?? "", /invalid version/);
+		assert.equal(coreNativeArgsError("startNativeDebugging", []), undefined);
 	});
 });
