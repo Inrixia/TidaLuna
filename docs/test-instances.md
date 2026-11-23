@@ -126,13 +126,8 @@ logging in.
   test window was, possibly off-screen. Expect log lines from all instances in the same `app.log`.
 - **One device plays at a time per account.** Starting playback in a test instance logged in with your account
   pauses the daily client (and the other way round). Use a second account, or avoid playback while listening.
-- **"Plugin Permission" window.** The first time a plugin's native code (`*.native.ts`) loads, Luna asks in a
-  window of its own, before any of its code runs, whether the file may run in TIDAL's main process. It is one
-  question per file: an allowed file is not asked again for the Node modules it uses. The window lists the
-  modules the file's source names (`fs`, `http`, `electron`, …), for information only. The plugin waits for the
-  answer, so keep the instance's windows visible while installing or enabling such plugins. A rebuilt plugin
-  asks again if it was allowed for "This version"; "All versions" (confirmed in a second step) keeps the answer
-  for later builds from the same url. Answers are listed, and can be revoked, in Luna Settings.
+- **"Plugin Permission" window.** Native code (`*.native.ts`) asks once per file before it runs; the plugin waits,
+  so keep the instance's windows visible. Revoke answers in Luna Settings.
 - **TIDAL Connect** uses fixed local ports, so only one instance (daily or test) can offer it at a time.
 - **Stopping an instance.** Quit it normally, or kill its processes by path. `taskkill /IM TIDAL.exe` kills every
   TIDAL, including the daily client:

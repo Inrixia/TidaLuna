@@ -60,21 +60,23 @@ export class NativeTrust {
 		this.abandoned = true;
 	}
 
+	/**
+	 * Read from its own plugin's entries only: the one of the url the renderer named and the one of its build (answered
+	 * while that url could not be checked). Never another plugin's, even for the same code: each plugin is asked on its own
+	 */
 	private saved(): boolean | undefined {
 		const { fileName, hash, url } = this.info;
 		const { natives } = getStore();
 		const claimed = url === undefined ? undefined : natives[recordKey(fileName, hash, url)];
+		const ownBuild = natives[recordKey(fileName, hash, undefined, url)];
 		// Denials hold for the url the renderer named even if it could not be checked: they only take access away
-		if (claimed?.answer === "deny" || natives[recordKey(fileName, hash)]?.answer === "deny") return false;
+		if (claimed?.answer === "deny" || ownBuild?.answer === "deny") return false;
 
 		// Allowed for updates: any build the url serves
 		if (this.verifiedUrl !== undefined && claimed?.answer === "allowUpdates") return true;
 
-		// An allow for this exact code holds whoever registers it
-		for (const record of Object.values(natives)) {
-			if (record.fileName === fileName && record.answer !== "deny" && record.hashes.includes(hash)) return true;
-		}
-		return undefined;
+		// This build allowed for its plugin (also one remembered for all versions, see rememberBuild, so it loads offline)
+		return claimed?.hashes.includes(hash) || ownBuild?.hashes.includes(hash) ? true : undefined;
 	}
 
 	private decide(): boolean | undefined {
@@ -150,7 +152,14 @@ export class NativeTrust {
 		const { fileName, hash, url: claimedUrl } = this.info;
 		const url = this.verifiedUrl;
 		// Replaces an answer for an earlier build of the url: that build is asked again if it ever loads
-		getStore().natives[recordKey(fileName, hash, url)] = { url, claimedUrl, fileName, answer, hashes: [hash], modules: [...this.modules] };
+		getStore().natives[recordKey(fileName, hash, url, claimedUrl)] = {
+			url,
+			claimedUrl,
+			fileName,
+			answer,
+			hashes: [hash],
+			modules: [...this.modules],
+		};
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
 		resetLive();
@@ -191,6 +200,9 @@ ipcHandle("__Luna.nativePermissions.list", (): NativePermissionEntry[] =>
 	Object.entries(getStore().natives).map(([key, { fileName, url, claimedUrl, answer, modules }]) => ({ key, fileName, url, claimedUrl, answer, modules })),
 );
 
+/** The plugin an entry is of: its url, checked or as named (none for code without a url) */
+const pluginOf = (record: NativeRecord) => record.url ?? record.claimedUrl;
+
 // Revoking never grants anything, so the renderer may ask for it: the file is asked again the next time it loads, and
 // code of it that runs is denied Node modules until then. (A revoked denial is asked again too; any plugin can already
 // open permission windows with native code of its own.)
@@ -198,10 +210,12 @@ ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => {
 	const { natives } = getStore();
 	const record: NativeRecord | undefined = natives[key];
 	if (record === undefined) return;
-	// Answers of other entries for the same code (e.g. given while its url could not be checked) would still allow it.
-	// Every entry that names this code goes, also one of another url: all of them are asked again
+	// Its plugin's other entries for the same code (given while the url could not be checked) would still allow it.
+	// Not another plugin's: those are that plugin's own answers
+	const plugin = pluginOf(record);
 	for (const [otherKey, other] of Object.entries(natives)) {
-		if (otherKey === key || (other.fileName === record.fileName && other.hashes.some((hash) => record.hashes.includes(hash)))) delete natives[otherKey];
+		const sibling = other.fileName === record.fileName && pluginOf(other) === plugin && other.hashes.some((hash) => record.hashes.includes(hash));
+		if (otherKey === key || sibling) delete natives[otherKey];
 	}
 	saveStore();
 	resetLive();

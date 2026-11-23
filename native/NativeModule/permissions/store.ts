@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 
 /**
+ * Answers hold for the plugin they were given to only, never for another plugin with the same code.
  * - allow: this build of the file only (its code hash)
  * - allowUpdates: any build the plugin's url serves, until the plugin is reinstalled or this is revoked
  * - deny: until the plugin is reinstalled or this is revoked
@@ -29,10 +30,12 @@ type PermissionStore = {
 };
 
 /**
- * A file of a plugin url, or one build of it when the url is unknown or could not be checked.
- * So a plugin of the same name from another store never shares answers with it.
+ * A file of a plugin url, or one build of it when the url could not be checked (of the url the renderer named, if
+ * any). Answers belong to one plugin: a plugin of the same name from another store, or another plugin with the same
+ * code, never shares them.
  */
-export const recordKey = (fileName: string, hash: string, url?: string) => (url !== undefined ? `${url}::${fileName}` : `${fileName}@${hash}`);
+export const recordKey = (fileName: string, hash: string, url?: string, claimedUrl?: string) =>
+	url !== undefined ? `${url}::${fileName}` : claimedUrl !== undefined ? `${claimedUrl}::${fileName}@${hash}` : `${fileName}@${hash}`;
 
 const STORE_FILE = "luna-native-permissions.enc";
 const filePath = () => path.join(app.getPath("userData"), STORE_FILE);
