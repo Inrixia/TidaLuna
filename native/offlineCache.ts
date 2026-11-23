@@ -20,6 +20,8 @@ const v1Hosts = new Set(["api.tidal.com", "desktop.tidal.com"]);
 const isTidalHost = (url: URL) => url.hostname === "tidal.com" || url.hostname.endsWith(".tidal.com");
 const isTidalApi = (url: URL) =>
 	url.hostname === "api.tidal.com" || url.hostname === "openapi.tidal.com" || (tidalMainHosts.has(url.hostname) && /^\/v[12]\//.test(url.pathname));
+// Only TIDAL's api and app say whether it is online, one image or cdn failing is not being offline
+const tellsOnline = (url: URL) => isTidalApi(url) || tidalMainHosts.has(url.hostname);
 // Both hosts serve the same v1 api (TIDAL uses api., Luna uses desktop.), share their cache entries like requestCache.ts does
 const keyOf = (url: URL) => {
 	if (!isTidalHost(url)) return url.href;
@@ -28,10 +30,21 @@ const keyOf = (url: URL) => {
 	search.sort();
 	return `${host}${url.pathname}?${search}`;
 };
+/** The account a request is made as: `uid` from the Bearer token (a JWT). Kept api responses are per account, `/me` urls don't name the user */
+const userOf = (req?: Request): string | undefined => {
+	const auth = req?.headers.get("authorization");
+	if (!auth?.startsWith("Bearer ")) return;
+	try {
+		const uid = JSON.parse(Buffer.from(auth.slice(7).split(".")[1], "base64url").toString()).uid;
+		return uid === undefined ? undefined : String(uid);
+	} catch {
+		return;
+	}
+};
 
 let isOffline = false;
 
-type Meta = { url: string; status: number; statusText: string; headers: [string, string][] };
+type Meta = { url: string; status: number; statusText: string; headers: [string, string][]; sha256?: string };
 
 const maxBytes = 512 * 1024 ** 2;
 // Bytes written since the last prune, the next one runs once they pass a 32nd of the cap
@@ -44,7 +57,7 @@ const prune = (): Promise<void> =>
 		const dir = cacheDir();
 		const names = await readdir(dir).catch(() => <string[]>[]);
 		const kept = new Map<string, { size: number; used: number }>();
-		let usage = 0;
+		let bytes = 0;
 		await Promise.all(
 			names.map(async (name) => {
 				const info = await stat(path.join(dir, name)).catch(() => undefined);
@@ -52,10 +65,10 @@ const prune = (): Promise<void> =>
 				if (name.endsWith(".part")) {
 					// A write in progress is left alone, one older than an hour was cut off (crash, full disk)
 					if (Date.now() - info.mtimeMs > 60 * 60_000) await rm(path.join(dir, name), { force: true });
-					else usage += info.size;
+					else bytes += info.size;
 					return;
 				}
-				usage += info.size;
+				bytes += info.size;
 				const key = name.replace(/\.json$/, "");
 				const entry = kept.get(key) ?? { size: 0, used: 0 };
 				entry.size += info.size;
@@ -64,24 +77,50 @@ const prune = (): Promise<void> =>
 			}),
 		);
 		for (const [key, { size }] of [...kept].sort(([, a], [, b]) => a.used - b.used)) {
-			if (usage <= maxBytes) break;
+			if (bytes <= maxBytes) break;
 			await rm(path.join(dir, key + ".json"), { force: true });
 			await rm(path.join(dir, key), { force: true });
-			usage -= size;
+			bytes -= size;
 		}
 	})()
 		.catch((err) => console.error("[Luna.native] [OfflineCache] Failed to prune", err))
 		.finally(() => (pruning = undefined)));
 electron.app.whenReady().then(() => setTimeout(prune, 30_000));
 
-const keep = async (file: string, meta: Meta, body: Buffer) => {
+let partId = 0;
+/** Reads a copy of the response body to its end and writes it, unless the kept copy already has the same body */
+const keep = async (file: string, meta: Meta, body: ReadableStream<Uint8Array>) => {
+	const chunks: Uint8Array[] = [];
+	const hash = createHash("sha256");
+	for await (const chunk of body) {
+		chunks.push(chunk);
+		hash.update(chunk);
+	}
+	meta.sha256 = hash.digest("hex");
+	const kept = await readFile(file + ".json", "utf8").then(
+		(json) => (<Meta>JSON.parse(json)).sha256,
+		() => undefined,
+	);
+	// Unchanged: only marked as just seen, so the file's age stays when it was last loaded
+	if (kept === meta.sha256) {
+		try {
+			const now = new Date();
+			return await utimes(file, now, now);
+		} catch {
+			// The body is gone, written again below
+		}
+	}
 	await mkdir(cacheDir(), { recursive: true });
-	await writeFile(file + ".part", body);
-	await rename(file + ".part", file);
+	// Own part file per write, two loads of the same url can overlap
+	const part = `${file}.${++partId}.part`;
+	await writeFile(part, chunks);
+	await rename(part, file);
 	await writeFile(file + ".json", JSON.stringify(meta));
-	writtenBytes += body.length;
+	const written = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+	writtenBytes += written;
 	if (writtenBytes > maxBytes / 32) prune();
 };
+
 
 const replay = async (file: string, req?: Request): Promise<Response | undefined> => {
 	let meta: Meta, body: Buffer<ArrayBuffer>;
@@ -107,18 +146,20 @@ const replay = async (file: string, req?: Request): Promise<Response | undefined
 
 /**
  * Fetches `url` with `fetch`, keeping a good GET response on disk. If `fetch` throws (no network) the kept response is returned instead.
- * Keyed by url only, request headers (e.g. Authorization) are never stored.
+ * Keyed by url and, for TIDAL's api, the account it is made as. Request headers (e.g. Authorization) are never stored.
  */
 export const staleIfError = async (url: string, fetch: () => Promise<Response>, req?: Request): Promise<Response> => {
 	if (req !== undefined && req.method !== "GET") return fetch();
 	const parsedUrl = new URL(url);
-	const file = path.join(cacheDir(), createHash("sha256").update(keyOf(parsedUrl)).digest("hex").slice(0, 40));
+	const user = isTidalApi(parsedUrl) ? userOf(req) : undefined;
+	const key = user === undefined ? keyOf(parsedUrl) : `${user}:${keyOf(parsedUrl)}`;
+	const file = path.join(cacheDir(), createHash("sha256").update(key).digest("hex").slice(0, 40));
 	let res: Response;
 	try {
 		res = await fetch();
 	} catch (err) {
 		if (req?.signal.aborted) throw err;
-		if (isTidalHost(parsedUrl)) {
+		if (tellsOnline(parsedUrl)) {
 			isOffline = true;
 			globalThis.luna?.sendToRender?.("__Luna.offlineStatus", true);
 		}
@@ -148,15 +189,16 @@ export const staleIfError = async (url: string, fetch: () => Promise<Response>, 
 		}
 		throw err;
 	}
-	if ((isTidalApi(parsedUrl) || tidalMainHosts.has(parsedUrl.hostname)) && (isOffline || parsedUrl.pathname === "/v1/ping")) {
+	if (tellsOnline(parsedUrl) && (isOffline || parsedUrl.pathname === "/v1/ping")) {
 		isOffline = false;
 		globalThis.luna?.sendToRender?.("__Luna.offlineStatus", false);
 	}
-	if (res.status !== 200 || !cacheableType.test(res.headers.get("content-type") ?? "")) return res;
-	const body = Buffer.from(await res.arrayBuffer());
+	if (res.status !== 200 || res.body === null || !cacheableType.test(res.headers.get("content-type") ?? "")) return res;
 	const headers = [...res.headers].filter(([name]) => !droppedHeaders.includes(name.toLowerCase()));
-	keep(file, { url, status: res.status, statusText: res.statusText, headers }, body).catch((err) =>
-		console.error(`[Luna.native] [OfflineCache] Failed to keep ${url}`, err),
-	);
-	return new Response(body, { status: res.status, statusText: res.statusText, headers });
+	// The page reads one branch as it arrives, the other is kept once complete
+	const [toPage, toDisk] = res.body.tee();
+	keep(file, { url, status: res.status, statusText: res.statusText, headers }, toDisk).catch((err) => {
+		if (!req?.signal.aborted) console.error(`[Luna.native] [OfflineCache] Failed to keep ${url}`, err);
+	});
+	return new Response(toPage, { status: res.status, statusText: res.statusText, headers });
 };
