@@ -3,6 +3,7 @@ import { pipeline, Readable } from "stream";
 
 import { makeDecipher } from "./decrypt";
 import { fetchStream, type TrackStreamOptions } from "./fetchStream";
+import { fetchTidal } from "./guards";
 
 import { rejectNotOk, Semaphore, toArrayBuffer } from "@inrixia/helpers";
 import { FlacStreamTagger, PictureType } from "flac-stream-tagger";
@@ -19,7 +20,7 @@ interface FetchOptions extends Omit<TrackStreamOptions, "deciper"> {
 export { FetchProgress } from "./fetchStream";
 
 const fetchLines = async (url: string) => {
-	const text = await (await fetch(url).then(rejectNotOk)).text();
+	const text = await (await fetchTidal(url).then(rejectNotOk)).text();
 	return text
 		.split("\n")
 		.map((line) => line.trim())
@@ -62,7 +63,7 @@ export const fetchMediaItemStream = (
 				const { tags, coverUrl } = options.tags;
 				let picture;
 				if (coverUrl !== undefined) {
-					picture = await fetch(coverUrl)
+					picture = await fetchTidal(coverUrl)
 						.then(rejectNotOk)
 						.then(toArrayBuffer)
 						.then((arrayBuffer) => ({

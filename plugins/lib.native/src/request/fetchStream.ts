@@ -2,6 +2,7 @@ import { rejectNotOk, sleep } from "@inrixia/helpers";
 import type { Decipheriv } from "crypto";
 
 import { audioCacheUrl } from "../native";
+import { assertTidalRedirect, assertTidalUrl } from "./guards";
 
 export type FetchProgress = { readonly total?: number; readonly downloaded?: number };
 export type TrackStreamOptions = {
@@ -42,12 +43,12 @@ export async function* fetchStream(urls: string[], options: TrackStreamOptions =
 	try {
 		for (let url of urls) {
 			// TIDAL's audio is read through the cache, which fills it (or answers from it) for the player too
-			url = audioCacheUrl(url) ?? url;
-			let res = await fetch(url, reqInit);
+			url = audioCacheUrl(assertTidalUrl(url)) ?? url;
+			let res = assertTidalRedirect(await fetch(url, reqInit));
 			// Retry once on server errors (e.g. CDN 504 Gateway Time-out), after giving the server a moment
 			if (res.status >= 500) {
 				await sleep(5000);
-				res = await fetch(url, reqInit);
+				res = assertTidalRedirect(await fetch(url, reqInit));
 			}
 			rejectNotOk(res);
 			(progress.total as number) += parseTotal(res.headers);

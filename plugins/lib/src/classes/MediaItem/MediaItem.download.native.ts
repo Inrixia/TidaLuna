@@ -6,6 +6,7 @@ import { join, parse } from "path";
 import { pipeline } from "stream/promises";
 
 import { fetchMediaItemStream, type FetchProgress } from "../../../../lib.native/src/index.native";
+import { assertMediaFile } from "../../../../lib.native/src/request/guards";
 
 // Type import & native space so not a issue
 import type { redux } from "@luna/lib";
@@ -33,7 +34,7 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 		if (Array.isArray(path)) path = join(...path);
 		const parsedPath = parse(path);
 		// The file is written under its sanitized name, so that is the path to check
-		const filePath = join(parsedPath.dir, sanitize(parsedPath.base));
+		const filePath = assertMediaFile(join(parsedPath.dir, sanitize(parsedPath.base)));
 		if (downloads[itemId] !== undefined) {
 			await downloads[itemId]!.promise;
 			return filePath;

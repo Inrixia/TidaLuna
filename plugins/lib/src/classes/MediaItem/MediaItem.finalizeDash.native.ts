@@ -14,6 +14,7 @@ import { ByteVector, File as TagFile, Picture, PictureType } from "node-taglib-s
 
 import { readFile, rename, writeFile } from "fs/promises";
 
+import { fetchTidal } from "../../../../lib.native/src/request/guards";
 import type { MetaTags } from "./MediaItem.tags";
 
 /**
@@ -227,7 +228,7 @@ const writeTags = async (path: string, mimeType: string, { tags, coverUrl }: Met
 	let cover: Picture | undefined;
 	if (coverUrl !== undefined) {
 		try {
-			const res = await fetch(coverUrl);
+			const res = await fetchTidal(coverUrl);
 			if (res.ok) {
 				cover = Picture.fromData(ByteVector.fromByteArray(Buffer.from(await res.arrayBuffer())));
 				cover.type = PictureType.FrontCover;
@@ -318,7 +319,7 @@ const toMetadataTags = async ({ tags, coverUrl }: MetaTags): Promise<MetadataTag
 	if (date !== undefined && !isNaN(Date.parse(date))) metadata.date = new Date(date);
 	if (coverUrl !== undefined) {
 		try {
-			const res = await fetch(coverUrl);
+			const res = await fetchTidal(coverUrl);
 			if (res.ok) {
 				const mimeType = res.headers.get("content-type") ?? "image/jpeg";
 				metadata.images = [{ data: new Uint8Array(await res.arrayBuffer()), mimeType, kind: "coverFront" }];
