@@ -4,6 +4,7 @@ import React from "react";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 
 import { LunaSetting, LunaSettings, LunaSwitch } from "../../components";
 
@@ -55,15 +56,19 @@ export const LunaShortcuts = React.memo(() => {
 		return () => void unload();
 	}, []);
 	const shortcuts = [...Shortcut.shortcuts.values()];
-	if (shortcuts.length === 0) return null;
+	// Shown even without shortcuts, Luna itself registers none, so the section would only appear once a plugin adds some
 	return (
 		<LunaSettings
 			title="Keyboard shortcuts"
 			desc="Turn shortcuts on or off, click one and press the keys to rebind it. Shortcuts don't fire while typing in a text field"
 		>
-			{shortcuts.map((shortcut) => (
-				<ShortcutSetting key={shortcut.id} shortcut={shortcut} />
-			))}
+			{shortcuts.length === 0 ? (
+				<Typography variant="body2" sx={{ opacity: 0.8, paddingBottom: 1 }}>
+					No shortcuts yet, plugins that add keyboard shortcuts list them here.
+				</Typography>
+			) : (
+				shortcuts.map((shortcut) => <ShortcutSetting key={shortcut.id} shortcut={shortcut} />)
+			)}
 		</LunaSettings>
 	);
 });

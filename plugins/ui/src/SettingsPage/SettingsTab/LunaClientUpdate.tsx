@@ -66,7 +66,8 @@ export const LunaClientUpdate = React.memo(() => {
 			title="Client Updates"
 			titleChildren={<SpinningButton title="Fetch releases" loading={loading} onClick={updateReleases} />}
 			direction="row"
-			sx={{ alignItems: "center" }}
+			// Top, so the buttons line up with the release picker and not with the picker plus the links under it
+			sx={{ alignItems: "flex-start" }}
 		>
 			<Dialog open={!!busy}>
 				<DialogTitle>Operation in progress</DialogTitle>
