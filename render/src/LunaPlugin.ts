@@ -6,7 +6,9 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
-import { codeToImport, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
+import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
+import { rawSha256, type RevokedEntry } from "./helpers/registry";
+import { LunaRegistry } from "./LunaRegistry";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
 
@@ -40,8 +42,15 @@ export type PluginPackage = {
 	 * sha256 (hex) of the text Luna imports for `code`, set when it loads or waits as an update.
 	 * Not the hash of the served `<url>.mjs` alone. To reproduce it: take the served .mjs text, append `\n//# sourceURL=<url>.mjs`,
 	 * apply helpers/pluginUpdates codeToImport(text, url), and sha256 the result as UTF-8.
+	 * Not the hash the plugin registry uses, that is `rawSha256`.
 	 */
 	codeSha256?: string;
+	/**
+	 * sha256 (hex) of the served `<url>.mjs` itself, the key of the plugin registry's verified.json and revoked.json (see helpers/registry).
+	 * The same for every url serving the same file. Set with codeSha256. To reproduce it: sha256 of the .mjs file's bytes
+	 * (equal to the sha256 of its text as UTF-8 for any file without a BOM, which esbuild never writes).
+	 */
+	rawSha256?: string;
 };
 
 // If adding to this make sure that the values are initalized in LunaPlugin.fromStorage
@@ -55,6 +64,8 @@ export type LunaPluginStorage = {
 };
 
 type PartialLunaPluginStorage = Partial<LunaPluginStorage> & { url: string };
+
+const describeRevoked = (entry: RevokedEntry) => `${entry.reason}${entry.report !== undefined ? ` Report: ${entry.report}` : ""}`;
 
 export class LunaPlugin {
 	// #region Static
@@ -122,6 +133,17 @@ export class LunaPlugin {
 
 			plugin.addDependant(dependantPlugin);
 		});
+	}
+
+	/** Unload loaded plugins whose code is revoked, and drop pending updates that are */
+	private static async applyRevocations(): Promise<void> {
+		for (const plugin of Object.values(LunaPlugin.plugins)) {
+			const pending = plugin.pendingUpdate._;
+			if (pending !== undefined && plugin.revokedUpdate(pending) !== undefined) plugin.pendingUpdate._ = undefined;
+			if (plugin.exports === undefined) continue;
+			const decision = LunaRegistry.loadDecision({ url: plugin.url, rawSha256: plugin.package?.rawSha256 });
+			if (!decision.load) await plugin.stopRevoked(decision.revoked);
+		}
 	}
 
 	/**
@@ -258,6 +280,11 @@ export class LunaPlugin {
 
 	// #region Tracer
 	public static readonly trace: Tracer = coreTrace.withSource(".LunaPlugin").trace;
+	static {
+		// A newly accepted revoked.json stops the plugins it revokes (at startup plugins load before the fetch finishes, see LunaRegistry).
+		// Here, after trace: onValue calls the listener right away
+		LunaRegistry.revoked.onValue(() => LunaPlugin.applyRevocations().catch(LunaPlugin.trace.err.withContext("applyRevocations")));
+	}
 	public readonly trace: Tracer;
 	// #endregion
 
@@ -478,6 +505,14 @@ export class LunaPlugin {
 	 */
 	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._): Promise<void> {
 		if (update?.code === undefined) return;
+		// Hashed here from the code that would be stored, not taken from the package: any caller can hand one in
+		const raw = await rawSha256(update.code);
+		if (update.rawSha256 !== raw) update = { ...update, rawSha256: raw };
+		const revoked = this.revokedUpdate(update);
+		if (revoked !== undefined) {
+			if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
+			return this.trace.msg.err.throw(`Not updating ${this.name}: the Luna plugin registry revoked ${update.version ?? "this version"}. ${describeRevoked(revoked)}`);
+		}
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
 		if (this.enabled) return this.loadExports(true, update);
 		const release = await this.loadSemaphore.obtain();
@@ -497,6 +532,11 @@ export class LunaPlugin {
 		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
 		return previous;
 	}
+	/** The registry's revocation of an update's code, if it is revoked (Luna's own plugins are never) */
+	public revokedUpdate(update: PluginPackage): RevokedEntry | undefined {
+		const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: update.rawSha256 });
+		return decision.load ? undefined : decision.revoked;
+	}
 	/** The native files of an update and which it adds or removes, for display (see helpers/pluginUpdates) */
 	public static readonly nativeFileChanges = nativeFileChanges;
 
@@ -511,6 +551,31 @@ export class LunaPlugin {
 			LunaPlugin.announcedUpdates.clear();
 			coreTrace.msg.log(`Plugin updates are waiting for you: ${names}. Review them in Luna Settings > Plugins`);
 		}, 2000);
+	}
+	// #endregion
+
+	// #region registry
+	/** The registry's revocation of the code this plugin has, set when it refused to load it (see LunaRegistry) */
+	public readonly revoked: Signal<RevokedEntry | undefined> = new Signal(undefined);
+	private markRevoked(entry: RevokedEntry) {
+		this.loadError._ = `Revoked by the Luna plugin registry: ${entry.reason}`;
+		// Once per revocation: live reload calls loadExports every second, and each fetched revoked.json has new entry objects
+		if (this.revoked._?.reason === entry.reason && this.revoked._?.report === entry.report) return;
+		this.revoked._ = entry;
+		this.trace.msg.err(`${this.name} ${this.package?.version ?? ""} was not loaded: the Luna plugin registry revoked it. ${describeRevoked(entry)}`);
+	}
+	/** Unload this plugin because a newly accepted revoked.json revokes its code. It stays enabled: a version that isn't revoked loads again */
+	private async stopRevoked(entry: RevokedEntry): Promise<void> {
+		const release = await this.loadSemaphore.obtain();
+		try {
+			// Checked again: the code may have changed while waiting for the semaphore
+			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: this.package?.rawSha256 });
+			if (decision.load || this.exports === undefined) return;
+			await this.unload();
+			this.markRevoked(entry);
+		} finally {
+			release();
+		}
 	}
 	// #endregion
 
@@ -574,6 +639,7 @@ export class LunaPlugin {
 			const reused = !codeChanged ? this.package : this.pendingUpdate._?.hash === newPackage.hash ? this.pendingUpdate._ : undefined;
 			newPackage.code = reused?.code;
 			newPackage.codeSha256 = reused?.code !== undefined ? reused.codeSha256 : undefined;
+			newPackage.rawSha256 = reused?.code !== undefined ? reused.rawSha256 : undefined;
 
 			// Ensure that code is fetched if its changed or undefined
 			newPackage.code ??= `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
@@ -584,14 +650,22 @@ export class LunaPlugin {
 				hasCode: this.code !== undefined,
 				isDev: this.isDev,
 				liveReload: this._liveReload._,
-				// By url, not by name: any plugin can name itself like a core plugin, only Luna serves https://luna/
-				isCore: this.url.startsWith("https://luna/"),
+				isCore: isCoreUrl(this.url),
 			});
 			if (waits) {
 				// The same update fetched again keeps its object, so an open update dialog still matches it
 				if (this.pendingUpdate._?.hash !== newPackage.hash) {
-					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);
 					newPackage.codeSha256 = await sha256Hex(codeToImport(newPackage.code, this.url));
+					newPackage.rawSha256 = await rawSha256(newPackage.code);
+					// A revoked update is not offered (acceptUpdate refuses it too)
+					const revoked = this.revokedUpdate(newPackage);
+					if (revoked !== undefined) {
+						this.trace.msg.warn(
+							`Update of ${this.name} to ${newPackage.version ?? "a new version"} not offered: the Luna plugin registry revoked it. ${describeRevoked(revoked)}`,
+						);
+						return false;
+					}
+					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);
 					this.pendingUpdate._ = newPackage;
 					LunaPlugin.announceUpdate(this.name);
 				}
@@ -637,9 +711,15 @@ export class LunaPlugin {
 			// Name this plugin's url when its native code registers, so its permissions are kept per plugin (see native/NativeModule/trust.ts)
 			// Only the call build/plugins/lunaNativePlugin.ts emits, not the same text inside a native file's code string
 			const code = codeToImport(this.code, this.url);
-			// Keep the hash of exactly what runs beside the code (the json `hash` only says the code changed)
-			const sha256 = await sha256Hex(code);
-			if (this.package!.codeSha256 !== sha256) this.package = { ...this.package!, codeSha256: sha256 };
+			// Keep the hash of exactly what runs beside the code (the json `hash` only says the code changed), and the registry's key
+			const [sha256, raw] = await Promise.all([sha256Hex(code), rawSha256(this.code)]);
+			if (this.package!.codeSha256 !== sha256 || this.package!.rawSha256 !== raw) this.package = { ...this.package!, codeSha256: sha256, rawSha256: raw };
+
+			// Code the registry revoked doesn't run (the list in use, see LunaRegistry for startup order)
+			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: raw });
+			if (!decision.load) return this.markRevoked(decision.revoked);
+			this.revoked._ = undefined;
+
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
 			try {
 				this.exports = await import(blobURL);
