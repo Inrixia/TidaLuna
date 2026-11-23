@@ -511,6 +511,8 @@ export class LunaPlugin {
 	// #region install/uninstall
 	public async install() {
 		this.loading._ = true;
+		// Uninstall can leave the old package, code included, in storage: install what the url serves now instead of offering it as an update
+		if (!this.installed && this.store.package?.code !== undefined) this.store.package = { ...this.store.package, code: undefined };
 
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
 		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);
