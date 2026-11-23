@@ -50,6 +50,8 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 		if (globalThis.luna.modules[fileName] !== undefined && moduleOwners.get(fileName) !== url)
 			throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} is already registered by Luna or another plugin`);
 	}
+	// Reserved now, before any wait: a page native registering the same name meanwhile is refused (NativeModule/index.ts)
+	for (const fileName of Object.keys(bundle.natives)) moduleOwners.set(fileName, url);
 
 	// Natives of an earlier load of this url can't be called any more, whatever happens below
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
@@ -67,7 +69,6 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 		owned.set(ownedKey(url, fileName), { exports, world: accepted });
 		// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
 		globalThis.luna.modules[fileName] = exports;
-		moduleOwners.set(fileName, url);
 	}
 
 	return { worldId: nextWorldId++, code: bundle.code };

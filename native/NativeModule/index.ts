@@ -81,8 +81,11 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: unkn
 const loadNative = async (event: Electron.IpcMainInvokeEvent, channel: string, moduleInfo: NativeModuleInfo): Promise<string> => {
 	const { fileName, code, url, isCore } = moduleInfo;
 	// Other natives import a world's native module by name: page natives can't replace it
-	const worldOwner = moduleOwners.get(fileName);
-	if (worldOwner !== undefined) throw new Error(`[🛑Security🛑] Native module ${fileName} belongs to the plugin world of ${worldOwner}`);
+	const checkWorldOwner = () => {
+		const worldOwner = moduleOwners.get(fileName);
+		if (worldOwner !== undefined) throw new Error(`[🛑Security🛑] Native module ${fileName} belongs to the plugin world of ${worldOwner}`);
+	};
+	checkWorldOwner();
 	let exports;
 	try {
 		exports = await secureLoad(moduleInfo, BrowserWindow.fromWebContents(event.sender) ?? undefined);
@@ -93,6 +96,8 @@ const loadNative = async (event: Electron.IpcMainInvokeEvent, channel: string, m
 		throw err;
 	}
 
+	// A world may have taken the name while the user was asked
+	checkWorldOwner();
 	globalThis.luna.modules[fileName] = exports;
 	// A plugin's file of the same name replaced Luna's: Luna's registers again
 	if (!isCore) coreLoads.delete(channel);
