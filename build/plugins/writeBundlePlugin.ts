@@ -3,11 +3,17 @@ import type { Plugin } from "esbuild";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { basename, dirname } from "path";
 
-export const writeBundlePlugin = (pluginPackagePath?: string): Plugin => ({
+/**
+ * @param manifestFields More fields for the plugin's `.json` manifest (lunaWorldPlugin's worldHash), asked once the
+ * build ends: the manifest is written once, complete
+ */
+export const writeBundlePlugin = (pluginPackagePath?: string, manifestFields?: () => Record<string, unknown>): Plugin => ({
 	name: "writeBundlePlugin",
 	setup(build) {
 		build.onEnd(async (result) => {
 			if (result.errors.length > 0) return;
+			// Throws if a plugin that adds to the manifest failed: nothing is written then
+			const extraFields = manifestFields?.() ?? {};
 
 			let writePackageJson = false;
 			for (const outputFile of result.outputFiles ?? []) {
@@ -22,6 +28,7 @@ export const writeBundlePlugin = (pluginPackagePath?: string): Plugin => ({
 						JSON.stringify({
 							...pluginPackage,
 							hash: outputFile.hash,
+							...extraFields,
 						}),
 					);
 					// Only write the package.json once

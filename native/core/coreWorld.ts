@@ -98,7 +98,8 @@ const unloadWorldNow = async (world: WorldState) => {
 		// Its unloads may still call its natives (e.g. to undo what they changed). Like page unloads (render/src/helpers/unloadSet.ts)
 		// they get 5s, so a hung one can't keep the plugin from unloading
 		await Promise.race([
-			webFrame.executeJavaScriptInIsolatedWorld(world.worldId, [{ code: "globalThis.__lunaWorldUnload?.()" }], true),
+			// No user gesture: the world's code must not get the frame's user activation
+			webFrame.executeJavaScriptInIsolatedWorld(world.worldId, [{ code: "globalThis.__lunaWorldUnload?.()" }], false),
 			new Promise((_, reject) => (timeout = setTimeout(() => reject(new Error("[Luna.worlds] Unload took longer than 5s to run...")), 5000))),
 		]);
 	} finally {
@@ -124,8 +125,15 @@ const loadWorld = async (url: string) => {
 				},
 			});
 		}
+		// Active before it runs: its top level may already call its natives
 		world.active = true;
-		await webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code, url: `${url}.world.js` }], true);
+		try {
+			await webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code, url: `${url}.world.js` }], false);
+		} catch (err) {
+			// A world that threw part way runs its unloads for what it set up, and its bridge is off
+			await unloadWorldNow(world).catch((unloadErr) => console.error("[Luna.worlds]", url, unloadErr));
+			throw err;
+		}
 	});
 };
 const unloadWorld = async (url: string) => {

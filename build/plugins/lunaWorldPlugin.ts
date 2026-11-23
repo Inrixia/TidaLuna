@@ -1,4 +1,4 @@
-import { build as esBuild, type Plugin } from "esbuild";
+import { build as esBuild, type BuildResult, type Plugin } from "esbuild";
 
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
@@ -95,51 +95,76 @@ export const pageNativeNames = (code: string): string[] =>
 		match[3].replace(/\\(.)/g, "$1"),
 	);
 
-/** Writes `<plugin>.world.json` next to the plugin bundle when its package.json names a `"lunaWorld"` entry */
-export const lunaWorldPlugin = (pluginPackagePath: string, pluginEntryPoint: string, pkgName: string): Plugin => ({
-	name: "lunaWorldPlugin",
-	async setup(build) {
-		const worldEntryOf = async () => {
-			const pluginPackage = await readFile(pluginPackagePath, "utf8").then(JSON.parse);
-			return typeof pluginPackage.lunaWorld === "string" ? path.resolve(path.dirname(pluginPackagePath), pluginPackage.lunaWorld) : undefined;
-		};
-		// Watch mode rebuilds when an input of the plugin bundle changes: the world's files count as inputs of its entry
-		const initialWorldEntry = await worldEntryOf();
-		let worldWatchFiles: string[] = initialWorldEntry !== undefined ? [initialWorldEntry] : [];
-		const entryPath = path.resolve(pluginEntryPoint);
-		build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
-			if (worldWatchFiles.length === 0 || path.resolve(args.path) !== entryPath) return undefined;
-			const ext = path.extname(args.path).slice(1).replace(/^[cm]/, "") as "js" | "ts" | "jsx" | "tsx";
-			return { contents: await readFile(args.path, "utf8"), loader: ext, watchFiles: worldWatchFiles };
-		});
+/**
+ * Writes `<plugin>.world.json` next to the plugin bundle when its package.json names a `"lunaWorld"` entry. Goes before
+ * writeBundlePlugin, which adds `manifestFields()` (the world's hash) to the manifest it writes, so a dev poll never sees
+ * a manifest without it.
+ *
+ * @param isCore One of Luna's own plugins: those load no world (their urls are served from Luna's bundle)
+ */
+export const lunaWorldPlugin = (pluginPackagePath: string, pluginEntryPoint: string, pkgName: string, isCore = false) => {
+	/** The last build's manifest fields, or why the world failed to build */
+	let fields: { worldHash?: string } = {};
+	let failed: unknown;
+	const manifestFields = () => {
+		if (failed !== undefined) throw failed;
+		return fields;
+	};
+	const plugin: Plugin = {
+		name: "lunaWorldPlugin",
+		async setup(build) {
+			const worldEntryOf = async () => {
+				const pluginPackage = await readFile(pluginPackagePath, "utf8").then(JSON.parse);
+				if (typeof pluginPackage.lunaWorld !== "string") return undefined;
+				if (isCore) throw new Error(`${pkgName}: Luna's own plugins can't have a "lunaWorld", their urls load no world`);
+				return path.resolve(path.dirname(pluginPackagePath), pluginPackage.lunaWorld);
+			};
+			// Watch mode rebuilds when an input of the plugin bundle changes: the world's files count as inputs of its entry
+			const initialWorldEntry = await worldEntryOf();
+			let worldWatchFiles: string[] = initialWorldEntry !== undefined ? [initialWorldEntry] : [];
+			const entryPath = path.resolve(pluginEntryPoint);
+			build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (args) => {
+				if (worldWatchFiles.length === 0 || path.resolve(args.path) !== entryPath) return undefined;
+				const ext = path.extname(args.path).slice(1).replace(/^[cm]/, "") as "js" | "ts" | "jsx" | "tsx";
+				return { contents: await readFile(args.path, "utf8"), loader: ext, watchFiles: worldWatchFiles };
+			});
 
-		build.onEnd(async (result) => {
-			if (result.errors.length > 0) return;
-			const worldEntry = await worldEntryOf();
-			worldWatchFiles = worldEntry !== undefined ? [worldEntry] : [];
-			if (worldEntry === undefined) return;
-			const outfile = build.initialOptions.outfile;
-			if (outfile === undefined) throw new Error("lunaWorldPlugin needs outfile");
-			const { code, natives, watchFiles } = await buildWorld(worldEntry, pluginEntryPoint, pkgName);
-			worldWatchFiles = [worldEntry, ...watchFiles];
+			build.onEnd(async (result) => {
+				fields = {};
+				failed = undefined;
+				if (result.errors.length > 0) return;
+				try {
+					await writeWorld(result);
+				} catch (err) {
+					failed = err;
+					throw err;
+				}
+			});
+			const writeWorld = async (result: BuildResult) => {
+				const worldEntry = await worldEntryOf();
+				worldWatchFiles = worldEntry !== undefined ? [worldEntry] : [];
+				if (worldEntry === undefined) return;
+				const outfile = build.initialOptions.outfile;
+				if (outfile === undefined) throw new Error("lunaWorldPlugin needs outfile");
+				const { code, natives, watchFiles } = await buildWorld(worldEntry, pluginEntryPoint, pkgName);
+				worldWatchFiles = [worldEntry, ...watchFiles];
 
-			// A native the page bundle registers too would be refused there once the world has loaded it (native/NativeModule/worldNatives.ts)
-			const pageCode = result.outputFiles?.find((file) => file.path.endsWith(".mjs"))?.text ?? "";
-			const shared = pageNativeNames(pageCode).filter((name) => name in natives);
-			if (shared.length > 0)
-				throw new Error(`${pkgName}: ${shared.join(", ")} is imported by both the plugin and its world, import native files only from the world`);
-			const bundle: LunaWorldBundle = { code, natives };
-			const worldFile = outfile.replace(/\.mjs$/, ".world.json");
-			const worldJson = JSON.stringify(bundle);
-			await mkdir(path.dirname(worldFile), { recursive: true });
-			await writeFile(worldFile, worldJson);
-			// The manifest writeBundlePlugin wrote before this (onEnd runs in plugin order) names the world's hash,
-			// so a change to the world alone reloads the plugin (see render/src/LunaPlugin.ts fetchPackage)
-			const manifestFile = outfile.replace(/\.mjs$/, ".json");
-			const manifest = await readFile(manifestFile, "utf8").then(JSON.parse);
-			manifest.worldHash = createHash("sha256").update(worldJson, "utf8").digest("hex");
-			await writeFile(manifestFile, JSON.stringify(manifest));
-			console.log(`Built world ${path.basename(worldFile)} (${Object.keys(natives).length} native files)`);
-		});
-	},
-});
+				// A native the page bundle registers too would be refused there once the world has loaded it (native/NativeModule/worldNatives.ts)
+				const pageCode = result.outputFiles?.find((file) => file.path.endsWith(".mjs"))?.text ?? "";
+				const shared = pageNativeNames(pageCode).filter((name) => name in natives);
+				if (shared.length > 0)
+					throw new Error(`${pkgName}: ${shared.join(", ")} is imported by both the plugin and its world, import native files only from the world`);
+				const bundle: LunaWorldBundle = { code, natives };
+				const worldFile = outfile.replace(/\.mjs$/, ".world.json");
+				const worldJson = JSON.stringify(bundle);
+				await mkdir(path.dirname(worldFile), { recursive: true });
+				await writeFile(worldFile, worldJson);
+				// writeBundlePlugin (after this one: onEnd runs in plugin order) puts the world's hash in the manifest, so a
+				// change to the world alone is a new version (see native/core/registry.ts)
+				fields = { worldHash: createHash("sha256").update(worldJson, "utf8").digest("hex") };
+				console.log(`Built world ${path.basename(worldFile)} (${Object.keys(natives).length} native files)`);
+			};
+		},
+	};
+	return { plugin, manifestFields };
+};

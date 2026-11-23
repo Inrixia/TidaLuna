@@ -31,6 +31,8 @@ export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions
 	const exportsValue =
 		typeof pluginPackage.exports === "string" ? pluginPackage.exports : (pluginPackage.exports?.["."]?.default ?? pluginPackage.exports?.["."]);
 	const entryPoint = path.join(pluginPath, pluginPackage.main ?? exportsValue ?? "index.mjs");
+	// Before writeBundlePlugin: it writes the world's hash into the manifest. onNativeCode is passed for Luna's own plugins
+	const world = lunaWorldPlugin(pkgPath, entryPoint, pkgName, onNativeCode !== undefined);
 	return <BuildOptions>{
 		...defaultBuildOptions,
 		write: false,
@@ -53,8 +55,8 @@ export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions
 			}),
 			fileUrlPlugin,
 			lunaNativePlugin(entryPoint, pkgName, onNativeCode),
-			writeBundlePlugin(pkgPath),
-			lunaWorldPlugin(pkgPath, entryPoint, pkgName),
+			world.plugin,
+			writeBundlePlugin(pkgPath, world.manifestFields),
 		],
 	};
 };

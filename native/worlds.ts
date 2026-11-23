@@ -16,6 +16,7 @@ import { createHash } from "crypto";
 
 import { registry } from "./core/registryMain";
 import { ipcHandle } from "./ipc";
+import { isIsolated } from "./isolatedContents";
 import { secureLoad } from "./NativeModule/secureLoad";
 import { markWorldNative, worldFilePrefix } from "./NativeModule/worldNatives";
 import { parseBundle } from "./worldBundle";
@@ -26,17 +27,31 @@ const sha256 = (text: string) => createHash("sha256").update(text, "utf8").diges
 const worldIds = new Map<string, number>();
 let nextWorldId = 1001;
 
-/** `${url}\n${fileName}` -> exports */
-const owned = new Map<string, Record<string, unknown>>();
+/** `${url}\n${fileName}` -> exports, and the accepted world text they were loaded for */
+const owned = new Map<string, { exports: Record<string, unknown>; world: string }>();
 /** luna.modules name -> url of the world that put it there */
 const moduleOwners = new Map<string, string>();
 const ownedKey = (url: string, fileName: string) => `${url}\n${fileName}`;
 
+/**
+ * Without contextIsolation the page shares the preload's realm and could send these channels itself, with any url:
+ * worlds need it (the preload refuses them there too, see core/coreWorld.ts)
+ */
+const checkIsolated = (sender: Electron.WebContents) => {
+	if (!isIsolated(sender)) throw new Error("[🛑Security🛑] Plugin worlds need contextIsolation");
+};
+
 ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
+	checkIsolated(event.sender);
 	if (typeof url !== "string" || !/^https?:\/\//.test(url)) throw new Error(`[Luna.worlds] Not a plugin url: ${String(url)}`);
 	const accepted = registry().acceptedWorld(url);
 	if (accepted === undefined) throw new Error(`[🛑Security🛑] ${url} is not an enabled plugin with a world`);
 	const bundle = parseBundle(accepted);
+	// A world's natives can't take a native module name Luna or another plugin registered (others import them by name)
+	for (const fileName of Object.keys(bundle.natives)) {
+		if (globalThis.luna.modules[fileName] !== undefined && moduleOwners.get(fileName) !== url)
+			throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} is already registered by Luna or another plugin`);
+	}
 
 	// Natives of an earlier load of this url can't be called any more, whatever happens below
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
@@ -51,10 +66,8 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 			{ fileName: worldFilePrefix + fileName, code, hash: sha256(`${code}\0${worldHash}`), url, isCore: false, world: { nativeHash } },
 			parent,
 		);
-		owned.set(ownedKey(url, fileName), exports);
+		owned.set(ownedKey(url, fileName), { exports, world: accepted });
 		// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
-		if (globalThis.luna.modules[fileName] !== undefined && moduleOwners.get(fileName) !== url)
-			console.warn(`[Luna.worlds] ${url} replaces native module ${fileName} that another load registered`);
 		globalThis.luna.modules[fileName] = exports;
 		moduleOwners.set(fileName, url);
 	}
@@ -64,11 +77,14 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 	return { worldId, code: bundle.code };
 });
 
-ipcHandle("__LunaWorld.invoke", async (_event, url: unknown, fileName: unknown, exportName: unknown, ...args: unknown[]) => {
-	const exports = typeof url === "string" && typeof fileName === "string" ? owned.get(ownedKey(url, fileName)) : undefined;
-	if (exports === undefined) throw new Error(`[🛑Security🛑] ${String(url)} has no native file ${String(fileName)}`);
-	// Disabled since its world loaded
-	if (!registry().isEnabled(url as string)) throw new Error(`[🛑Security🛑] ${String(url)} is not enabled`);
+ipcHandle("__LunaWorld.invoke", async (event, url: unknown, fileName: unknown, exportName: unknown, ...args: unknown[]) => {
+	checkIsolated(event.sender);
+	const entry = typeof url === "string" && typeof fileName === "string" ? owned.get(ownedKey(url, fileName)) : undefined;
+	if (entry === undefined) throw new Error(`[🛑Security🛑] ${String(url)} has no native file ${String(fileName)}`);
+	// Disabled, or an update accepted since its world loaded: the old world's natives stop until the new one loads
+	if (registry().acceptedWorld(url as string) !== entry.world)
+		throw new Error(`[🛑Security🛑] ${String(url)} is not enabled at the version its world loaded`);
+	const { exports } = entry;
 	const fn = typeof exportName === "string" && Object.hasOwn(exports, exportName) ? exports[exportName] : undefined;
 	if (typeof fn !== "function") throw new Error(`[Luna.worlds] ${fileName} has no export ${String(exportName)}`);
 	try {

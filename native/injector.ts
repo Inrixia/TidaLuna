@@ -15,6 +15,7 @@ import { rewritePlayerMessage } from "./audioCache";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
+import { recordIsolation } from "./isolatedContents";
 import { tidalMainHosts } from "./tidalHosts";
 
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
@@ -306,6 +307,8 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		}
 
 		const window = new target(options);
+		// Plugin worlds need it (see worlds.ts)
+		recordIsolation(window.webContents, options.webPreferences);
 
 		// Open dev tools with F12 or Ctrl+Shift+I (Cmd+Alt+I on macOS), overriding TIDAL's own use of them
 		window.webContents.on("before-input-event", (event, input) => {
