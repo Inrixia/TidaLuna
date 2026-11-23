@@ -635,9 +635,13 @@ export class LunaPlugin {
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
 		if (this.enabled) {
 			await this.loadExports(true, update);
-			// Revoked while or just after it loaded: loadExports or stopRevoked said why and put the version the user had back
-			if (this.revokedUpdate(update) === undefined) return;
-			throw new Error(`Not updating ${this.name}: the Luna plugin registry revoked ${update.version ?? "this version"}`);
+			// Turned off while it waited for the semaphore (loadExports returned before applying it): stored below without running, as for
+			// a plugin that is off
+			if (this.wanted || this.package?.hash === update.hash) {
+				// Revoked while or just after it loaded: loadExports or stopRevoked said why and put the version the user had back
+				if (this.revokedUpdate(update) === undefined) return;
+				throw new Error(`Not updating ${this.name}: the Luna plugin registry revoked ${update.version ?? "this version"}`);
+			}
 		}
 		const release = await this.loadSemaphore.obtain();
 		try {
