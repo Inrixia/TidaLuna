@@ -37,7 +37,8 @@ const ReportChip = ({ report, title, ...props }: ChipProps & { report?: string; 
 			{report === undefined ? (
 				<Chip size="small" {...props} />
 			) : (
-				<a href={report} target="_blank" style={{ textDecoration: "none" }}>
+				// A plain anchor, not LunaLink: its own tooltip (the url) would cover this chip's tooltip (what the badge means)
+				<a href={report.startsWith("http") ? report : undefined} target="_blank" style={{ textDecoration: "none" }}>
 					<Chip size="small" {...props} clickable />
 				</a>
 			)}

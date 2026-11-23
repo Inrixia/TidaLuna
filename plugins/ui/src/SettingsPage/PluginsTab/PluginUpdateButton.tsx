@@ -9,6 +9,7 @@ import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
+import { LunaLink } from "../../components";
 import { RegistryBadge, registryEntryOf, useRegistry } from "./RegistryBadge";
 
 /** First 12 hex digits, enough to tell versions apart and compare with a published hash */
@@ -33,10 +34,7 @@ const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: 
 				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} /> The Luna plugin registry built this version from its source and reviewed it
 				{entry.verified.report !== undefined && (
 					<>
-						:{" "}
-						<a href={entry.verified.report} target="_blank">
-							{entry.verified.report}
-						</a>
+						: <LunaLink href={entry.verified.report}>{entry.verified.report}</LunaLink>
 					</>
 				)}
 				.
