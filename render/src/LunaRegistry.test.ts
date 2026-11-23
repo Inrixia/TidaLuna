@@ -14,8 +14,8 @@ const codes: { sha256: { verified: string; revoked: string } } = JSON.parse(new 
 // The server: url > bytes. Missing urls are 404
 const base = "http://127.0.0.1:3002/registry/";
 let served = new Map<string, Uint8Array>();
-const serve = (files: Record<string, string>) => {
-	served = new Map(Object.entries(files).map(([name, from]) => [`${base}${name}`, fixture(from)]));
+const serve = (files: Record<string, string>, at: string = base) => {
+	served = new Map(Object.entries(files).map(([name, from]) => [`${at}${name}`, fixture(from)]));
 };
 globalThis.fetch = async (input) => {
 	const bytes = served.get(String(input));
@@ -53,8 +53,8 @@ test("refresh: fetched, checked and signed lists are used and stored with their 
 	assert.equal(LunaRegistry.verifiedEntry(codes.sha256.verified, "Fixture")?.name, "Fixture");
 	assert.equal(LunaRegistry.loadDecision({ url: "https://example.com/Fixture", rawSha256: codes.sha256.revoked }).load, false);
 	assert.deepEqual(LunaRegistry.status._["revoked.json"], { source: "fetched", serial: 2, generated: LunaRegistry.revoked._?.generated });
-	assert.equal(stored.get("verified.json.serial"), 3);
-	assert.equal(stored.get("revoked.json.serial"), 2);
+	assert.equal(stored.get(`${base}verified.json.serial`), 3);
+	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
 });
 
 test("loadCached: the stored copies are checked again and used at the next start", async () => {
@@ -66,8 +66,8 @@ test("loadCached: the stored copies are checked again and used at the next start
 	assert.equal(LunaRegistry.revoked._?.serial, 2);
 	assert.equal(LunaRegistry.status._["revoked.json"].source, "cached");
 	// A stored copy that no longer checks out is not used
-	const copy = <{ bytes: string }>stored.get("verified.json");
-	stored.set("verified.json", { ...copy, bytes: Buffer.from("{}").toString("base64") });
+	const copy = <{ bytes: string }>stored.get(`${base}verified.json`);
+	stored.set(`${base}verified.json`, { ...copy, bytes: Buffer.from("{}").toString("base64") });
 	restart(stored);
 	await LunaRegistry.loadCached();
 	assert.equal(LunaRegistry.verified._, undefined);
@@ -101,7 +101,7 @@ test("a signed file with a lower serial than one accepted before is rejected (ro
 	await LunaRegistry.refresh();
 	assert.equal(LunaRegistry.revoked._, undefined);
 	assert.match(LunaRegistry.status._["revoked.json"].error ?? "", /serial 1 is lower than 2/);
-	assert.equal(stored.get("revoked.json.serial"), 2);
+	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
 });
 
 test("a stored copy read after a newer fetch does not replace it (slow IndexedDB at startup)", async () => {
@@ -109,12 +109,12 @@ test("a stored copy read after a newer fetch does not replace it (slow IndexedDB
 	restart();
 	serve({ "revoked.json": "revoked-serial1.json", "revoked.json.sig": "revoked-serial1.json.sig" });
 	await LunaRegistry.refresh();
-	const olderCopy = stored.get("revoked.json");
-	stored.delete("revoked.json.serial");
+	const olderCopy = stored.get(`${base}revoked.json`);
+	stored.delete(`${base}revoked.json.serial`);
 	serve(good);
 	await LunaRegistry.refresh();
-	stored.set("revoked.json", olderCopy);
-	stored.delete("revoked.json.serial");
+	stored.set(`${base}revoked.json`, olderCopy);
+	stored.delete(`${base}revoked.json.serial`);
 	await LunaRegistry.loadCached();
 	assert.equal(LunaRegistry.revoked._?.serial, 2);
 	assert.equal(LunaRegistry.status._["revoked.json"].source, "fetched");
@@ -124,4 +124,18 @@ test("an invalid baseUrl override is ignored", async () => {
 	restart();
 	stored.set("baseUrl", "http://example.com/registry/");
 	assert.equal(await LunaRegistry.baseUrl(), "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
+});
+
+test("serials are kept per registry url: a local test registry doesn't block the real one", async () => {
+	restart();
+	serve(good);
+	await LunaRegistry.refresh();
+	const other = "http://localhost:3005/registry/";
+	stored.set("baseUrl", other);
+	serve({ "revoked.json": "revoked-serial1.json", "revoked.json.sig": "revoked-serial1.json.sig" }, other);
+	await LunaRegistry.refresh();
+	assert.equal(LunaRegistry.status._["revoked.json"].error, undefined);
+	assert.equal(LunaRegistry.revoked._?.serial, 1);
+	assert.equal(stored.get(`${other}revoked.json.serial`), 1);
+	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
 });

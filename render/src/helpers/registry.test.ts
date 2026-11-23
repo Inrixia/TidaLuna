@@ -8,6 +8,7 @@ import { test } from "node:test";
 
 import {
 	acceptRegistryFile,
+	asSentence,
 	parseRegistryFile,
 	rawCodeOf,
 	rawSha256,
@@ -15,6 +16,7 @@ import {
 	registryLoadDecision,
 	registryPublicKey,
 	replacesInUse,
+	revocationAction,
 	revokedEntryFor,
 	unverifiedPlugins,
 	verifiedEntryFor,
@@ -205,6 +207,8 @@ test("registry base url: https or a local http server, always ending with /", ()
 	assert.throws(() => registryBaseUrl("http://example.com/registry/"), /https/);
 	assert.throws(() => registryBaseUrl("http://127.0.0.1.example.com/"), /https/);
 	assert.throws(() => registryBaseUrl("file:///C:/registry/"), /https/);
+	assert.throws(() => registryBaseUrl("http://127.0.0.1:3002/registry/?v=1"), /query/);
+	assert.throws(() => registryBaseUrl("http://127.0.0.1:3002/registry/#x"), /query/);
 });
 
 test("a list in use is replaced by the same or a higher serial, not a lower one", () => {
@@ -232,4 +236,25 @@ test("verified entries in the current format: path, build, out and a commit url 
 	};
 	const file = parseRegistryFile("verified.json", JSON.stringify({ schema: 1, serial: 1, entries: { [sha]: entry } }));
 	assert.deepEqual(file.entries[sha], entry);
+});
+
+test("revocation reasons end in one full stop", () => {
+	assert.equal(asSentence("Steals tokens"), "Steals tokens.");
+	assert.equal(asSentence("Steals tokens."), "Steals tokens.");
+	assert.equal(asSentence("Mines crypto!"), "Mines crypto!");
+});
+
+test("a new revoked.json stops running revoked plugins and loads again the ones whose revocation was lifted", async () => {
+	const revoked = <RevokedFile>parseRegistryFile("revoked.json", new TextDecoder().decode(fixture("revoked.json")));
+	const plugin = { url: "https://example.com/P", loaded: true, stoppedByRevocation: false, enabled: true };
+	// Running revoked code stops; revoked code that isn't running (still loading, or already stopped) is left to loadExports
+	assert.equal(revocationAction({ ...plugin, rawSha256: codes.sha256.revoked }, revoked).action, "stop");
+	assert.equal(revocationAction({ ...plugin, rawSha256: codes.sha256.revoked, loaded: false }, revoked).action, "none");
+	// Stopped by a revocation that is gone: loads again, unless disabled
+	const stopped = { ...plugin, rawSha256: codes.sha256.revoked, loaded: false, stoppedByRevocation: true };
+	assert.equal(revocationAction(stopped, undefined).action, "load");
+	assert.equal(revocationAction({ ...stopped, enabled: false }, undefined).action, "none");
+	assert.equal(revocationAction({ ...plugin, rawSha256: codes.sha256.verified }, revoked).action, "none");
+	// Luna's own plugins are never revoked
+	assert.equal(revocationAction({ ...plugin, url: "https://luna/luna.lib", rawSha256: codes.sha256.revoked }, revoked).action, "none");
 });

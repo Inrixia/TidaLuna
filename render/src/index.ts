@@ -17,6 +17,7 @@ export * from "./LunaPlugin";
 export * from "./LunaRegistry";
 export { isCoreUrl } from "./helpers/pluginUpdates";
 export {
+	asSentence,
 	defaultRegistryBase,
 	registryPublicKey,
 	unverifiedPlugins,

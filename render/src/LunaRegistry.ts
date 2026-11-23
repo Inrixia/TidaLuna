@@ -49,7 +49,7 @@ export type RegistryFileStatus = {
  */
 export class LunaRegistry {
 	public static readonly trace: Tracer = coreTrace.withSource(".LunaRegistry").trace;
-	/** Last good copies (`verified.json`, `revoked.json`), the highest serial accepted for each (`verified.json.serial`, `revoked.json.serial`) and the `baseUrl` override */
+	/** The `baseUrl` override, and per file url (`<base>verified.json`, `<base>revoked.json`) its last good copy and the highest serial accepted (`<url>.serial`) */
 	public static readonly storage: ReactiveStore = ReactiveStore.getStore("@luna/registry");
 
 	public static readonly verified: Signal<VerifiedFile | undefined> = new Signal(undefined);
@@ -81,8 +81,9 @@ export class LunaRegistry {
 		}
 	}
 
-	private static async highestSerial(fileName: RegistryFileName): Promise<number | undefined> {
-		return this.storage.get<number>(`${fileName}.serial`);
+	/** Copies and serials are kept per registry url: testing a local registry doesn't raise the serial the real one must reach */
+	private static async highestSerial(fileUrl: string): Promise<number | undefined> {
+		return this.storage.get<number>(`${fileUrl}.serial`);
 	}
 
 	private static setStatus(fileName: RegistryFileName, status: RegistryFileStatus) {
@@ -90,29 +91,35 @@ export class LunaRegistry {
 	}
 
 	/** Put a checked file in use, unless the one in use has a higher serial (a slow loadCached finishing after refresh). Returns whether it did */
-	private static use(fileName: RegistryFileName, file: VerifiedFile | RevokedFile): boolean {
+	private static use(fileName: RegistryFileName, file: VerifiedFile | RevokedFile, base: string): boolean {
 		const signal = fileName === "verified.json" ? this.verified : this.revoked;
-		if (!replacesInUse(signal._, file)) return false;
+		// Serials only compare within one registry url (the override changed: the new registry's file is used)
+		if (this.inUseFrom[fileName] === base && !replacesInUse(signal._, file)) return false;
+		this.inUseFrom[fileName] = base;
 		signal._ = <any>file;
 		return true;
 	}
+	/** The registry url each file in use came from */
+	private static readonly inUseFrom: Partial<Record<RegistryFileName, string>> = {};
 
 	/** Put the last good copies in use. Called once at startup, before user plugins load */
 	public static async loadCached(): Promise<void> {
+		const base = await this.baseUrl();
 		for (const fileName of registryFileNames) {
 			try {
-				const copy = await this.storage.get<StoredCopy>(fileName);
+				const copy = await this.storage.get<StoredCopy>(`${base}${fileName}`);
 				if (copy === undefined) continue;
 				const result = await acceptRegistryFile(
 					fileName,
 					{ bytes: base64ToBytes(copy.bytes), signature: copy.signature },
-					await this.highestSerial(fileName),
+					await this.highestSerial(`${base}${fileName}`),
 				);
 				if (!result.ok) {
 					this.trace.warn(`Stored copy not used: ${result.reason}`);
 					continue;
 				}
-				if (this.use(fileName, result.file)) this.setStatus(fileName, { source: "cached", serial: result.file.serial, generated: result.file.generated });
+				if (this.use(fileName, result.file, base))
+					this.setStatus(fileName, { source: "cached", serial: result.file.serial, generated: result.file.generated });
 			} catch (err) {
 				this.trace.err.withContext("loadCached", fileName)(err);
 			}
@@ -149,7 +156,7 @@ export class LunaRegistry {
 				this.fetchBytes(`${base}${fileName}`),
 				this.fetchBytes(`${base}${fileName}.sig`).then((sig) => new TextDecoder().decode(sig).trim()),
 			]);
-			result = await acceptRegistryFile(fileName, { bytes, signature }, await this.highestSerial(fileName));
+			result = await acceptRegistryFile(fileName, { bytes, signature }, await this.highestSerial(`${base}${fileName}`));
 		} catch (err) {
 			result = { ok: false, reason: `${fileName}: ${(<Error>err)?.message ?? err}` };
 		}
@@ -162,12 +169,13 @@ export class LunaRegistry {
 		const { file } = result;
 		try {
 			// Serial first: if storing the copy fails, an older one can't be replayed
-			if (((await this.highestSerial(fileName)) ?? -1) < file.serial) await this.storage.set(`${fileName}.serial`, file.serial);
-			await this.storage.set<StoredCopy>(fileName, { bytes: bytesToBase64(bytes!), signature: signature!, serial: file.serial });
+			const fileUrl = `${base}${fileName}`;
+			if (((await this.highestSerial(fileUrl)) ?? -1) < file.serial) await this.storage.set(`${fileUrl}.serial`, file.serial);
+			await this.storage.set<StoredCopy>(fileUrl, { bytes: bytesToBase64(bytes!), signature: signature!, serial: file.serial });
 		} catch (err) {
 			this.trace.err.withContext("Failed to store", fileName)(err);
 		}
-		if (this.use(fileName, file)) this.setStatus(fileName, { source: "fetched", serial: file.serial, generated: file.generated });
+		if (this.use(fileName, file, base)) this.setStatus(fileName, { source: "fetched", serial: file.serial, generated: file.generated });
 	}
 
 	private static refreshTimer?: ReturnType<typeof setInterval>;

@@ -180,7 +180,8 @@ export async function acceptRegistryFile(
 }
 
 /** Whether an accepted file replaces the one in use: not when the one in use has a higher serial (a stored copy read after a newer fetch) */
-export const replacesInUse = (inUse: { serial: number } | undefined, file: { serial: number }): boolean => inUse === undefined || file.serial >= inUse.serial;
+export const replacesInUse = (inUse: { serial: number } | undefined, file: { serial: number }): boolean =>
+	inUse === undefined || file.serial >= inUse.serial;
 /**
  * The code a plugin's `.mjs` served, from the code Luna stores for it (LunaPlugin.fetchPackage appends `\n//# sourceURL=<url>.mjs`).
  * The suffix is matched by shape, not by url, so code stored before the plugin's url moved (LunaPlugin.migrateBaseUrl) still matches.
@@ -216,6 +217,20 @@ export const registryLoadDecision = (plugin: { url: string; rawSha256: string | 
 	return entry === undefined ? { load: true } : { load: false, revoked: entry };
 };
 
+export type RevocationAction = { action: "stop"; revoked: RevokedEntry } | { action: "load" } | { action: "none" };
+/**
+ * What a newly accepted revoked.json means for one plugin: stop it (its code is revoked and running), load it again (a revocation stopped it,
+ * its code no longer is, and it is enabled), or nothing. A plugin still loading checks again after its import (LunaPlugin.loadExports)
+ */
+export const revocationAction = (
+	plugin: { url: string; rawSha256: string | undefined; loaded: boolean; stoppedByRevocation: boolean; enabled: boolean },
+	revoked: RevokedFile | undefined,
+): RevocationAction => {
+	const decision = registryLoadDecision(plugin, revoked);
+	if (!decision.load) return plugin.loaded ? { action: "stop", revoked: decision.revoked } : { action: "none" };
+	return plugin.stoppedByRevocation && plugin.enabled ? { action: "load" } : { action: "none" };
+};
+
 /**
  * Enabled plugins whose code has no verified entry, for "N unverified plugins enabled".
  * All plugins share one JS realm, so one unverified plugin can patch verified ones: the badge means little while this is not 0.
@@ -243,5 +258,11 @@ export const registryBaseUrl = (base: string = defaultRegistryBase): string => {
 	const url = new URL(base);
 	const local = url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost");
 	if (url.protocol !== "https:" && !local) throw new Error(`Registry url must be https (or http on 127.0.0.1/localhost): ${base}`);
-	return url.href.endsWith("/") ? url.href : `${url.href}/`;
+	// The file names are appended to it
+	if (url.search !== "" || url.hash !== "") throw new Error(`Registry url can't have a query or fragment: ${base}`);
+	const href = `${url.origin}${url.pathname}`;
+	return href.endsWith("/") ? href : `${href}/`;
 };
+
+/** Text shown before more text: ends with a full stop unless it already ends a sentence */
+export const asSentence = (text: string): string => text.replace(/([^.!?])$/, "$1.");
