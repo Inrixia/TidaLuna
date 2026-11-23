@@ -162,6 +162,7 @@ export const exposeCore = () => {
 		// Runs the plugin's world, if main finds it enabled with one
 		loadWorld: (url: unknown): Promise<void> => loadWorld(pluginUrl(url)),
 		unloadWorld: (url: unknown): Promise<void> => unloadWorld(pluginUrl(url)),
+		moveUrl: (from: unknown, to: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.moveUrl", from, to),
 	});
 };
 // #endregion

@@ -62,6 +62,8 @@ declare global {
 		enable(url: string): Promise<boolean>;
 		disable(url: string): Promise<void>;
 		uninstall(url: string): Promise<void>;
+		/** A store moved: the plugin's record goes to its new url, other code there waits as an update */
+		moveUrl(from: string, to: string): Promise<boolean>;
 		acceptUpdate(url: string): Promise<boolean>;
 		/** Runs the plugin's isolated world (see native/worlds.ts). Throws without contextIsolation (tidal-hifi) */
 		loadWorld(url: string): Promise<void>;

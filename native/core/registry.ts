@@ -88,6 +88,11 @@ const sha256 = (text: string) => createHash("sha256").update(text, "utf8").diges
 const shortHash = (hash: string) => hash.slice(0, 12);
 
 const isWorldNative = (fileName: string) => fileName.startsWith(worldFilePrefix);
+/** The served code, without the sourceURL line fetchCode adds (it names the url) */
+const withoutSource = (code: string, url: string) => {
+	const suffix = `\n//# sourceURL=${url}.mjs`;
+	return code.endsWith(suffix) ? code.slice(0, -suffix.length) : code;
+};
 const isNative = (version: Version) => version.natives.length !== 0;
 /** A new hash of either the page code or the world is a new version */
 const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
@@ -130,10 +135,13 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const queues = new Map<string, Promise<unknown>>();
 	const serial = <T>(url: string, task: () => Promise<T>): Promise<T> => {
 		const run = (queues.get(url) ?? Promise.resolve()).then(task);
-		queues.set(
-			url,
-			run.catch(() => {}),
+		const settled = run.then(
+			() => {},
+			() => {},
 		);
+		queues.set(url, settled);
+		// The last operation on a url removes its queue: plugins installed and removed over a session don't stay in it
+		void settled.then(() => queues.get(url) === settled && queues.delete(url));
 		return run;
 	};
 
@@ -162,8 +170,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 			hash: accepted?.package.hash,
 			codeSha256: accepted?.codeSha256,
 			natives: accepted?.natives ?? [],
+			// A version waiting for its first review (a migrated native plugin) is enabled, not updated: see enable
 			pending:
-				pending === undefined
+				pending === undefined || accepted === undefined
 					? undefined
 					: {
 							version: pending.package.version,
@@ -277,6 +286,42 @@ export const createRegistry = (deps: RegistryDeps) => {
 		deps.forgetAnswers(url);
 	};
 
+	/**
+	 * A store moved (LunaPlugin.migrateBaseUrl): the plugin's record goes to its new url. Its accepted code keeps
+	 * running; if the new url serves other code, that code waits as an update the user reviews like any other. Not to or
+	 * from a dev url, whose new code is accepted without asking (see load).
+	 */
+	const moveUrl = async (from: string, to: string) => {
+		const record = state.plugins[from];
+		if (record === undefined || from === to) return false;
+		if (isDevUrl(from) || isDevUrl(to) || isCoreUrl(to)) throw new Error(`[Luna.core] Can't move ${from} to ${to}`);
+		if (state.plugins[to] !== undefined) throw new Error(`[Luna.core] ${to} is already installed`);
+		let found: Version | undefined;
+		try {
+			found = await fetchVersion(to);
+		} catch (err) {
+			// Offline: the accepted code moves, the new url is checked on the next load
+			deps.log?.(`[Luna.core] ${to}: ${(err as Error)?.message ?? err}`);
+		}
+		const { accepted } = record;
+		const moved: CoreRecord = { ...record, url: to, pending: undefined };
+		// The same code and the same world (pinned with it): nothing new to review
+		if (
+			found !== undefined &&
+			accepted !== undefined &&
+			withoutSource(found.code, to) === withoutSource(accepted.code, from) &&
+			found.world === accepted.world
+		)
+			moved.accepted = found;
+		else if (found !== undefined && accepted !== undefined) moved.pending = found;
+		delete state.plugins[from];
+		state.plugins[to] = moved;
+		await save();
+		// Native permissions were given to the old url
+		deps.forgetAnswers(from);
+		return true;
+	};
+
 	/** Once, on the first start with a registry: what the page had stored. Native plugins wait for the user (see load) */
 	const migrate = async (entries: unknown) => {
 		if (!fresh || !Array.isArray(entries)) return;
@@ -322,6 +367,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 		install: (url: unknown, ask: Ask) => forPlugin(true, (checked) => install(checked, ask))(url),
 		enable: (url: unknown, ask: Ask) => forPlugin(true, (checked) => enable(checked, ask))(url),
 		acceptUpdate: (url: unknown, ask: Ask) => forPlugin(false, (checked) => acceptUpdate(checked, ask))(url),
+		moveUrl: (from: unknown, to: unknown): Promise<boolean> => {
+			const target = pluginUrl(to);
+			return forPlugin(false, (source) => moveUrl(source, target))(from);
+		},
 		disable: forPlugin(undefined, disable),
 		uninstall: forPlugin(undefined, uninstall),
 

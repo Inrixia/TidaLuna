@@ -67,11 +67,34 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 			partition: "luna-confirm",
 		});
 		let answer: boolean | undefined;
+		let submitted = false;
 		win.on("page-title-updated", (event, title) => {
 			if (!title.startsWith(SUBMIT)) return;
 			event.preventDefault();
+			// The first answer stands: a second title change before the window closes doesn't replace it
+			if (submitted) return;
+			submitted = true;
 			answer = title === `${SUBMIT}yes`;
 			win.close();
+		});
+		// The button is armed ARM_DELAY_MS after the window shows and after every time it gets the focus back: another
+		// window (a dialog of an allowed core native, say) can cover it, and a click meant for that one must not confirm
+		// Not isFocused(): some Linux window managers never report the focus, and the button must still arm there
+		let armTimer: ReturnType<typeof setTimeout> | undefined;
+		let blurred = false;
+		const run = (script: string) => !win.isDestroyed() && void win.webContents.executeJavaScript(script).catch(() => {});
+		const armLater = () => {
+			clearTimeout(armTimer);
+			armTimer = setTimeout(() => !blurred && run("window.arm()"), ARM_DELAY_MS);
+		};
+		win.on("blur", () => {
+			blurred = true;
+			clearTimeout(armTimer);
+			run("window.disarm()");
+		});
+		win.on("focus", () => {
+			blurred = false;
+			if (win.isVisible()) armLater();
 		});
 		// Shown: closing it from here on is the user's cancel
 		win.once("show", () => (answer ??= false));
@@ -82,9 +105,12 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 			win.center();
 			win.show();
 			// A click meant for TIDAL that lands on the new window doesn't confirm
-			setTimeout(() => !win.isDestroyed() && void win.webContents.executeJavaScript("window.arm()").catch(() => {}), ARM_DELAY_MS);
+			armLater();
 		});
-		win.once("closed", () => resolve(answer));
+		win.once("closed", () => {
+			clearTimeout(armTimer);
+			resolve(answer);
+		});
 		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildConfirmHtml(request))}`).catch((err) => {
 			console.error("[🛑Security🛑] Failed to show the Luna confirmation", err);
 			if (!win.isDestroyed()) win.close();
@@ -94,11 +120,16 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 // #region Who asks
 /** When the preload last saw a trusted click or key in a renderer: webContents id -> Date.now() */
 const lastInput = new Map<number, number>();
+/** Renderers whose lastInput entry is already removed when they are destroyed (one listener each, however often they leave) */
+const cleanedUp = new WeakSet<Electron.WebContents>();
 // Sent by the preload (native/preload.ts), which sees only trusted events. It only lets a window open: the click in it is still the user's
 ipcMain.on("__Luna.userInput", (event, active: unknown) => {
 	const { sender } = event;
 	if (active !== true) return lastInput.delete(sender.id);
-	if (!lastInput.has(sender.id)) sender.once("destroyed", () => lastInput.delete(sender.id));
+	if (!cleanedUp.has(sender)) {
+		cleanedUp.add(sender);
+		sender.once("destroyed", () => lastInput.delete(sender.id));
+	}
 	lastInput.set(sender.id, Date.now());
 });
 

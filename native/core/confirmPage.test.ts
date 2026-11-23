@@ -110,6 +110,8 @@ describe("core confirmation page", () => {
 		const html = buildConfirmHtml({ title: "T", lines: [], confirmText: "Install" });
 		assert.match(html, /<button id="confirm" disabled>Install<\/button>/);
 		assert.match(html, /getElementById\("cancel"\)\.focus\(\)/);
+		// Main disarms it while another window has the focus
+		assert.match(html, /window\.disarm = \(\) => \(confirmButton\.disabled = true\)/);
 	});
 
 	it("checks requests that come over IPC", () => {
