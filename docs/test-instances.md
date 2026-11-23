@@ -126,18 +126,9 @@ logging in.
   test window was, possibly off-screen. Expect log lines from all instances in the same `app.log`.
 - **One device plays at a time per account.** Starting playback in a test instance logged in with your account
   pauses the daily client (and the other way round). Use a second account, or avoid playback while listening.
-- **"Plugin Permission" window.** The first time a plugin's native code (`*.native.ts`) loads, Luna asks in a
-  window of its own, before any of its code runs, whether it may run in TIDAL's main process. That window also
-  lists what else the file wants by category (Network Access, Filesystem, …) if its source names modules such
-  as `fs`, `http`, `electron` or `child_process`. A module not answered there (named only while the code runs,
-  or used by a file that was already allowed to run) is asked in a second window after that run, before the
-  file's exports are used. The plugin waits for the answers, so keep
-  the instance's windows visible while installing or enabling such plugins. A rebuilt plugin asks again only for
-  categories allowed for "This version"; "All versions" (confirmed in a second step) keeps the answer for later
-  builds from the same url. Answers belong to the plugin: another plugin with the same native file, even byte for
-  byte, is asked on its own.
-  A module first used after the file has loaded is still asked in a modal message box, which blocks the main
-  process (CDP calls time out) until it is answered. Answers are listed, and can be revoked, in Luna Settings.
+- **"Plugin Permission" window.** Native code (`*.native.ts`) asks before it runs; the plugin waits, so keep the
+  instance's windows visible. A module first used after load asks in a modal box that blocks main (CDP times out).
+  Revoke answers in Luna Settings.
 - **TIDAL Connect** uses fixed local ports, so only one instance (daily or test) can offer it at a time.
 - **Stopping an instance.** Quit it normally, or kill its processes by path. `taskkill /IM TIDAL.exe` kills every
   TIDAL, including the daily client:
