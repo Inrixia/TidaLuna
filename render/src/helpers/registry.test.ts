@@ -10,6 +10,8 @@ import {
 	acceptRegistryFile,
 	asSentence,
 	decodeServedCode,
+	changedDependency,
+	dependencyWaitMessage,
 	dependsOnAny,
 	keepsLiveReloading,
 	legacyBomSha256,
@@ -369,4 +371,42 @@ test("dependants of another revoked plugin stopping are found, through other plu
 	// A cycle doesn't loop
 	c.dependants.add(a);
 	assert.equal(dependsOnAny(d, [a]), false);
+});
+
+test("a dependency that changed while a plugin loaded is found, whichever way it changed", () => {
+	type State = { unloadCount: number; unloading: boolean; loaded: boolean };
+	const states = new Map<string, State>();
+	const stateOf = (name: string) => states.get(name)!;
+	const set = (name: string, state: State) => states.set(name, state);
+	// Recorded when the import took their exports: a at 2 unloads, b at 0
+	const imported = new Map([
+		["a", 2],
+		["b", 0],
+	]);
+	set("a", { unloadCount: 2, unloading: false, loaded: true });
+	set("b", { unloadCount: 0, unloading: false, loaded: true });
+	assert.equal(changedDependency(imported, stateOf), undefined);
+	// Revoked or disabled: unloaded since
+	set("b", { unloadCount: 1, unloading: false, loaded: false });
+	assert.equal(changedDependency(imported, stateOf), "b");
+	// Reloaded since: loaded again, but not the exports the import took
+	set("b", { unloadCount: 1, unloading: false, loaded: true });
+	assert.equal(changedDependency(imported, stateOf), "b");
+	// Still unloading: exports still there, count not moved yet
+	set("b", { unloadCount: 0, unloading: true, loaded: true });
+	assert.equal(changedDependency(imported, stateOf), "b");
+	// Not loaded without an unload counted (never loaded)
+	set("b", { unloadCount: 0, unloading: false, loaded: false });
+	assert.equal(changedDependency(imported, stateOf), "b");
+	// A plugin it doesn't import changing is not its concern
+	set("b", { unloadCount: 0, unloading: false, loaded: true });
+	states.set("c", { unloadCount: 5, unloading: true, loaded: false });
+	assert.equal(changedDependency(imported, stateOf), undefined);
+	assert.equal(changedDependency(new Map(), stateOf), undefined);
+});
+
+test("the card says why a plugin waits for a dependency", () => {
+	assert.match(dependencyWaitMessage({ name: "X", revoked: true, loading: true })!, /depends on X, which the Luna plugin registry revoked/);
+	assert.equal(dependencyWaitMessage({ name: "X", revoked: false, loading: true }), undefined);
+	assert.match(dependencyWaitMessage({ name: "X", revoked: false, loading: false })!, /depends on X, which is not loaded/);
 });

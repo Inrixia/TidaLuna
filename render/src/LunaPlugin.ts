@@ -9,7 +9,9 @@ import * as ftch from "./helpers/fetch";
 import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
 import {
 	asSentence,
+	changedDependency,
 	decodeServedCode,
+	dependencyWaitMessage,
 	dependsOnAny,
 	keepsLiveReloading,
 	legacyBomSha256,
@@ -197,8 +199,7 @@ export class LunaPlugin {
 				const dependency = plugin.pendingDependencyOf(plugin);
 				if (dependency !== undefined) {
 					plugin.revoked._ = undefined;
-					plugin.loadError._ =
-						dependency.revoked._ !== undefined ? `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked` : undefined;
+					plugin.waitFor(dependency);
 					return;
 				}
 				plugin.trace.log("No longer revoked, loading again");
@@ -438,6 +439,17 @@ export class LunaPlugin {
 	private importing?: Map<LunaPlugin, number>;
 	/** Counts this plugin's unloads, so a dependant can tell its dependency was unloaded while it was imported */
 	private unloadCount = 0;
+	/**
+	 * Say on the card that this plugin waits for `dependency` to load (it loads this plugin then).
+	 * `failed`: this load failed and its caller stops (the toggle, the update button), so say it even while the dependency loads
+	 */
+	private waitFor(dependency: LunaPlugin, failed = false) {
+		this.loadError._ = dependencyWaitMessage({
+			name: dependency.name,
+			revoked: dependency.revoked._ !== undefined,
+			loading: !failed && dependency.loading._,
+		});
+	}
 	/** The enabled plugin, not loaded, that an import failed to find in luna.core.modules (the build/index.ts shim's error), if any */
 	private static missingDependencyOf(err: unknown): LunaPlugin | undefined {
 		const name = /^Cannot find module (.+) in luna\.core\.modules$/.exec((<any>err)?.message ?? "")?.[1];
@@ -676,7 +688,7 @@ export class LunaPlugin {
 		// Unloading this plugin unloaded its dependants too: say why on their cards
 		for (const dependant of this.dependants)
 			if (dependant.exports === undefined && dependant.enabled && dependant.installed !== false)
-				dependant.loadError._ = `Not running: it depends on ${this.name}, which the Luna plugin registry revoked`;
+				dependant.loadError._ = dependencyWaitMessage({ name: this.name, revoked: true, loading: false });
 		// Once per revoked build: live reload calls loadExports every second, and each fetched revoked.json has new entry objects
 		const sha = this.package?.rawSha256;
 		if (this.revokedSha256 === sha && this.revoked._?.reason === entry.reason && this.revoked._?.report === entry.report) return;
@@ -709,8 +721,7 @@ export class LunaPlugin {
 		const dependency = this.pendingDependencyOf(this);
 		if (dependency !== undefined) {
 			this.revoked._ = undefined;
-			this.loadError._ =
-				dependency.revoked._ !== undefined ? `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked` : undefined;
+			this.waitFor(dependency);
 			return;
 		}
 		this.trace.log("Loading the version the revoked update replaced");
@@ -1003,17 +1014,18 @@ export class LunaPlugin {
 				await this.unload();
 				return this.stopAsRevoked(late.revoked);
 			}
-			// A dependency unloaded during the import: running now would keep the exports it unloaded. It loads this plugin once it loads again
-			// (a dependency reloaded meanwhile already queued that load)
-			// (also one still unloading: its exports were still there, but its dependants loop may have run before this plugin registered)
-			const dependency = [...imported].find(
-				([plugin, count]) => plugin.unloadCount !== count || plugin.unloading !== undefined || plugin.exports === undefined,
-			)?.[0];
+			// The one check for a dependency that changed while this plugin loaded (revoked, disabled, reloaded or still unloading after the
+			// import took its exports, see changedDependency): running now would keep the exports it unloaded. This plugin is in its dependants
+			// since the import, so it loads this plugin once it loads again (a dependency reloaded meanwhile already queued that load)
+			const dependency = changedDependency(imported, (plugin) => ({
+				unloadCount: plugin.unloadCount,
+				unloading: plugin.unloading !== undefined,
+				loaded: plugin.exports !== undefined,
+			}));
 			if (dependency !== undefined) {
 				await this.unload();
-				this.loadError._ =
-					dependency.revoked._ !== undefined ? `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked` : undefined;
-				this.trace.log(`Unloaded again: ${dependency.name} was unloaded while this plugin loaded`);
+				this.waitFor(dependency);
+				this.trace.log(`Unloaded again: ${dependency.name} changed while this plugin loaded`);
 				return;
 			}
 
@@ -1041,10 +1053,10 @@ export class LunaPlugin {
 			if (missing !== undefined) {
 				// A dependency that stopped (revoked or disabled) before this import reached it: wait for it as a dependant, it loads this
 				// plugin once it loads again (its loop removed this plugin from its dependants before loading it)
+				// The card says why (the caller's own error handling assumes it does: the update button, the toggle)
 				await this.unload();
 				missing.addDependant(this);
-				this.loadError._ =
-					missing.revoked._ !== undefined ? `Not running: it depends on ${missing.name}, which the Luna plugin registry revoked` : undefined;
+				this.waitFor(missing, true);
 				this.trace.log(`Waiting for ${missing.name}, which is not loaded`);
 			} else {
 				// Set loadError for anyone listening

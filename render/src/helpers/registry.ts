@@ -252,6 +252,29 @@ export const dependsOnAny = <P extends { dependants: Set<P> }>(plugin: P, plugin
 	return plugins.some((other) => other !== plugin && walk(other));
 };
 
+/**
+ * A dependency that changed after an import took its exports, if any: unloaded since (its unload count, recorded when the import took the
+ * exports, moved on), still unloading (its exports were there, but its unload may have passed the importer by), or not loaded now.
+ * The one check for every way a dependency changes during a load: revoked, disabled, reloaded
+ */
+export const changedDependency = <P>(
+	imported: ReadonlyMap<P, number>,
+	stateOf: (plugin: P) => { unloadCount: number; unloading: boolean; loaded: boolean },
+): P | undefined => {
+	for (const [plugin, recorded] of imported) {
+		const state = stateOf(plugin);
+		if (state.unloadCount !== recorded || state.unloading || !state.loaded) return plugin;
+	}
+	return undefined;
+};
+
+/** Why a plugin waits for a dependency: revoked, not loaded (failed or off), or nothing to say while it is loading (it loads the plugin next) */
+export const dependencyWaitMessage = (dependency: { name: string; revoked: boolean; loading: boolean }): string | undefined => {
+	if (dependency.revoked) return `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked`;
+	if (dependency.loading) return undefined;
+	return `Not running: it depends on ${dependency.name}, which is not loaded`;
+};
+
 /** Whether live reload polls again: not once the plugin is disabled, live reload is off, or its code is revoked (nothing to run; a load that succeeds restarts it) */
 export const keepsLiveReloading = (plugin: { enabled: boolean; liveReload: boolean; revoked: boolean }): boolean =>
 	plugin.enabled && plugin.liveReload && !plugin.revoked;
