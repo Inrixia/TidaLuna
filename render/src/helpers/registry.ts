@@ -221,15 +221,25 @@ export const sameServedCode = (storedCode: string, fetchedCode: string): boolean
 export const rawSha256 = (storedCode: string): Promise<string> => sha256Hex(rawCodeOf(storedCode));
 
 /**
- * The sha256 of code stored before fetchCode kept BOMs (PluginPackage.exactCode unset) with a leading BOM put back: `Response.text()` dropped one
- * if the file had it, so the file's sha256 may be either this or rawSha256. Undefined when no BOM could have been dropped (the text starts with one)
- * or the text has U+FFFD (invalid bytes were replaced: the file's sha256 can't be known, and refetching it is the only way, see LunaPlugin.fetchPackage)
+ * The sha256 of code stored before fetchCode kept BOMs (PluginPackage.exactCode unset) with a leading BOM put back: `Response.text()` drops one
+ * if the file had it, so the file's sha256 may be either this or rawSha256. Always given: a text that starts with a BOM or has U+FFFD may still have
+ * lost one (a second BOM, a literal U+FFFD), and a key that matches nothing does no harm. Invalid bytes replaced by U+FFFD can't be undone:
+ * only refetching gives the file's sha256 (see LunaPlugin.fetchPackage)
  */
-export const legacyBomSha256 = (storedCode: string): Promise<string> | undefined => {
-	const raw = rawCodeOf(storedCode);
-	if (raw.startsWith("﻿") || raw.includes("�")) return undefined;
-	return sha256Hex(`﻿${raw}`);
-};
+export const legacyBomSha256 = (storedCode: string): Promise<string> => sha256Hex(`﻿${rawCodeOf(storedCode)}`);
+
+/**
+ * The version to store again when the registry revokes the code a plugin has: the one the update the user accepted last replaced,
+ * if that update is the code it has now (matched by raw sha256, the registry's key)
+ */
+export const versionToRestore = <P extends { rawSha256?: string }>(
+	replaced: { rawSha256: string; previous: P } | undefined,
+	current: { rawSha256?: string } | undefined,
+): P | undefined => (replaced !== undefined && current?.rawSha256 === replaced.rawSha256 ? replaced.previous : undefined);
+
+/** Whether live reload polls again: not once the plugin is disabled, live reload is off, or its code is revoked (nothing to run; a load that succeeds restarts it) */
+export const keepsLiveReloading = (plugin: { enabled: boolean; liveReload: boolean; revoked: boolean }): boolean =>
+	plugin.enabled && plugin.liveReload && !plugin.revoked;
 
 /** The registry key of a plugin's code, or the keys it may have (code stored before exact fetching: see legacyBomSha256) */
 export type CodeSha256 = string | undefined | readonly (string | undefined)[];

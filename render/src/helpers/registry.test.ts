@@ -10,6 +10,7 @@ import {
 	acceptRegistryFile,
 	asSentence,
 	decodeServedCode,
+	keepsLiveReloading,
 	legacyBomSha256,
 	packageSha256s,
 	parseRegistryFile,
@@ -24,6 +25,7 @@ import {
 	revokedEntryFor,
 	unverifiedPlugins,
 	verifiedEntryFor,
+	versionToRestore,
 	verifySignature,
 	type RevokedFile,
 	type VerifiedFile,
@@ -305,9 +307,10 @@ test("code stored before exact fetching is looked up by both keys it may have (a
 	const stored = `${text}\n//# sourceURL=https://example.com/X.mjs`;
 	const withBom = createHash("sha256").update(Buffer.from(`\uFEFF${text}`, "utf8")).digest("hex");
 	assert.equal(await legacyBomSha256(stored), withBom);
-	// It already has its BOM, or invalid bytes were replaced: no other key
-	assert.equal(legacyBomSha256(`\uFEFF${text}`), undefined);
-	assert.equal(legacyBomSha256(`${text}\uFFFD`), undefined);
+	// A text that starts with a BOM (the file had two) or has U+FFFD (a literal one) may still have lost a BOM
+	const sha = (s: string) => createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex");
+	assert.equal(await legacyBomSha256(`\uFEFF${text}`), sha(`\uFEFF\uFEFF${text}`));
+	assert.equal(await legacyBomSha256(`${text}"\uFFFD"`), sha(`\uFEFF${text}"\uFFFD"`));
 
 	const plain = await rawSha256(stored);
 	const keys = packageSha256s({ rawSha256: plain, bomRawSha256: withBom });
@@ -328,4 +331,22 @@ test("code stored before exact fetching is looked up by both keys it may have (a
 		unverifiedPlugins([{ url: "https://example.com/X", name: "X", installed: true, enabled: true, rawSha256: keys }], verified, undefined),
 		[],
 	);
+});
+
+test("a revoked accepted update gives back the version it replaced, only while it is the code the plugin has", () => {
+	const previous = { rawSha256: sha("a"), version: "1" };
+	const replaced = { rawSha256: sha("b"), previous };
+	assert.equal(versionToRestore(replaced, { rawSha256: sha("b") }), previous);
+	// Other code now (dev reload, a newer update): nothing to restore
+	assert.equal(versionToRestore(replaced, { rawSha256: sha("c") }), undefined);
+	assert.equal(versionToRestore(replaced, { rawSha256: undefined }), undefined);
+	assert.equal(versionToRestore(replaced, undefined), undefined);
+	assert.equal(versionToRestore(undefined, { rawSha256: sha("b") }), undefined);
+});
+
+test("live reload stops while the plugin's code is revoked", () => {
+	assert.equal(keepsLiveReloading({ enabled: true, liveReload: true, revoked: false }), true);
+	assert.equal(keepsLiveReloading({ enabled: true, liveReload: true, revoked: true }), false);
+	assert.equal(keepsLiveReloading({ enabled: false, liveReload: true, revoked: false }), false);
+	assert.equal(keepsLiveReloading({ enabled: true, liveReload: false, revoked: false }), false);
 });

@@ -10,11 +10,13 @@ import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, update
 import {
 	asSentence,
 	decodeServedCode,
+	keepsLiveReloading,
 	legacyBomSha256,
 	packageSha256s,
 	rawSha256,
 	revocationAction,
 	sameServedCode,
+	versionToRestore,
 	type RevokedEntry,
 } from "./helpers/registry";
 import { LunaRegistry } from "./LunaRegistry";
@@ -374,7 +376,7 @@ export class LunaPlugin {
 			await this.loadExports().catch(() => {});
 			// Dont continue to loop if disabled or liveReload is false, or while the registry revokes the code: there is nothing to run.
 			// A load that succeeds (the revocation lifted, a manual reload with new code) starts it again (see loadExports)
-			if (!this.enabled || !this._liveReload._ || this.revoked._ !== undefined) {
+			if (!keepsLiveReloading({ enabled: this.enabled, liveReload: this._liveReload._, revoked: this.revoked._ !== undefined })) {
 				this._reloadTimeout = undefined;
 				return;
 			}
@@ -648,11 +650,11 @@ export class LunaPlugin {
 	 * again. Returns whether it did: the caller loads it once the semaphore is released
 	 */
 	private restoreReplaced(): boolean {
-		const replaced = this.replacedByUpdate;
 		const current = this.package;
-		if (replaced === undefined || current?.rawSha256 === undefined || current.rawSha256 !== replaced.rawSha256) return false;
+		const previous = versionToRestore(this.replacedByUpdate, current);
+		if (current === undefined || previous === undefined) return false;
 		this.replacedByUpdate = undefined;
-		this.package = replaced.previous;
+		this.package = previous;
 		// Loading it fetches the url again, which still serves the revoked update: already announced, and offered if the revocation is lifted
 		this.refusedHash = current.hash;
 		this.refusedUpdate = current;
@@ -692,6 +694,8 @@ export class LunaPlugin {
 	// #region install/uninstall
 	public async install() {
 		this.loading._ = true;
+		// A version replaced before an uninstall is not put back after a reinstall
+		this.replacedByUpdate = undefined;
 		// Uninstall can leave the old package, code included, in storage: install what the url serves now instead of offering it as an update
 		if (!this.installed && this.store.package?.code !== undefined)
 			this.store.package = { ...this.store.package, code: undefined, codeSha256: undefined, rawSha256: undefined, bomRawSha256: undefined };
@@ -716,6 +720,7 @@ export class LunaPlugin {
 	}
 	public async uninstall() {
 		await this.disable();
+		this.replacedByUpdate = undefined;
 		this.loading._ = true;
 		// Remove this plugin from all dependants lists
 		for (const plugin of Object.values(LunaPlugin.plugins)) {
