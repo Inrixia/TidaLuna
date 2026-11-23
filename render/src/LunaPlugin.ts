@@ -7,7 +7,7 @@ import { store as obyStore } from "oby";
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
 import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
-import { asSentence, decodeServedCode, rawSha256, revocationAction, type RevokedEntry } from "./helpers/registry";
+import { asSentence, decodeServedCode, rawSha256, revocationAction, sameServedCode, type RevokedEntry } from "./helpers/registry";
 import { LunaRegistry } from "./LunaRegistry";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
@@ -522,8 +522,9 @@ export class LunaPlugin {
 		// Disable the reload loop
 		this.stopReloadLoop();
 		await this.unload();
-		this._enabled._ = false;
+		// Cleared first: the user's choice is stored only while there is no load error (a revoked plugin has one)
 		this.loadError._ = undefined;
+		this._enabled._ = false;
 	}
 	public async reload() {
 		// LoadExports will handle unloading etc and ensure code is live
@@ -749,7 +750,7 @@ export class LunaPlugin {
 			// The url serves something else now: a refused update is not offered later (see offerLiftedUpdate)
 			if (this.refusedUpdate !== undefined && this.refusedUpdate.hash !== newPackage.hash) this.refusedUpdate = undefined;
 
-			const codeChanged = this.package?.hash !== newPackage.hash;
+			let codeChanged = this.package?.hash !== newPackage.hash;
 			// If code hasnt changed then just reuse stored code, or the code of the update already waiting.
 			// Its sha256 comes along, never from the url's json (loadExports recomputes it from what it imports)
 			const known = !codeChanged ? this.package : this.pendingUpdate._?.hash === newPackage.hash ? this.pendingUpdate._ : undefined;
@@ -763,6 +764,9 @@ export class LunaPlugin {
 			// Ensure that code is fetched if its changed or undefined
 			if (newPackage.code === undefined) newPackage.code = `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
 			newPackage.exactCode = true;
+			// Code fetched again only to read its exact bytes is an update when it differs from what is stored (beyond a BOM),
+			// so it waits for the user like any other update instead of replacing the stored code silently
+			if (!codeChanged && known?.code !== undefined && !known.exactCode && !sameServedCode(known.code, newPackage.code)) codeChanged = true;
 
 			// New code for a plugin that already has code waits for the user (see acceptUpdate), the stored code keeps running
 			const waits = updateWaitsForUser({

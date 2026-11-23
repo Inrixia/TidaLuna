@@ -13,6 +13,7 @@ import {
 	parseRegistryFile,
 	rawCodeOf,
 	rawSha256,
+	sameServedCode,
 	registryBaseUrl,
 	registryLoadDecision,
 	registryPublicKey,
@@ -287,4 +288,12 @@ test("a signed file served as the other file, or without kind, is rejected", asy
 	// The right file is accepted and keeps its kind
 	const ok = await acceptRegistryFile("revoked.json", signed("revoked.json"));
 	assert.equal(ok.ok && ok.file.kind, "revoked");
+});
+
+test("code stored before exact fetching matches its refetch only when it differs by a BOM", () => {
+	const url = "https://example.com/Plugin";
+	const stored = `export const a = 1;\n//# sourceURL=${url}.mjs`;
+	assert.equal(sameServedCode(stored, `﻿export const a = 1;\n//# sourceURL=${url}.mjs`), true);
+	assert.equal(sameServedCode(stored, `export const a = 1;\n//# sourceURL=${url}2.mjs`), true);
+	assert.equal(sameServedCode(stored, `export const a = 2;\n//# sourceURL=${url}.mjs`), false);
 });

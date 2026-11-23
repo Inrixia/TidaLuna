@@ -206,6 +206,15 @@ export const decodeServedCode = (bytes: ArrayBuffer | Uint8Array): string => {
 };
 
 /**
+ * Whether code stored before decodeServedCode (decoded with `Response.text()`, which drops a BOM) is the code fetched again now.
+ * Only a leading BOM may differ; the sourceURL suffix is ignored
+ */
+export const sameServedCode = (storedCode: string, fetchedCode: string): boolean => {
+	const dropBom = (code: string) => (code.startsWith("﻿") ? code.slice(1) : code);
+	return dropBom(rawCodeOf(storedCode)) === dropBom(rawCodeOf(fetchedCode));
+};
+
+/**
  * The raw sha256 of a plugin's code, the key the registry uses (PluginPackage.rawSha256): sha256 of the served `.mjs` bytes.
  * LunaPlugin.fetchCode decodes with decodeServedCode, so the text encodes back to exactly those bytes.
  */
