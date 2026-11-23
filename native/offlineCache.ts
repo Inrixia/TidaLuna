@@ -5,7 +5,7 @@
 import electron from "electron";
 
 import { createHash } from "crypto";
-import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, utimes, writeFile } from "fs/promises";
 import path from "path";
 
 import { tidalMainHosts } from "./tidalHosts";
@@ -31,12 +31,36 @@ const keyOf = (url: URL) => {
 
 let isOffline = false;
 
-type Meta = { url: string; status: number; statusText: string; headers: [string, string][] };
+type Meta = { url: string; status: number; statusText: string; headers: [string, string][]; sha256?: string };
 
-const keep = async (file: string, meta: Meta, body: Buffer) => {
+let partId = 0;
+/** Reads a copy of the response body to its end and writes it, unless the kept copy already has the same body */
+const keep = async (file: string, meta: Meta, body: ReadableStream<Uint8Array>) => {
+	const chunks: Uint8Array[] = [];
+	const hash = createHash("sha256");
+	for await (const chunk of body) {
+		chunks.push(chunk);
+		hash.update(chunk);
+	}
+	meta.sha256 = hash.digest("hex");
+	const kept = await readFile(file + ".json", "utf8").then(
+		(json) => (<Meta>JSON.parse(json)).sha256,
+		() => undefined,
+	);
+	// Unchanged: only marked as just seen, so the file's age stays when it was last loaded
+	if (kept === meta.sha256) {
+		try {
+			const now = new Date();
+			return await utimes(file, now, now);
+		} catch {
+			// The body is gone, written again below
+		}
+	}
 	await mkdir(cacheDir(), { recursive: true });
-	await writeFile(file + ".part", body);
-	await rename(file + ".part", file);
+	// Own part file per write, two loads of the same url can overlap
+	const part = `${file}.${++partId}.part`;
+	await writeFile(part, chunks);
+	await rename(part, file);
 	await writeFile(file + ".json", JSON.stringify(meta));
 };
 
@@ -106,11 +130,12 @@ export const staleIfError = async (url: string, fetch: () => Promise<Response>, 
 		isOffline = false;
 		globalThis.luna?.sendToRender?.("__Luna.offlineStatus", false);
 	}
-	if (res.status !== 200 || !cacheableType.test(res.headers.get("content-type") ?? "")) return res;
-	const body = Buffer.from(await res.arrayBuffer());
+	if (res.status !== 200 || res.body === null || !cacheableType.test(res.headers.get("content-type") ?? "")) return res;
 	const headers = [...res.headers].filter(([name]) => !droppedHeaders.includes(name.toLowerCase()));
-	keep(file, { url, status: res.status, statusText: res.statusText, headers }, body).catch((err) =>
-		console.error(`[Luna.native] [OfflineCache] Failed to keep ${url}`, err),
-	);
-	return new Response(body, { status: res.status, statusText: res.statusText, headers });
+	// The page reads one branch as it arrives, the other is kept once complete
+	const [toPage, toDisk] = res.body.tee();
+	keep(file, { url, status: res.status, statusText: res.statusText, headers }, toDisk).catch((err) => {
+		if (!req?.signal.aborted) console.error(`[Luna.native] [OfflineCache] Failed to keep ${url}`, err);
+	});
+	return new Response(toPage, { status: res.status, statusText: res.statusText, headers });
 };
