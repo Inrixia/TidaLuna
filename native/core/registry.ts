@@ -182,6 +182,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 				}
 				delete record.unreviewed;
 				await save();
+			} else if (record.pending !== undefined) {
+				// The url serves the accepted version again (a release pulled): the update it no longer serves isn't offered
+				record.pending = undefined;
+				await save();
 			}
 		} catch (err) {
 			// Offline: the accepted version runs
