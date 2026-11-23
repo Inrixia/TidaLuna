@@ -8,6 +8,8 @@ export interface ExportData
 	timestamp: string;
 	stores: Record<string, Record<string, unknown>>;
 	featureFlags: Record<string, boolean> | null;
+	/** What Luna core had installed (exports from before it don't have it: the page's copies are used then) */
+	installed?: { url: string; name: string; enabled: boolean }[];
 }
 
 export class SettingsTransfer
@@ -31,11 +33,16 @@ export class SettingsTransfer
 				stores[store.idbName] = await store.dump();
 		}
 
+		// The page keeps no copy of some installed plugins (one only named like Luna's own): the core's list has them all
+		await LunaPlugin.migrateToCore();
+		const installed = (await __LunaCore.list()).map(({ url, name, enabled }) => ({ url, name, enabled }));
+
 		return {
 			version: 1,
 			timestamp: new Date().toISOString(),
 			stores,
 			featureFlags,
+			installed,
 		};
 	}
 
@@ -58,16 +65,32 @@ export class SettingsTransfer
 				await store.set(key, value);
 		}
 
-		const plugins = data.stores[LunaPlugin.pluginStorage.idbName];
-		if (!plugins)
-			return [];
 		const wanted = new Map<string, { name: string; enabled: boolean }>();
-		for (const [key, value] of Object.entries(plugins))
+		const want = (url: unknown, name: unknown, enabled: unknown) =>
 		{
-			const entry = value as Partial<LunaPluginStorage> | null;
-			if (entry?.installed !== true || typeof entry.url !== "string" || !/^https?:\/\//.test(entry.url) || isCoreUrl(entry.url))
-				continue;
-			wanted.set(entry.url, { name: typeof entry.package?.name === "string" ? entry.package.name : key, enabled: entry.enabled !== false });
+			if (typeof url !== "string" || !/^https?:\/\//.test(url) || isCoreUrl(url))
+				return;
+			wanted.set(url, { name: typeof name === "string" ? name : url, enabled: enabled !== false });
+		};
+		if (Array.isArray(data.installed))
+		{
+			for (const entry of data.installed as unknown[])
+			{
+				const { url, name, enabled } = (entry ?? {}) as Record<string, unknown>;
+				want(url, name, enabled);
+			}
+		}
+		else
+		{
+			const plugins = data.stores[LunaPlugin.pluginStorage.idbName];
+			if (!plugins)
+				return [];
+			for (const [key, value] of Object.entries(plugins))
+			{
+				const entry = value as Partial<LunaPluginStorage> | null;
+				if (entry?.installed === true)
+					want(entry.url, typeof entry.package?.name === "string" ? entry.package.name : key, entry.enabled);
+			}
 		}
 
 		await LunaPlugin.migrateToCore();
