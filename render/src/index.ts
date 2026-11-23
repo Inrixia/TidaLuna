@@ -54,11 +54,10 @@ setTimeout(async () => {
 	// Apply declarative seed settings (e.g. from Nix) before loading user plugins
 	await applySeedSettings();
 
-	// The last good registry lists, so a plugin revoked in one never runs. Bounded: a slow or broken IndexedDB must not hold plugins back.
-	// The fresh lists are fetched without waiting and then hourly, a newly revoked plugin is unloaded when they arrive (see LunaRegistry)
-	await Promise.race([LunaRegistry.loadCached(), new Promise((resolve) => setTimeout(resolve, 3000))]).catch(
-		LunaRegistry.trace.err.withContext("loadCached"),
-	);
+	// The last good registry lists, so a plugin revoked in one never runs. Awaited in full: plugins come from the same IndexedDB,
+	// so this holds them back no longer than reading them does. The fresh lists are fetched without waiting (never blocking plugins)
+	// and then hourly, a newly revoked plugin is unloaded when they arrive (see LunaRegistry)
+	await LunaRegistry.loadCached().catch(LunaRegistry.trace.err.withContext("loadCached"));
 	LunaRegistry.refreshEvery();
 
 	// Load all plugins from storage

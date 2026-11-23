@@ -189,10 +189,20 @@ export const replacesInUse = (inUse: { serial: number } | undefined, file: { ser
 export const rawCodeOf = (storedCode: string): string => storedCode.replace(/\n\/\/# sourceURL=[^\n]*$/, "");
 
 /**
- * The raw sha256 of a plugin's code, the key the registry uses (PluginPackage.rawSha256): sha256 of the served `.mjs` as UTF-8.
- * esbuild writes UTF-8 without a BOM, so for a registry build this is the sha256 of the file's bytes, as the registry computes it.
- * Computed from the text Luna got (fetch decodes UTF-8 and drops a BOM), so it is the hash of what runs:
- * a BOM in front of revoked code does not change it.
+ * The served `.mjs` bytes as text that encodes back to exactly those bytes: a BOM is kept, bytes that aren't valid UTF-8 throw.
+ * So the sha256 of the text as UTF-8 is the sha256 of the file, as the registry computes it (a BOM or a stray byte can't dodge a revocation)
+ */
+export const decodeServedCode = (bytes: ArrayBuffer | Uint8Array): string => {
+	try {
+		return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+	} catch {
+		throw new Error("The code is not valid UTF-8");
+	}
+};
+
+/**
+ * The raw sha256 of a plugin's code, the key the registry uses (PluginPackage.rawSha256): sha256 of the served `.mjs` bytes.
+ * LunaPlugin.fetchCode decodes with decodeServedCode, so the text encodes back to exactly those bytes.
  */
 export const rawSha256 = (storedCode: string): Promise<string> => sha256Hex(rawCodeOf(storedCode));
 
@@ -264,5 +274,8 @@ export const registryBaseUrl = (base: string = defaultRegistryBase): string => {
 	return href.endsWith("/") ? href : `${href}/`;
 };
 
-/** Text shown before more text: ends with a full stop unless it already ends a sentence */
-export const asSentence = (text: string): string => text.replace(/([^.!?])$/, "$1.");
+/** Text shown before more text: trimmed, and ending with a full stop unless it already ends a sentence (also before closing quotes or brackets) */
+export const asSentence = (text: string): string => {
+	const trimmed = text.trim();
+	return trimmed === "" || /[.!?]["'”’)\]]*$/.test(trimmed) ? trimmed : `${trimmed}.`;
+};

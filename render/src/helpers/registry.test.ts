@@ -2,13 +2,14 @@
 // Fixtures in registry.fixtures/ are signed with the registry's own scripts (luna-registry scripts/lib.mjs) and the TEST key
 // whose public half is registryPublicKey. Their bytes are what is signed: don't reformat them (.gitattributes keeps line endings).
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
 	acceptRegistryFile,
 	asSentence,
+	decodeServedCode,
 	parseRegistryFile,
 	rawCodeOf,
 	rawSha256,
@@ -242,6 +243,9 @@ test("revocation reasons end in one full stop", () => {
 	assert.equal(asSentence("Steals tokens"), "Steals tokens.");
 	assert.equal(asSentence("Steals tokens."), "Steals tokens.");
 	assert.equal(asSentence("Mines crypto!"), "Mines crypto!");
+	assert.equal(asSentence("Steals tokens "), "Steals tokens.");
+	assert.equal(asSentence('Says "hi."'), 'Says "hi."');
+	assert.equal(asSentence("(see report.)"), "(see report.)");
 });
 
 test("a new revoked.json stops running revoked plugins and loads again the ones whose revocation was lifted", async () => {
@@ -257,4 +261,12 @@ test("a new revoked.json stops running revoked plugins and loads again the ones 
 	assert.equal(revocationAction({ ...plugin, rawSha256: codes.sha256.verified }, revoked).action, "none");
 	// Luna's own plugins are never revoked
 	assert.equal(revocationAction({ ...plugin, url: "https://luna/luna.lib", rawSha256: codes.sha256.revoked }, revoked).action, "none");
+});
+
+test("served code keeps a BOM and refuses invalid UTF-8, so its raw sha256 is the sha256 of the file's bytes", async () => {
+	const withBom = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(codes.revoked)]);
+	assert.equal(await rawSha256(decodeServedCode(withBom)), createHash("sha256").update(withBom).digest("hex"));
+	assert.notEqual(await rawSha256(decodeServedCode(withBom)), codes.sha256.revoked);
+	assert.equal(await rawSha256(decodeServedCode(new TextEncoder().encode(codes.revoked))), codes.sha256.revoked);
+	assert.throws(() => decodeServedCode(new Uint8Array([0x2f, 0x2f, 0xff, 0x0a])), /not valid UTF-8/);
 });

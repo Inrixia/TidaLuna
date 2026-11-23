@@ -1,5 +1,5 @@
 // Ensure that @triton/lib is loaded onto window for plugins to use shared memory space
-import { Semaphore, Signal } from "@inrixia/helpers";
+import { rejectNotOk, Semaphore, Signal } from "@inrixia/helpers";
 import { unloadSet, type LunaUnloads } from "./helpers/unloadSet";
 import { ReactiveStore } from "./ReactiveStore";
 import { store as obyStore } from "oby";
@@ -7,7 +7,7 @@ import { store as obyStore } from "oby";
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
 import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
-import { asSentence, rawSha256, revocationAction, type RevokedEntry } from "./helpers/registry";
+import { asSentence, decodeServedCode, rawSha256, revocationAction, type RevokedEntry } from "./helpers/registry";
 import { LunaRegistry } from "./LunaRegistry";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
@@ -48,7 +48,7 @@ export type PluginPackage = {
 	/**
 	 * sha256 (hex) of the served `<url>.mjs` itself, the key of the plugin registry's verified.json and revoked.json (see helpers/registry).
 	 * The same for every url serving the same file. Set with codeSha256. To reproduce it: sha256 of the .mjs file's bytes
-	 * (equal to the sha256 of its text as UTF-8 for any file without a BOM, which esbuild never writes).
+	 * (fetchCode keeps a BOM and refuses invalid UTF-8, so the text encodes back to those bytes).
 	 */
 	rawSha256?: string;
 };
@@ -74,10 +74,18 @@ export class LunaPlugin {
 			throw new Error(`Failed to fetch package.json for ${url}: ${err?.message}`);
 		});
 	}
+	/**
+	 * The served .mjs as text that encodes back to exactly the served bytes, so its rawSha256 is the registry's sha256 of the file:
+	 * a BOM is kept, and a file that isn't valid UTF-8 is refused (decoding would replace bytes and dodge a revocation)
+	 */
 	public static fetchCode(url: string): Promise<string> {
-		return ftch.text(`${url}.mjs`).catch((err) => {
-			throw new Error(`Failed to fetch code for ${url}: ${err?.message}`);
-		});
+		return fetch(`${url}.mjs`)
+			.then(rejectNotOk)
+			.then((res) => res.arrayBuffer())
+			.then((bytes) => decodeServedCode(bytes))
+			.catch((err) => {
+				throw new Error(`Failed to fetch code for ${url}: ${err?.message}`);
+			});
 	}
 
 	// Store urls are saved without the trailing /store.json
@@ -140,9 +148,12 @@ export class LunaPlugin {
 	 * whose code is no longer revoked. A plugin still loading checks again after its import (see loadExports)
 	 */
 	private static async applyRevocations(): Promise<void> {
+		const stops: Promise<void>[] = [];
+		const loads: LunaPlugin[] = [];
 		for (const plugin of Object.values(LunaPlugin.plugins)) {
 			const pending = plugin.pendingUpdate._;
 			if (pending !== undefined && plugin.revokedUpdate(pending) !== undefined) plugin.pendingUpdate._ = undefined;
+			plugin.offerLiftedUpdate();
 			const next = revocationAction(
 				{
 					url: plugin.url,
@@ -153,12 +164,17 @@ export class LunaPlugin {
 				},
 				LunaRegistry.revoked._,
 			);
-			if (next.action === "stop") await plugin.stopRevoked(next.revoked);
-			else if (next.action === "load") {
-				plugin.trace.log("No longer revoked, loading again");
-				await plugin.reload().catch(plugin.trace.err.withContext("Failed to load again after the revocation was lifted"));
-			}
+			if (next.action === "stop") stops.push(plugin.stopRevoked().catch(plugin.trace.err.withContext("Failed to stop revoked plugin")));
+			else if (next.action === "load") loads.push(plugin);
 		}
+		// Every revoked plugin stops at once, before any plugin loads again (a slow plugin or fetch doesn't hold the others up)
+		await Promise.all(stops);
+		await Promise.all(
+			loads.map((plugin) => {
+				plugin.trace.log("No longer revoked, loading again");
+				return plugin.reload().catch(plugin.trace.err.withContext("Failed to load again after the revocation was lifted"));
+			}),
+		);
 	}
 
 	/**
@@ -603,14 +619,14 @@ export class LunaPlugin {
 		setTimeout(() => this.reload().catch(this.trace.err.withContext("Failed to load the previous version again")));
 	}
 	/** Unload this plugin because a newly accepted revoked.json revokes its code. It stays enabled: a version that isn't revoked loads again */
-	private async stopRevoked(entry: RevokedEntry): Promise<void> {
+	private async stopRevoked(): Promise<void> {
 		const release = await this.loadSemaphore.obtain();
 		try {
 			// Checked again: the code may have changed while waiting for the semaphore
 			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: this.package?.rawSha256 });
 			if (decision.load || this.exports === undefined) return;
 			await this.unload();
-			this.markRevoked(entry);
+			this.markRevoked(decision.revoked);
 		} finally {
 			release();
 		}
@@ -661,11 +677,25 @@ export class LunaPlugin {
 	// #endregion
 
 	// #region Fetch
+	/** The hash of the last fetched build refused as revoked, so it is announced once */
+	private refusedHash?: string;
+	/** The last update refused as revoked, offered after all if its revocation is lifted (see offerLiftedUpdate) */
+	private refusedUpdate?: PluginPackage;
+	/** Offer an update that was refused as revoked once the registry no longer revokes it */
+	private offerLiftedUpdate() {
+		const refused = this.refusedUpdate;
+		if (refused === undefined || this.revokedUpdate(refused) !== undefined) return;
+		this.refusedUpdate = undefined;
+		this.refusedHash = undefined;
+		// Only if it is still what the url served last and nothing newer waits
+		if (this.pendingUpdate._ !== undefined || this.package?.hash === refused.hash) return;
+		this.trace.log(`Update ${this.package?.version ?? ""} -> ${refused.version ?? ""} no longer revoked, waits for confirmation`);
+		this.pendingUpdate._ = refused;
+		LunaPlugin.announceUpdate(this.name);
+	}
 	/**
 	 * Returns true if code changed, should never be called outside of loadExports
 	 */
-	/** The hash of the last fetched build refused as revoked, so it is announced once */
-	private refusedHash?: string;
 	private async fetchPackage(): Promise<boolean> {
 		try {
 			this.fetching._ = true;
@@ -706,6 +736,7 @@ export class LunaPlugin {
 								`Update of ${this.name} to ${newPackage.version ?? "a new version"} not offered: the Luna plugin registry revoked it. ${describeRevoked(revoked)}`,
 							);
 						this.refusedHash = newPackage.hash;
+						this.refusedUpdate = newPackage;
 						return false;
 					}
 					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);

@@ -94,7 +94,11 @@ export class LunaRegistry {
 	private static use(fileName: RegistryFileName, file: VerifiedFile | RevokedFile, base: string): boolean {
 		const signal = fileName === "verified.json" ? this.verified : this.revoked;
 		// Serials only compare within one registry url (the override changed: the new registry's file is used)
-		if (this.inUseFrom[fileName] === base && !replacesInUse(signal._, file)) return false;
+		if (this.inUseFrom[fileName] === base) {
+			if (!replacesInUse(signal._, file)) return false;
+			// The same signed file fetched again (hourly): nothing changes, nothing re-renders or rechecks plugins
+			if (signal._?.serial === file.serial) return true;
+		}
 		this.inUseFrom[fileName] = base;
 		signal._ = <any>file;
 		return true;
@@ -119,7 +123,13 @@ export class LunaRegistry {
 					continue;
 				}
 				if (this.use(fileName, result.file, base))
-					this.setStatus(fileName, { source: "cached", serial: result.file.serial, generated: result.file.generated });
+					// A fetch that already failed keeps its error showing
+					this.setStatus(fileName, {
+						source: "cached",
+						serial: result.file.serial,
+						generated: result.file.generated,
+						error: this.status._[fileName].error,
+					});
 			} catch (err) {
 				this.trace.err.withContext("loadCached", fileName)(err);
 			}
