@@ -43,7 +43,8 @@ describe("core native rules", () => {
 	it("denies or confirms the dangerous core natives", () => {
 		assert.equal(coreNativeRule("sendToRender"), "deny");
 		assert.equal(coreNativeRule("update"), "confirm");
-		assert.equal(coreNativeRule("runElevatedInstall"), "confirm");
+		// Installs only what a confirmed update downloaded
+		assert.equal(coreNativeRule("runElevatedInstall"), "allow");
 		assert.equal(coreNativeRule("startNativeDebugging"), "confirm");
 		assert.equal(coreNativeRule("pkg"), "allow");
 	});

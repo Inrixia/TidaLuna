@@ -16,7 +16,7 @@ const watched = new WeakSet<BrowserWindow>();
 /**
  * Asks the user. `answer` is true only if they clicked the confirm button; closing the window is a cancel.
  * `refused` says why no window opened: TIDAL is not in use (the request came from page code), too many are waiting, or
- * the last ones were all cancelled (see confirmGate).
+ * the last ones were all cancelled (see confirmGate), or TIDAL was hidden before its turn came.
  *
  * @param recentUserInput See TidalState
  */
@@ -42,7 +42,9 @@ export const askConfirm = async (
 	let answer: boolean | undefined;
 	try {
 		answer = await inPromptQueue(() => show(request, parent));
-		return { answer: answer === true };
+		// Not the user's cancel: TIDAL was hidden or the window failed before it showed
+		if (answer === undefined) return { answer: false, refused: "its window could not be shown over TIDAL" };
+		return { answer };
 	} finally {
 		gate.answered(answer, Date.now());
 	}
