@@ -56,6 +56,16 @@ const fakeDeps = (state: CoreState | null = null) => {
 	return { deps, serve, serveWorld, served, forgotten, writes, reads };
 };
 
+/**
+ * A plugin installed before Luna core (old native format): handed over by migrate, then reviewed and enabled. Needs a
+ * fresh registry and `url` served at `hash`
+ */
+const installLegacy = async (registry: ReturnType<typeof createRegistry>, url: string, hash: string) => {
+	await registry.migrate([{ url, name: "legacy", enabled: true, hash }]);
+	await registry.load(url).catch(() => {});
+	assert.strictEqual(await registry.enable(url, asker(true)), true);
+};
+
 /** An asker that answers `answer` and records what it was asked */
 const asker = (answer: boolean) => {
 	const asked: ConfirmRequest[] = [];
@@ -113,7 +123,7 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
 
-		await registry.install(URL, asker(true));
+		await installLegacy(registry, URL, "v1");
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
 		// Other code under the same name, or a file the plugin doesn't have
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a, changed"), undefined);
@@ -128,7 +138,7 @@ describe("core registry", () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		const registry = createRegistry(deps);
-		await registry.install(URL, asker(true));
+		await installLegacy(registry, URL, "v1");
 
 		serve(URL, "v2", { "a.native.ts": "native a2", "b.native.ts": "native b" });
 		const loaded = await registry.load(URL);
@@ -141,16 +151,18 @@ describe("core registry", () => {
 		const no = asker(false);
 		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
 		assert.ok(no.asked[0].lines.some((line) => line.includes("New native files: b.native.ts")));
+		assert.ok(no.asked[0].lines.some((line) => line.includes("After this update it can't any more")));
 		assert.strictEqual(registry.info(URL)?.hash, "v1");
 
 		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
 		assert.strictEqual(registry.info(URL)?.hash, "v2");
 		assert.strictEqual(registry.info(URL)?.pending, undefined);
-		assert.strictEqual(registry.nativeOwner("b.native.ts", "native b"), URL);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
-		// What v1 registered can't be called any more
+		// What v1 registered can't be called any more, and v2 in the old format doesn't run at all
 		assert.strictEqual(registry.ownsNative(URL, "a.native.ts", "native a"), false);
-		assert.strictEqual(registry.ownsNative(URL, "a.native.ts", "native a2"), true);
+		assert.strictEqual(registry.ownsNative(URL, "a.native.ts", "native a2"), false);
+		assert.strictEqual(registry.nativeOwner("b.native.ts", "native b"), undefined);
+		assert.match(registry.legacyRefusal("b.native.ts", "native b") ?? "", /old native format.*must move it to the new format/);
+		assert.strictEqual(registry.info(URL)?.legacyNatives, "refused");
 	});
 
 	it("accepts the update the user was asked about, a newer one found meanwhile waits", async () => {
@@ -235,7 +247,7 @@ describe("core registry", () => {
 		const { deps, serve, reads } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		const registry = createRegistry(deps);
-		await registry.install(URL, asker(true));
+		await installLegacy(registry, URL, "v1");
 		const before = reads.count;
 		for (let i = 0; i < 5; i++) assert.strictEqual(registry.ownsNative(URL, "a.native.ts", "native a"), true);
 		assert.ok(reads.count - before <= 1);
@@ -314,16 +326,94 @@ describe("core registry", () => {
 		assert.strictEqual(registry.info(URL), undefined);
 	});
 
-	it("calls page-registered natives legacy", async () => {
+	it("calls page-registered natives legacy, and they run only for plugins installed before Luna core", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		const registry = createRegistry(deps);
-		const ask = asker(false);
-		await registry.install(URL, ask);
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true, hash: "v1" }]);
+		await registry.load(URL).catch(() => {});
+		const ask = asker(true);
+		await registry.enable(URL, ask);
 		assert.match(
 			ask.asked[0].lines.join(" "),
 			/Legacy native plugin: while it is enabled, any plugin or script in the page can call its native functions/,
 		);
+		assert.match(ask.asked[0].lines.join(" "), /installed before this Luna version, until the plugin updates/);
+		assert.strictEqual(registry.info(URL)?.legacyNatives, "allowed");
+
+		// A new plugin in the old format installs after a warning, but its natives don't run
+		const NEW_URL = "https://example.org/new";
+		serve(NEW_URL, "n1", { "n.native.ts": "native n" });
+		const install = asker(true);
+		assert.strictEqual(await registry.install(NEW_URL, install), true);
+		assert.match(install.asked[0].lines.join(" "), /Old native format, without isolation: n\.native\.ts won't run/);
+		assert.strictEqual(registry.info(NEW_URL)?.legacyNatives, "refused");
+		assert.strictEqual(registry.nativeOwner("n.native.ts", "native n"), undefined);
+		assert.match(registry.legacyRefusal("n.native.ts", "native n") ?? "", /plugin n1 uses the old native format/);
+
+		// From this computer the old format runs (the user is its author)
+		serve(DEV_URL, "d1", { "d.native.ts": "native d" });
+		await registry.install(DEV_URL, asker(true));
+		assert.strictEqual(registry.nativeOwner("d.native.ts", "native d"), DEV_URL);
+	});
+
+	it("never adds to the old native format list: install, reinstall, settings import, a second migrate", async () => {
+		const { deps, serve, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const OTHER = "https://example.org/other";
+		serve(OTHER, "o1", { "o.native.ts": "native o" });
+		const registry = createRegistry(deps);
+		await installLegacy(registry, URL, "v1");
+		const listed = () => Object.keys(writes.at(-1)?.legacy ?? {});
+		assert.deepStrictEqual(listed(), [URL]);
+
+		await registry.install(OTHER, asker(true));
+		// migrate runs once: a later call (page code) adds nothing
+		await registry.migrate([{ url: OTHER, name: "other", enabled: true, hash: "o1" }]);
+		assert.deepStrictEqual(listed(), [URL]);
+		assert.strictEqual(registry.nativeOwner("o.native.ts", "native o"), undefined);
+
+		// Reinstalling the same version doesn't bring it back
+		await registry.uninstall(URL);
+		assert.deepStrictEqual(listed(), []);
+		await registry.install(URL, asker(true));
+		assert.deepStrictEqual(listed(), []);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
+	it("takes a plugin off the old native format list for good once its code changes", async () => {
+		const { deps, serve, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await installLegacy(registry, URL, "v1");
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.deepStrictEqual(writes.at(-1)?.legacy, {});
+
+		// The url serves v1 again and the user goes back to it: still off the list
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(registry.info(URL)?.hash, "v1");
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		assert.strictEqual(registry.info(URL)?.legacyNatives, "refused");
+	});
+
+	it("keeps the old native format only for the version the page had stored before Luna core", async () => {
+		const { deps, serve } = fakeDeps();
+		// The url already serves a newer version than the one installed before
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		const registry = createRegistry(deps);
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true, hash: "v1" }]);
+		await registry.load(URL).catch(() => {});
+		const ask = asker(true);
+		assert.strictEqual(await registry.enable(URL, ask), true);
+		assert.match(ask.asked[0].lines.join(" "), /Old native format, without isolation/);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a2"), undefined);
+		assert.strictEqual(registry.info(URL)?.legacyNatives, "refused");
 	});
 
 	it("moves a plugin to a new store url, other code there waits as an update", async () => {
@@ -331,7 +421,7 @@ describe("core registry", () => {
 		const { deps, serve, served, forgotten } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		const registry = createRegistry(deps);
-		await registry.install(URL, asker(true));
+		await installLegacy(registry, URL, "v1");
 
 		// The same code (fetchCode adds the url's sourceURL in Luna; the fake serves it bare)
 		served.set(NEW_URL, served.get(URL)!);

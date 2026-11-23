@@ -224,7 +224,15 @@ export class LunaPlugin {
 			const stored = await LunaPlugin.pluginStorage.dump();
 			const entries = Object.entries(stored).flatMap(([key, value]: [string, any]) =>
 				value?.installed && typeof value.url === "string"
-					? [{ url: value.url, name: typeof value.package?.name === "string" ? value.package.name : key, enabled: value.enabled === true }]
+					? [
+							{
+								url: value.url,
+								name: typeof value.package?.name === "string" ? value.package.name : key,
+								enabled: value.enabled === true,
+								// The version installed before Luna core: only it keeps the old native format (registry.ts LegacyEntry)
+								hash: typeof value.package?.hash === "string" ? value.package.hash : undefined,
+							},
+						]
 					: [],
 			);
 			await __LunaCore.migrate(entries);
