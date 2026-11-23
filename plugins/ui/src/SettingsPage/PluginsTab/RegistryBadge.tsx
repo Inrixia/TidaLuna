@@ -1,6 +1,6 @@
 import React from "react";
 
-import { isCoreUrl, LunaPlugin, LunaRegistry, type RevokedEntry, type VerifiedEntry } from "@luna/core";
+import { asSentence, isCoreUrl, LunaPlugin, LunaRegistry, type RevokedEntry, type VerifiedEntry } from "@luna/core";
 
 import Chip, { type ChipProps } from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
@@ -52,7 +52,7 @@ export const RegistryBadge = React.memo(({ plugin, rawSha256 }: { plugin: LunaPl
 	if (entry?.revoked !== undefined)
 		return (
 			<ReportChip
-				title={`Revoked by the Luna plugin registry: ${entry.revoked.reason}${entry.revoked.report ? `. Report: ${entry.revoked.report}` : ""}`}
+				title={`Revoked by the Luna plugin registry: ${asSentence(entry.revoked.reason)}${entry.revoked.report ? ` Report: ${entry.revoked.report}` : ""}`}
 				color="error"
 				icon={<BlockIcon />}
 				label="Revoked"

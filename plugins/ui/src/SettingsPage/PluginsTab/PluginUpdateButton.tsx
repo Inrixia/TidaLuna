@@ -1,6 +1,6 @@
 import React from "react";
 
-import { LunaPlugin, type PluginPackage } from "@luna/core";
+import { asSentence, LunaPlugin, type PluginPackage } from "@luna/core";
 import { useConfirm } from "material-ui-confirm";
 
 import Button from "@mui/material/Button";
@@ -23,8 +23,8 @@ const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: 
 	if (entry?.revoked !== undefined)
 		return (
 			<Typography variant="body2" component="div" sx={{ color: "error.main" }} gutterBottom title={title}>
-				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} /> The Luna plugin registry revoked this version: {entry.revoked.reason}. It
-				can't be installed.
+				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} /> The Luna plugin registry revoked this version:{" "}
+				{asSentence(entry.revoked.reason)} It can't be installed.
 			</Typography>
 		);
 	if (entry?.verified !== undefined)
@@ -94,10 +94,9 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			description: <UpdateDetails plugin={plugin} update={update} />,
 			confirmationText: "Update",
 			cancellationText: "Not now",
-			// acceptUpdate refuses a revoked version too
-			confirmationButtonProps: { disabled: plugin.revokedUpdate(update) !== undefined },
 		});
-		if (!confirmed) return;
+		// A revoked update is never offered; one revoked while the dialog was open says so there, and acceptUpdate would refuse it
+		if (!confirmed || plugin.revokedUpdate(update) !== undefined) return;
 		setUpdating(true);
 		try {
 			// The update the user was shown, even if a newer one arrived meanwhile
