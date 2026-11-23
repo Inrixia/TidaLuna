@@ -154,6 +154,8 @@ export const isLocalHost = (hostname: string): boolean => {
 		if (zero(0, 4) && g[4] === 0xffff && g[5] === 0) return v4(g[6], g[7]);
 		// NAT64 64:ff9b::a.b.c.d
 		if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) return v4(g[6], g[7]);
+		// Teredo 2001:0::/32: the client address, inverted, in the last two groups
+		if (g[0] === 0x2001 && g[1] === 0) return v4(g[6] ^ 0xffff, g[7] ^ 0xffff);
 		// 6to4 2002:aabb:ccdd::
 		if (g[0] === 0x2002) return v4(g[1], g[2]);
 		return false;

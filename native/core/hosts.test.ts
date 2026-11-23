@@ -163,9 +163,20 @@ describe("plugin hosts", () => {
 			"::ffff:0:127.0.0.1",
 			"64:ff9b:1::10.0.0.1",
 			"fec0::1",
+			"2001:0:4136:e378:8000:63bf:80ff:fffe",
 		])
 			assert.equal(isLocalHost(host), true, host);
-		for (const host of ["::8.8.8.8", "::ffff:8.8.8.8", "2002:808:808::1", "2001:4860:4860::8888", "64:ff9b::8.8.8.8"])
+		for (const host of [
+			"::8.8.8.8",
+			"::ffff:8.8.8.8",
+			"2002:808:808::1",
+			"2001:4860:4860::8888",
+			"64:ff9b::8.8.8.8",
+			"::ffff:0:8.8.8.8",
+			"fe7f::1",
+			"64:ff9b:2::1",
+			"2001:0:4136:e378:8000:63bf:f7f7:f7f7",
+		])
 			assert.equal(isLocalHost(host), false, host);
 	});
 });
