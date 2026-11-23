@@ -51,8 +51,10 @@ class PluginSettingsErrorBoundary extends React.Component<{ name: string; childr
 
 export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }) => {
 	// Have to wrap in function call as Settings is a functional component
-	const [enabled, setEnabled] = React.useState(plugin.enabled);
-	const [loading, setLoading] = React.useState(plugin.loading._);
+	// A new card can mount before install() finishes enabling the plugin.
+	const enabled = React.useSyncExternalStore(plugin.onSetEnabled, () => Boolean(plugin.enabled));
+	const subscribeLoading = React.useCallback((notify: () => void) => plugin.loading.onValue(notify), [plugin]);
+	const loading = React.useSyncExternalStore(subscribeLoading, () => plugin.loading._);
 	const [loadError, setLoadError] = React.useState(plugin.loadError._);
 	const [installed, setInstalled] = React.useState(plugin.installed);
 	const [hideSettings, setHideSettings] = React.useState(plugin.store.hideSettings);
@@ -62,8 +64,6 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 
 	React.useEffect(() => {
 		const unloads = new Set([
-			plugin.onSetEnabled((next) => setEnabled(next)),
-			plugin.loading.onValue((next) => setLoading(next)),
 			plugin.loadError.onValue((next) => setLoadError(next)),
 			obyStore.on(
 				() => plugin.store.package,
