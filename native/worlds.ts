@@ -46,12 +46,15 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 	if (accepted === undefined) throw new Error(`[🛑Security🛑] ${url} is not an enabled plugin with a world`);
 	const bundle = parseBundle(accepted);
 	// A world's natives can't take a native module name Luna or another plugin registered (others import them by name)
+	// A name another world reserved counts too, though its load may still be waiting on the user
 	for (const fileName of Object.keys(bundle.natives)) {
-		if (globalThis.luna.modules[fileName] !== undefined && moduleOwners.get(fileName) !== url)
+		const owner = moduleOwners.get(fileName);
+		if (owner !== undefined ? owner !== url : globalThis.luna.modules[fileName] !== undefined)
 			throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} is already registered by Luna or another plugin`);
 	}
-	// Reserved now, before any wait: a page native registering the same name meanwhile is refused (NativeModule/index.ts)
-	for (const fileName of Object.keys(bundle.natives)) moduleOwners.set(fileName, url);
+	// Reserved now, before any wait: a page native or another world taking the same name meanwhile is refused
+	const reserved = Object.keys(bundle.natives).filter((fileName) => !moduleOwners.has(fileName));
+	for (const fileName of reserved) moduleOwners.set(fileName, url);
 
 	// Natives of an earlier load of this url can't be called any more, whatever happens below
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
@@ -59,16 +62,22 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 	// The answer for a native covers the world code too: the world decides what its natives are called with
 	const worldHash = sha256(bundle.code);
 	const parent = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-	for (const [fileName, code] of Object.entries(bundle.natives)) {
-		const nativeHash = sha256(code);
-		markWorldNative(nativeHash);
-		const exports = await secureLoad(
-			{ fileName: worldFilePrefix + fileName, code, hash: sha256(`${code}\0${worldHash}`), url, isCore: false, world: { nativeHash } },
-			parent,
-		);
-		owned.set(ownedKey(url, fileName), { exports, world: accepted });
-		// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
-		globalThis.luna.modules[fileName] = exports;
+	try {
+		for (const [fileName, code] of Object.entries(bundle.natives)) {
+			const nativeHash = sha256(code);
+			markWorldNative(nativeHash);
+			const exports = await secureLoad(
+				{ fileName: worldFilePrefix + fileName, code, hash: sha256(`${code}\0${worldHash}`), url, isCore: false, world: { nativeHash } },
+				parent,
+			);
+			owned.set(ownedKey(url, fileName), { exports, world: accepted });
+			// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
+			globalThis.luna.modules[fileName] = exports;
+		}
+	} catch (err) {
+		// Free the names this load reserved but never filled (refused or failed natives)
+		for (const fileName of reserved) if (globalThis.luna.modules[fileName] === undefined) moduleOwners.delete(fileName);
+		throw err;
 	}
 
 	return { worldId: nextWorldId++, code: bundle.code };
