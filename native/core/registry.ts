@@ -371,6 +371,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 			// Offline: the accepted code moves, the new url is checked on the next load
 			deps.log?.(`[Luna.core] ${to}: ${(err as Error)?.message ?? err}`);
 		}
+		// Queued by `from` only: an install or another move to `to` may have finished while fetching
+		if (state.plugins[to] !== undefined) throw new Error(`[Luna.core] ${to} is already installed`);
+		if (state.plugins[from] !== record) return false;
 		const { accepted } = record;
 		const moved: CoreRecord = { ...record, url: to, pending: undefined };
 		// The same code and the same world (pinned with it): nothing new to review

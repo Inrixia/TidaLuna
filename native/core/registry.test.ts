@@ -535,6 +535,25 @@ describe("core registry", () => {
 		assert.strictEqual(registry.info(URL)?.pending, undefined);
 	});
 
+	it("moves only one plugin to a url, whichever move finishes first", async () => {
+		const TARGET = "https://example.org/target";
+		const { deps, serve, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		serve("https://example.com/b", "b1");
+		serve(TARGET, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await installLegacy(registry, URL, "v1");
+		await registry.install("https://example.com/b", asker(true));
+		const results = await Promise.allSettled([registry.moveUrl(URL, TARGET), registry.moveUrl("https://example.com/b", TARGET)]);
+		assert.deepStrictEqual(
+			results.map((result) => result.status),
+			["fulfilled", "rejected"],
+		);
+		assert.strictEqual(registry.info(TARGET)?.hash, "v1");
+		assert.strictEqual(registry.info("https://example.com/b")?.hash, "b1");
+		assert.deepStrictEqual(Object.keys(writes.at(-1)?.legacy ?? {}), [TARGET]);
+	});
+
 	it("doesn't move to or from a dev url, nor over an installed plugin", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1");

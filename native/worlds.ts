@@ -55,10 +55,12 @@ const releaseModules = (url: string, keep: ReadonlySet<string> = new Set()) => {
 // load of it still running fills nothing
 onPluginChanged((url) => {
 	const accepted = registry().acceptedWorld(url);
-	if (accepted === undefined) nextGeneration(url);
 	const filled = filledFrom.get(url);
-	// Nothing filled yet: a load still running checks the accepted world itself before filling
-	if (filled === undefined || filled === accepted) return;
+	// Not enabled any more: everything of it goes, also what a load still running filled so far
+	if (accepted === undefined) nextGeneration(url);
+	// Still the world it filled from, or none filled since the last change: a load still running checks the accepted
+	// world itself before each fill
+	else if (filled === undefined || filled === accepted) return;
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
 	releaseModules(url);
 });
@@ -95,6 +97,8 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 	// The answer for a native covers the world code too: the world decides what its natives are called with
 	const worldHash = sha256(bundle.code);
 	const parent = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+	// What this load filled: a load that fails halfway takes it back (a disable meanwhile finds nothing filled yet)
+	const filled = new Map<string, Record<string, unknown>>();
 	try {
 		for (const [fileName, code] of Object.entries(bundle.natives)) {
 			const nativeHash = sha256(code);
@@ -112,11 +116,20 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 			owned.set(ownedKey(url, fileName), { exports, world: accepted });
 			// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
 			globalThis.luna.modules[fileName] = exports;
+			filled.set(fileName, exports);
 		}
 		// Natives an earlier version had and this one dropped
 		releaseModules(url, new Set(Object.keys(bundle.natives)));
 		filledFrom.set(url, accepted);
 	} catch (err) {
+		// Natives this load filled before it failed (or went stale) stop: a newer load's fills of the same names stay
+		for (const [fileName, exports] of filled) {
+			const key = ownedKey(url, fileName);
+			if (owned.get(key)?.exports === exports) owned.delete(key);
+			if (globalThis.luna.modules[fileName] !== exports) continue;
+			delete globalThis.luna.modules[fileName];
+			if (moduleOwners.get(fileName) === url) moduleOwners.delete(fileName);
+		}
 		// The latest load failed: natives of an earlier one don't stay importable (their channels already closed above)
 		if (generations.get(url) === generation) releaseModules(url);
 		throw err;
