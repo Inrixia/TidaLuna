@@ -2,7 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isDevUrl, nativeFileChanges, nativeFileNames, updateWaitsForUser } from "./pluginUpdates";
+import { createHash } from "node:crypto";
+
+import { codeToImport, isDevUrl, nativeFileChanges, nativeFileNames, sha256Hex, updateWaitsForUser } from "./pluginUpdates";
 
 const installed = { codeChanged: true, hasCode: true, isDev: false, liveReload: false, isCore: false };
 
@@ -25,6 +27,27 @@ test("only plugins served from 127.0.0.1 are dev plugins", () => {
 	assert.equal(isDevUrl("http://127.0.0.1@example.com/Plugin"), false);
 	assert.equal(isDevUrl("https://github.com/x/releases/download/latest/Plugin"), false);
 	assert.equal(isDevUrl("not a url"), false);
+});
+
+test("the imported code names the plugin's url when native code registers", () => {
+	const url = "https://example.com/Plugin";
+	const call = `await __ipcRenderer.invoke("__Luna.registerNative", "a.native.ts", "code");`;
+	assert.equal(
+		codeToImport(call, url),
+		`await __ipcRenderer.invoke("__Luna.registerNativeFrom","https://example.com/Plugin", "a.native.ts", "code");`,
+	);
+	// The same text inside a native file's (escaped) code string stays as it is
+	const inString = `const s = "__ipcRenderer.invoke(\\"__Luna.registerNative\\", x)";`;
+	assert.equal(codeToImport(inString, url), inString);
+});
+
+test("sha256Hex hashes the UTF-8 text", async () => {
+	assert.equal(await sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+	const text = "export const ü = '🎵';";
+	assert.equal(await sha256Hex(text), createHash("sha256").update(text, "utf8").digest("hex"));
+	// Same code from another url imports different text, so it hashes differently
+	const code = `__ipcRenderer.invoke("__Luna.registerNative", "a.native.ts", "");`;
+	assert.notEqual(await sha256Hex(codeToImport(code, "https://a/P")), await sha256Hex(codeToImport(code, "https://b/P")));
 });
 
 const register = (file: string) => `await __ipcRenderer.invoke("__Luna.registerNative", "${file}", "export const x = 1;");`;

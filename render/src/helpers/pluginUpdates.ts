@@ -25,6 +25,23 @@ export const isDevUrl = (url: string): boolean => {
 };
 
 /**
+ * The text LunaPlugin.loadExports imports for a plugin's code.
+ * Native code registering names the plugin's url, so its permissions are kept per plugin (see native/NativeModule/trust.ts).
+ * Only the call build/plugins/lunaNativePlugin.ts emits, not the same text inside a native file's code string.
+ */
+export const codeToImport = (code: string, url: string): string =>
+	code.replace(
+		/(__ipcRenderer\.invoke\(\s*)(["'`])__Luna\.registerNative\2\s*,/g,
+		(_, call) => `${call}"__Luna.registerNativeFrom",${JSON.stringify(url)},`,
+	);
+
+/** sha256 of the text as UTF-8, lowercase hex */
+export const sha256Hex = async (text: string): Promise<string> => {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+/**
  * Names of the native files a plugin bundle registers (the call build/plugins/lunaNativePlugin.ts emits, as LunaPlugin.loadExports finds it).
  * For display only: the native permission window (native/NativeModule/trust.ts) still checks each file's code before it runs.
  * native/NativeModule/permissions/verifySource.ts nativeFilesOf reads the same call, but needs Node's vm and crypto, which the renderer lacks.

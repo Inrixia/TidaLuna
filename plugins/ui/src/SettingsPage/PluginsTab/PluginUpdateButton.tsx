@@ -9,6 +9,9 @@ import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
+/** First 12 hex digits, enough to tell versions apart and compare with a published hash */
+const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slice(0, 12));
+
 /** What the update changes that the user should know about before running it */
 const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
 	const { files, added, removed } = LunaPlugin.nativeFileChanges(plugin.code ?? "", update.code ?? "");
@@ -16,6 +19,9 @@ const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginP
 		<>
 			<Typography variant="body2" gutterBottom>
 				<b>{plugin.package?.version ?? "?"}</b> → <b>{update.version ?? "?"}</b>
+			</Typography>
+			<Typography variant="body2" gutterBottom title={`sha256 ${plugin.package?.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
+				Code sha256: <code>{shortHash(plugin.package?.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
 			</Typography>
 			<Typography variant="body2" gutterBottom>
 				Until you update, the version you have keeps running. The new code runs with the same access to TIDAL as the plugin has now. Luna doesn't

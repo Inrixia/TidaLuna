@@ -6,7 +6,7 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
-import { isDevUrl, nativeFileChanges, updateWaitsForUser } from "./helpers/pluginUpdates";
+import { codeToImport, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
 
@@ -36,6 +36,12 @@ export type PluginPackage = {
 	dependencies?: string[];
 	devDependencies?: string[];
 	code?: string;
+	/**
+	 * sha256 (hex) of the text Luna imports for `code`, set when it loads or waits as an update.
+	 * Not the hash of the served `<url>.mjs` alone. To reproduce it: take the served .mjs text, append `\n//# sourceURL=<url>.mjs`,
+	 * apply helpers/pluginUpdates codeToImport(text, url), and sha256 the result as UTF-8.
+	 */
+	codeSha256?: string;
 };
 
 // If adding to this make sure that the values are initalized in LunaPlugin.fromStorage
@@ -512,7 +518,8 @@ export class LunaPlugin {
 	public async install() {
 		this.loading._ = true;
 		// Uninstall can leave the old package, code included, in storage: install what the url serves now instead of offering it as an update
-		if (!this.installed && this.store.package?.code !== undefined) this.store.package = { ...this.store.package, code: undefined };
+		if (!this.installed && this.store.package?.code !== undefined)
+			this.store.package = { ...this.store.package, code: undefined, codeSha256: undefined };
 
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
 		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);
@@ -561,12 +568,12 @@ export class LunaPlugin {
 			// Delete this just to be safe
 			delete newPackage.code;
 
-			// If hash hasnt changed then just reuse stored code
 			const codeChanged = this.package?.hash !== newPackage.hash;
-			// If code hasnt changed then just reuse stored code
-			if (!codeChanged) newPackage.code = this.package?.code;
-			// Or the code of the update already waiting
-			else if (this.pendingUpdate._?.hash === newPackage.hash) newPackage.code = this.pendingUpdate._.code;
+			// If code hasnt changed then just reuse stored code, or the code of the update already waiting.
+			// Its sha256 comes along, never from the url's json (loadExports recomputes it from what it imports)
+			const reused = !codeChanged ? this.package : this.pendingUpdate._?.hash === newPackage.hash ? this.pendingUpdate._ : undefined;
+			newPackage.code = reused?.code;
+			newPackage.codeSha256 = reused?.code !== undefined ? reused.codeSha256 : undefined;
 
 			// Ensure that code is fetched if its changed or undefined
 			newPackage.code ??= `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
@@ -584,6 +591,7 @@ export class LunaPlugin {
 				// The same update fetched again keeps its object, so an open update dialog still matches it
 				if (this.pendingUpdate._?.hash !== newPackage.hash) {
 					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);
+					newPackage.codeSha256 = await sha256Hex(codeToImport(newPackage.code, this.url));
 					this.pendingUpdate._ = newPackage;
 					LunaPlugin.announceUpdate(this.name);
 				}
@@ -628,10 +636,10 @@ export class LunaPlugin {
 
 			// Name this plugin's url when its native code registers, so its permissions are kept per plugin (see native/NativeModule/trust.ts)
 			// Only the call build/plugins/lunaNativePlugin.ts emits, not the same text inside a native file's code string
-			const code = this.code.replace(
-				/(__ipcRenderer\.invoke\(\s*)(["'`])__Luna\.registerNative\2\s*,/g,
-				(_, call) => `${call}"__Luna.registerNativeFrom",${JSON.stringify(this.url)},`,
-			);
+			const code = codeToImport(this.code, this.url);
+			// Keep the hash of exactly what runs beside the code (the json `hash` only says the code changed)
+			const sha256 = await sha256Hex(code);
+			if (this.package!.codeSha256 !== sha256) this.package = { ...this.package!, codeSha256: sha256 };
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
 			try {
 				this.exports = await import(blobURL);
