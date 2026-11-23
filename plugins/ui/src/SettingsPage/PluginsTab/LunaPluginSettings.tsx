@@ -98,7 +98,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 	let version = isDev ? `${pkg.version ?? ""} [DEV]` : pkg.version;
 
 	// Dont allow disabling core plugins
-	const isCore = LunaPlugin.corePlugins.has(name);
+	const isCore = plugin.isCore;
 
 	const Settings = plugin.exports?.Settings;
 	const hasSettings = Settings !== undefined && Settings !== null;
