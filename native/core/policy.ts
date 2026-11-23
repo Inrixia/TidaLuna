@@ -3,9 +3,10 @@
 export type CoreNativeRule = "allow" | "deny" | "confirm";
 // Core native exports page code may not call, or only after the user confirms in Luna's confirmation window
 // (confirmWindow.ts). Everything else a core plugin exports is meant for the page (pkg, dialogs, caches, download into
-// picked folders, …)
+// picked folders, …). runElevatedInstall only installs the build the user confirmed in `update`, and pkexec asks for the
+// password itself: asking again would refuse it when the download took longer than the user's last click counts
 const coreDenied = new Set(["sendToRender"]);
-const coreConfirmed = new Set(["update", "runElevatedInstall", "startNativeDebugging"]);
+const coreConfirmed = new Set(["update", "startNativeDebugging"]);
 export const coreNativeRule = (exportName: string): CoreNativeRule =>
 	coreDenied.has(exportName) ? "deny" : coreConfirmed.has(exportName) ? "confirm" : "allow";
 
@@ -14,8 +15,6 @@ export const coreNativeQuestion = (exportName: string, args: unknown[]): [title:
 	switch (exportName) {
 		case "update":
 			return ["Update Luna?", [`Download and install Luna ${String(args[0])}, then restart TIDAL.`], "Update"];
-		case "runElevatedInstall":
-			return ["Install Luna as administrator?", ["Runs the Luna installer with administrator rights."], "Install"];
 		case "startNativeDebugging":
 			return [
 				"Start native debugging?",

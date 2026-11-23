@@ -22,11 +22,18 @@ expose("__platform", process.platform);
 // Only TIDAL's own pages, the ones Luna loads into, get the IPC bridge: it reaches every handler in the main process
 const isTidalPage = location.protocol === "https:" && tidalMainHosts.has(location.hostname);
 
+// Sent only by the preload below, from trusted events: page code sending it would fake the user's input
+const preloadOnly = new Set(["__Luna.userInput"]);
+const pageChannel = (channel: string) => {
+	if (preloadOnly.has(channel)) throw new Error(`[🛑Security🛑] Channel ${channel} is not available to the page`);
+	return channel;
+};
+
 // Allow render side to execute invoke
 if (isTidalPage)
 	expose("__ipcRenderer", {
-		invoke: ipcRenderer.invoke,
-		send: ipcRenderer.send,
+		invoke: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(pageChannel(channel), ...args),
+		send: (channel: string, ...args: unknown[]) => ipcRenderer.send(pageChannel(channel), ...args),
 		on: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onU(null, channel, (_, ...args) => listener(...args)),
 		once: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onceU(null, channel, (_, ...args) => listener(...args)),
 	});
