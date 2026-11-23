@@ -6,6 +6,7 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
+import { nativeFileNames } from "./helpers/nativeFileNames";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
 
@@ -194,7 +195,16 @@ export class LunaPlugin {
 
 	public static async loadStoredPlugins() {
 		const keys = await LunaPlugin.pluginStorage.keys();
-		return Promise.all(keys.map(async (name) => LunaPlugin.fromName(name).catch(this.trace.err.withContext("loadStoredPlugins", name))));
+		const plugins = await Promise.all(
+			keys.map(async (name) => LunaPlugin.fromName(name).catch(this.trace.err.withContext("loadStoredPlugins", name))),
+		);
+		const updates = LunaPlugin.pendingUpdates;
+		if (updates.length !== 0) {
+			coreTrace.msg.log(
+				`Plugin updates are waiting for you: ${updates.map((plugin) => plugin.name).join(", ")}. Review them in Luna Settings > Plugins`,
+			);
+		}
+		return plugins;
 	}
 
 	/**
@@ -459,6 +469,44 @@ export class LunaPlugin {
 	}
 	// #endregion
 
+	// #region updates
+	/**
+	 * New code fetched for this plugin that the user has not accepted yet, as its package with code.
+	 * The stored code keeps running until acceptUpdate. Refetched each time the plugin loads (client start, reload).
+	 */
+	public readonly pendingUpdate: Signal<PluginPackage | undefined> = new Signal(undefined);
+	/** Dev plugins, live reload (the user asked for every change) and Luna's own plugins update without asking */
+	private get updatesNeedConfirm(): boolean {
+		return !this.isDev && !this._liveReload._ && !LunaPlugin.corePlugins.has(this.name);
+	}
+	/**
+	 * Store the update and run it if the plugin is enabled.
+	 * @param update The update the user was shown. If the url has served a newer one since, that one becomes the pending update.
+	 */
+	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._): Promise<void> {
+		if (update?.code === undefined) return;
+		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
+		if (this.enabled) return this.loadExports(true, update);
+		const release = await this.loadSemaphore.obtain();
+		try {
+			this.applyUpdate(update);
+		} finally {
+			release();
+		}
+	}
+	/** Call while holding loadSemaphore */
+	private applyUpdate(update: PluginPackage) {
+		this.package = update;
+		if (this.pendingUpdate._ === update) this.pendingUpdate._ = undefined;
+	}
+	/** The installed plugins with an update waiting for the user */
+	public static get pendingUpdates(): LunaPlugin[] {
+		return Object.values(LunaPlugin.plugins).filter((plugin) => plugin.installed && plugin.pendingUpdate._ !== undefined);
+	}
+	/** Names of the native files a bundle registers, for display (see helpers/nativeFileNames) */
+	public static readonly nativeFileNames = nativeFileNames;
+	// #endregion
+
 	// #region install/uninstall
 	public async install() {
 		this.loading._ = true;
@@ -489,6 +537,7 @@ export class LunaPlugin {
 			plugin.dependants.delete(this);
 		}
 		this.store.installed = false;
+		this.pendingUpdate._ = undefined;
 		delete LunaPlugin.plugins[this.url];
 		await LunaPlugin.pluginStorage.del(this.name);
 		// A reinstall asks for native permissions again
@@ -513,9 +562,20 @@ export class LunaPlugin {
 			const codeChanged = this.package?.hash !== newPackage.hash;
 			// If code hasnt changed then just reuse stored code
 			if (!codeChanged) newPackage.code = this.package?.code;
+			// Or the code of the update already waiting
+			else if (this.pendingUpdate._?.hash === newPackage.hash) newPackage.code = this.pendingUpdate._.code;
 
 			// Ensure that code is fetched if its changed or undefined
 			newPackage.code ??= `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
+
+			// New code for a plugin that already has code waits for the user (see acceptUpdate), the stored code keeps running
+			if (codeChanged && this.code !== undefined && this.updatesNeedConfirm) {
+				if (this.pendingUpdate._?.hash !== newPackage.hash)
+					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);
+				this.pendingUpdate._ = newPackage;
+				return false;
+			}
+			this.pendingUpdate._ = undefined;
 
 			// Only replace the stored package once its code is fetched, so a failed fetch keeps the cached code
 			this.package = newPackage;
@@ -532,10 +592,14 @@ export class LunaPlugin {
 
 	// #region Load
 	private readonly loadSemaphore: Semaphore = new Semaphore(1);
-	private async loadExports(reload?: true): Promise<void> {
+	/**
+	 * @param update A pending update the user accepted, stored before fetching (see acceptUpdate)
+	 */
+	private async loadExports(reload?: true, update?: PluginPackage): Promise<void> {
 		// Ensure we cant start loading midway through loading
 		const release = await this.loadSemaphore.obtain();
 		try {
+			if (update !== undefined) this.applyUpdate(update);
 			// If code hasnt changed and we have already loaded exports we are done
 			const codeChanged = await this.fetchPackage();
 			if (!reload && !codeChanged && this.exports !== undefined) return;

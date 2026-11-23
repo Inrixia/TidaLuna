@@ -15,6 +15,7 @@ import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import { LunaSwitch, LunaTrashButton, SpinningButton } from "../../components";
 import { LiveReloadToggle } from "./LiveReloadToggle";
 import { LunaPluginHeader } from "./LunaPluginHeader";
+import { PluginUpdateButton } from "./PluginUpdateButton";
 
 import SettingsIcon from "@mui/icons-material/Settings";
 import { grey, red } from "@mui/material/colors";
@@ -134,6 +135,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 						</IconButton>
 						{!collapsed && (
 							<>
+								<PluginUpdateButton plugin={plugin} />
 								{!isCore && (
 									<Tooltip
 										title={enabled ? `Disable ${name}` : `Enable ${name}`}
