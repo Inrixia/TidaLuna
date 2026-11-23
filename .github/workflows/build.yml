@@ -35,9 +35,6 @@ jobs:
    - name: Build
      run: pnpm run build
 
-   - name: Test
-     run: pnpm test
-
    - name: Zip Build Output
      run: cd dist && zip -r ../luna.zip *
 

@@ -66,6 +66,11 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 
 - Prettier: tabs, `printWidth` 145, semicolons. Many files not Prettier-clean; match surrounding code, don't reformat files you only edit.
 
+## Tests
+
+- Fixes + features come with test: `node:test` + `node:assert`, in `<file>.test.ts` beside code it tests.
+- Run `pnpm test` before PR; CI runs it on every PR (`.github/workflows/test.yml`).
+
 ## Gotchas
 
 - **Pushing new `version` in root `package.json` to `master` or `dev` publishes release** (`.github/workflows/build.yml`): GitHub release tagged `version` (prerelease on `dev`). Already-released versions skipped, never overwritten. Version-bump commits use bare version as message, e.g. `1.22.0-beta`.
