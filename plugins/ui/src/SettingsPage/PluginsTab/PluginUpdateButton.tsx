@@ -1,73 +1,28 @@
 import React from "react";
 
-import { LunaPlugin, type PluginPackage } from "@luna/core";
-import { useConfirm } from "material-ui-confirm";
+import { LunaPlugin } from "@luna/core";
 
 import Button from "@mui/material/Button";
 import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
-
-/** First 12 hex digits, enough to tell versions apart and compare with a published hash */
-const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slice(0, 12));
-
-/** What the update changes that the user should know about before running it */
-const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
-	const { files, added, removed } = LunaPlugin.nativeFileChanges(plugin.code ?? "", update.code ?? "");
-	return (
-		<>
-			<Typography variant="body2" gutterBottom>
-				<b>{plugin.package?.version ?? "?"}</b> → <b>{update.version ?? "?"}</b>
-			</Typography>
-			<Typography variant="body2" gutterBottom title={`sha256 ${plugin.package?.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
-				Code sha256: <code>{shortHash(plugin.package?.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
-			</Typography>
-			<Typography variant="body2" gutterBottom>
-				Until you update, the version you have keeps running. The new code runs with the same access to TIDAL as the plugin has now. Luna doesn't
-				check what it does: update only if you trust the author and {plugin.url}.
-			</Typography>
-			{files.length !== 0 && (
-				<Typography variant="body2" gutterBottom>
-					Native code (runs in TIDAL's main process): {files.join(", ")}. Changed native files ask for permission again, unless you allowed this
-					plugin for all versions.
-				</Typography>
-			)}
-			{added.length !== 0 && (
-				<Typography variant="body2" sx={{ color: "warning.main" }} gutterBottom>
-					New native files: {added.join(", ")}
-				</Typography>
-			)}
-			{removed.length !== 0 && <Typography variant="body2">Removed native files: {removed.join(", ")}</Typography>}
-		</>
-	);
-};
 
 export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }) => {
 	const subscribe = React.useCallback((notify: () => void) => plugin.pendingUpdate.onValue(notify), [plugin]);
 	const update = React.useSyncExternalStore(subscribe, () => plugin.pendingUpdate._);
 	const [updating, setUpdating] = React.useState(false);
-	const confirm = useConfirm();
 
 	const onClick = React.useCallback(async () => {
-		if (update === undefined) return;
-		const { confirmed } = await confirm({
-			title: `Update ${plugin.name}?`,
-			description: <UpdateDetails plugin={plugin} update={update} />,
-			confirmationText: "Update",
-			cancellationText: "Not now",
-		});
-		if (!confirmed) return;
 		setUpdating(true);
 		try {
-			// The update the user was shown, even if a newer one arrived meanwhile
-			await plugin.acceptUpdate(update);
+			// Luna core shows what the update changes and asks the user, in its own window
+			await plugin.acceptUpdate();
 		} catch {
 			// The plugin shows its load error on its card
 		} finally {
 			setUpdating(false);
 		}
-	}, [plugin, update, confirm]);
+	}, [plugin]);
 
 	if (update === undefined) return null;
 	return (

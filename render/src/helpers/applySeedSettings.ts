@@ -3,6 +3,7 @@ import * as ftch from "./fetch";
 import { LunaPlugin, type LunaPluginStorage } from "../LunaPlugin";
 import { ReactiveStore } from "../ReactiveStore";
 import { coreTrace } from "../trace";
+import { userInTidal } from "./userInTidal";
 
 const { trace } = coreTrace.withSource(".applySeedSettings");
 
@@ -90,10 +91,15 @@ async function removeUndeclaredPlugins(declaredIds: string[]): Promise<Map<strin
  * Store entry names are matched first, package.json files are only fetched for ids that are still not found.
  */
 async function installPlugins(missing: Map<string, string>, storeUrls: string[]): Promise<void> {
+	let userIn: Promise<void> | undefined;
 	const install = async (id: string, url: string, pkg?: LunaPluginStorage["package"]) => {
 		missing.delete(id);
 		const plugin = await LunaPlugin.fromStorage({ url, package: pkg });
-		if (!plugin.installed) await plugin.install();
+		if (plugin.installed) return;
+		// The core asks the user before each install and refuses while TIDAL is not in use. Once they answer, the next
+		// confirmation follows without waiting (see confirmGate)
+		await (userIn ??= userInTidal());
+		await plugin.install();
 	};
 
 	const failedStores: string[] = [];

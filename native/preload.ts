@@ -1,10 +1,7 @@
-import { unloadableEmitter, type AnyFn } from "@inrixia/helpers";
-
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 
+import { exposeCore } from "./core/coreWorld";
 import { tidalMainHosts } from "./tidalHosts";
-
-const ipcRendererUnloadable = unloadableEmitter(ipcRenderer, null, "ipcRenderer");
 
 // Support both contextIsolation: true (official Tidal) and false (tidal-hifi)
 const expose = (name: string, value: any) => {
@@ -22,14 +19,8 @@ expose("__platform", process.platform);
 // Only TIDAL's own pages, the ones Luna loads into, get the IPC bridge: it reaches every handler in the main process
 const isTidalPage = location.protocol === "https:" && tidalMainHosts.has(location.hostname);
 
-// Allow render side to execute invoke
-if (isTidalPage)
-	expose("__ipcRenderer", {
-		invoke: ipcRenderer.invoke,
-		send: ipcRenderer.send,
-		on: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onU(null, channel, (_, ...args) => listener(...args)),
-		once: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onceU(null, channel, (_, ...args) => listener(...args)),
-	});
+// Luna's core world (native/core/coreWorld.ts): the page gets requests the main process answers and a filtered IPC bridge
+if (isTidalPage) exposeCore();
 
 // Luna's confirmation window opens only while TIDAL is in use (see native/core/confirmPage.ts confirmGate). Focus alone is
 // not reported by every Linux window manager, so a trusted click or key in TIDAL counts too: page code can't make one.
@@ -64,42 +55,45 @@ ipcRenderer.on("__Luna.console", (_event, prop: ConsoleMethodName, args: any[]) 
 	}
 });
 
-// Load the luna.js renderer code and store it in window.luna.core
+// Load the luna.js renderer code and store it in window.luna.core. The checks run here (the page's IPC bridge can't reach
+// these channels), the code is handed to the page
 (async () => {
 	if (!isTidalPage) return;
 	try {
-		await webFrame.executeJavaScript(
-			`(async () => {
-				// Check with the main process if this page was processed by Luna's HTTPS handler
-				const isLunaPage = await __ipcRenderer.invoke("__Luna.isLunaPage", location.href);
-				// A reload on any route but / is answered by Tidal's service worker, which never reaches the HTTPS handler,
-				// so the page loads without Luna (e.g. Tidal's "High memory - reloading web client"). Reload at / instead and
-				// put the route back before Tidal boots.
-				const restoreKey = "luna.restoreRoute";
-				if (!isLunaPage) {
-					const canRetryAtRoot = location.pathname !== "/" && sessionStorage.getItem(restoreKey) === null;
-					if (canRetryAtRoot && (await __ipcRenderer.invoke("__Luna.isLunaPage", location.origin + "/"))) {
-						console.log("[Luna.preload] Reloading at / to load Luna, then restoring:", location.href);
-						sessionStorage.setItem(restoreKey, location.pathname + location.search + location.hash);
-						location.replace("/");
-						return;
-					}
-					sessionStorage.removeItem(restoreKey);
-					console.log("[Luna.preload] Skipping non-Luna page:", location.href);
-					return;
-				}
-				const restoreRoute = sessionStorage.getItem(restoreKey);
-				if (restoreRoute !== null) {
-					sessionStorage.removeItem(restoreKey);
-					if (location.pathname === "/") history.replaceState(history.state, "", restoreRoute);
-				}
+		// Check with the main process if this page was processed by Luna's HTTPS handler
+		const isLunaPage = (href: string): Promise<boolean> => ipcRenderer.invoke("__Luna.isLunaPage", href);
+		// A reload on any route but / is answered by Tidal's service worker, which never reaches the HTTPS handler,
+		// so the page loads without Luna (e.g. Tidal's "High memory - reloading web client"). Reload at / instead and
+		// put the route back before Tidal boots.
+		const restoreKey = "luna.restoreRoute";
+		if (!(await isLunaPage(location.href))) {
+			const canRetryAtRoot = location.pathname !== "/" && sessionStorage.getItem(restoreKey) === null;
+			if (canRetryAtRoot && (await isLunaPage(location.origin + "/"))) {
+				console.log("[Luna.preload] Reloading at / to load Luna, then restoring:", location.href);
+				sessionStorage.setItem(restoreKey, location.pathname + location.search + location.hash);
+				location.replace("/");
+				return;
+			}
+			sessionStorage.removeItem(restoreKey);
+			console.log("[Luna.preload] Skipping non-Luna page:", location.href);
+			return;
+		}
+		const restoreRoute = sessionStorage.getItem(restoreKey);
+		if (restoreRoute !== null) {
+			sessionStorage.removeItem(restoreKey);
+			if (location.pathname === "/") history.replaceState(history.state, "", restoreRoute);
+		}
+		const renderJs = await ipcRenderer.invoke("__Luna.renderJs");
+		// Blob urls belong to the document, so the page can import one made here
+		const renderUrl = URL.createObjectURL(new Blob([renderJs], { type: "text/javascript" }));
 
+		try {
+			await webFrame.executeJavaScript(
+				`(async () => {
 				const originalConsole = { ...console };
 				try {
-					const renderJs = await __ipcRenderer.invoke("__Luna.renderJs");
-					const renderUrl = URL.createObjectURL(new Blob([renderJs], { type: "text/javascript" }));
 					window.luna ??= {};
-					window.luna.core = await import(renderUrl);
+					window.luna.core = await import(${JSON.stringify(renderUrl)});
 					window.luna.core.modules["@luna/core"] = window.luna.core;
 				} catch (err) {
 					setTimeout(() => {
@@ -121,8 +115,11 @@ ipcRenderer.on("__Luna.console", (_event, prop: ConsoleMethodName, args: any[]) 
 					window.console = globalThis.console = console = originalConsole;
 				}
 			})()`,
-			true,
-		);
+				true,
+			);
+		} finally {
+			URL.revokeObjectURL(renderUrl);
+		}
 	} catch (err) {
 		ipcRenderer.invoke("__Luna.preloadErr", err);
 		throw err;

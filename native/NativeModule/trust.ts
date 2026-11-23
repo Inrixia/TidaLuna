@@ -221,10 +221,8 @@ ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => {
 	resetLive();
 });
 
-// Uninstalling a plugin forgets its answers, so a reinstall asks again
-ipcHandle("__Luna.nativePermissions.forget", (_, url: unknown) => {
-	// Not undefined: that would match every entry without a url
-	if (typeof url !== "string") return;
+/** Uninstalling a plugin forgets its answers, so a reinstall asks again (native/core/registry.ts) */
+export const forgetAnswers = (url: string) => {
 	const { natives } = getStore();
 	let changed = false;
 	for (const [key, record] of Object.entries(natives)) {
@@ -236,5 +234,5 @@ ipcHandle("__Luna.nativePermissions.forget", (_, url: unknown) => {
 	resetLive();
 	// Code of the uninstalled plugin that still runs must not be allowed by another entry, or ask again
 	for (const ref of live) ref.deref()?.uninstalled(url);
-});
+};
 // #endregion

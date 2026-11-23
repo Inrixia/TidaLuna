@@ -1,7 +1,43 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 
-import { coreNativeQuestion, coreNativeRule } from "./policy";
+import { boundedCache, coreNativeQuestion, coreNativeRule, isCoreUrl, isDevUrl, nativesDiff } from "./policy";
+
+describe("core policy", () => {
+	it("tells Luna's own urls apart", () => {
+		assert.equal(isCoreUrl("https://luna/luna.lib"), true);
+		assert.equal(isCoreUrl("https://luna.example.com/x"), false);
+		assert.equal(isCoreUrl("http://luna/luna.lib"), false);
+	});
+
+	it("only treats http on host 127.0.0.1 as a dev url", () => {
+		assert.equal(isDevUrl("http://127.0.0.1:3002/Tidal Tags"), true);
+		assert.equal(isDevUrl("http://127.0.0.1/Plugin"), true);
+		assert.equal(isDevUrl("http://localhost:3000/Plugin"), false);
+		assert.equal(isDevUrl("https://127.0.0.1/Plugin"), false);
+		assert.equal(isDevUrl("http://127.0.0.1.example.com/Plugin"), false);
+		assert.equal(isDevUrl("http://127.0.0.1@example.com/Plugin"), false);
+		assert.equal(isDevUrl("not a url"), false);
+	});
+
+	it("lists added and removed native files", () => {
+		assert.deepEqual(nativesDiff(["a", "b"], ["b", "c"]), { added: ["c"], removed: ["a"] });
+		assert.deepEqual(nativesDiff([], []), { added: [], removed: [] });
+	});
+
+	it("forgets the least recently used cache entries", () => {
+		const cache = boundedCache<number>(2);
+		cache.set("a", 1);
+		cache.set("b", 2);
+		cache.get("a");
+		cache.set("c", 3);
+		assert.equal(cache.size, 2);
+		// "a" was used after "b", so "b" is the oldest
+		assert.equal(cache.get("b"), undefined);
+		assert.equal(cache.get("a"), 1);
+		assert.equal(cache.get("c"), 3);
+	});
+});
 
 describe("core native rules", () => {
 	it("denies or confirms the dangerous core natives", () => {
