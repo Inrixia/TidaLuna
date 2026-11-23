@@ -75,8 +75,8 @@ async function removeUndeclaredPlugins(declaredIds: string[]): Promise<Map<strin
 	const idsOf = (name: string, url?: string) => [name, urlName(url)].filter((id) => id !== undefined).map((id) => id.toLowerCase());
 	// Luna core holds what is installed (the page's storage is only a copy): hand over what the page had first
 	await LunaPlugin.migrateToCore();
+	// The core lists no plugin of Luna's own (https://luna/): a plugin only named like one is removed like any other
 	for (const { url, name } of await __LunaCore.list()) {
-		if (LunaPlugin.corePlugins.has(name)) continue;
 		const ids = idsOf(name, url);
 		if (ids.some((id) => declared.has(id))) {
 			for (const id of ids) missing.delete(id);

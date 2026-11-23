@@ -7,7 +7,7 @@
 import { app, net } from "electron";
 
 import { lookup } from "dns/promises";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import path from "path";
 
 import { ipcHandle } from "../ipc";
@@ -20,6 +20,7 @@ import { createNet } from "./net";
 import { createRegistry, type PluginPackage } from "./registry";
 
 const stateFile = () => path.join(app.getPath("userData"), "luna-core", "plugins.json");
+const migratedFile = () => path.join(app.getPath("userData"), "luna-core", "migrated");
 
 const fetchText = async (url: string) => {
 	const res = await net.fetch(url, { cache: "no-store", signal: AbortSignal.timeout(15000) });
@@ -64,6 +65,11 @@ export const registry = () =>
 			writeFileSync(`${file}.tmp`, JSON.stringify(state));
 			renameSync(`${file}.tmp`, file);
 		},
+		wasMigrated: () => existsSync(migratedFile()),
+		markMigrated: () => {
+			mkdirSync(path.dirname(migratedFile()), { recursive: true });
+			writeFileSync(migratedFile(), "");
+		},
 		fetchPackage: async (url) => {
 			const pkg = JSON.parse(await fetchText(`${url}.json`)) as PluginPackage;
 			if (typeof pkg?.name !== "string") throw new Error(`${url}.json has no name`);
@@ -85,26 +91,26 @@ ipcHandle("__LunaCore.list", () => registry().list());
 ipcHandle("__LunaCore.info", (_, url: unknown) => registry().info(url));
 ipcHandle("__LunaCore.needsMigration", () => registry().needsMigration());
 ipcHandle("__LunaCore.migrate", (_, entries: unknown) => registry().migrate(entries));
-ipcHandle("__LunaCore.load", (_, url: unknown) => registry().load(url));
-ipcHandle("__LunaCore.install", (event, url: unknown) => registry().install(url, askerFor(event.sender)));
-ipcHandle("__LunaCore.enable", (event, url: unknown) => registry().enable(url, askerFor(event.sender)));
-ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => registry().acceptUpdate(url, askerFor(event.sender)));
-/** Called after a plugin is disabled or uninstalled (worlds.ts lets go of its world's natives) */
-const stoppedListeners = new Set<(url: string) => void>();
-export const onPluginStopped = (listener: (url: string) => void) => void stoppedListeners.add(listener);
-const stopped = (url: unknown) => {
-	if (typeof url !== "string" || registry().isEnabled(url)) return;
-	for (const listener of stoppedListeners) listener(url);
+/**
+ * Called after a request that may change what a plugin runs (disabled, uninstalled, updated, moved), whether it went
+ * through or not: worlds.ts lets go of natives of a world that isn't the accepted one any more
+ */
+const changeListeners = new Set<(url: string) => void>();
+export const onPluginChanged = (listener: (url: string) => void) => void changeListeners.add(listener);
+const thenChanged = async <T>(urls: unknown[], task: () => Promise<T>): Promise<T> => {
+	try {
+		return await task();
+	} finally {
+		for (const url of urls) if (typeof url === "string") for (const listener of changeListeners) listener(url);
+	}
 };
-ipcHandle("__LunaCore.disable", async (_, url: unknown) => {
-	await registry().disable(url);
-	stopped(url);
-});
-ipcHandle("__LunaCore.uninstall", async (_, url: unknown) => {
-	await registry().uninstall(url);
-	stopped(url);
-});
-ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => registry().moveUrl(from, to));
+ipcHandle("__LunaCore.load", (_, url: unknown) => thenChanged([url], () => registry().load(url)));
+ipcHandle("__LunaCore.install", (event, url: unknown) => thenChanged([url], () => registry().install(url, askerFor(event.sender))));
+ipcHandle("__LunaCore.enable", (event, url: unknown) => thenChanged([url], () => registry().enable(url, askerFor(event.sender))));
+ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => thenChanged([url], () => registry().acceptUpdate(url, askerFor(event.sender))));
+ipcHandle("__LunaCore.disable", (_, url: unknown) => thenChanged([url], () => registry().disable(url)));
+ipcHandle("__LunaCore.uninstall", (_, url: unknown) => thenChanged([url], () => registry().uninstall(url)));
+ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => thenChanged([from, to], () => registry().moveUrl(from, to)));
 
 // luna.fetch (net.ts). Node's fetch, not Electron's net: no session and no cookie jar, so no cookies of the user's
 // account are sent, and none a response sets reach another plugin. It doesn't use the system's proxy settings
