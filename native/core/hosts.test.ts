@@ -160,6 +160,9 @@ describe("plugin hosts", () => {
 			"fd00::1",
 			"fe80::1%eth0",
 			"1::2::3",
+			"::ffff:0:127.0.0.1",
+			"64:ff9b:1::10.0.0.1",
+			"fec0::1",
 		])
 			assert.equal(isLocalHost(host), true, host);
 		for (const host of ["::8.8.8.8", "::ffff:8.8.8.8", "2002:808:808::1", "2001:4860:4860::8888", "64:ff9b::8.8.8.8"])

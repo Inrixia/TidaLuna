@@ -144,10 +144,14 @@ export const isLocalHost = (hostname: string): boolean => {
 		if (g === undefined) return true;
 		// Unique local fc00::/7, link-local fe80::/10
 		if ((g[0] & 0xfe00) === 0xfc00 || (g[0] & 0xffc0) === 0xfe80) return true;
+		// Site-local fec0::/10 (deprecated) and the local-use NAT64 prefix 64:ff9b:1::/48
+		if ((g[0] & 0xffc0) === 0xfec0 || (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1)) return true;
 		const v4 = (high: number, low: number) => isLocalHost(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
 		const zero = (from: number, to: number) => g.slice(from, to).every((group) => group === 0);
 		// IPv4-compatible (::a.b.c.d, also :: and ::1) and IPv4-mapped (::ffff:a.b.c.d)
 		if (zero(0, 5) && (g[5] === 0 || g[5] === 0xffff)) return v4(g[6], g[7]);
+		// IPv4-translated ::ffff:0:a.b.c.d
+		if (zero(0, 4) && g[4] === 0xffff && g[5] === 0) return v4(g[6], g[7]);
 		// NAT64 64:ff9b::a.b.c.d
 		if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) return v4(g[6], g[7]);
 		// 6to4 2002:aabb:ccdd::
