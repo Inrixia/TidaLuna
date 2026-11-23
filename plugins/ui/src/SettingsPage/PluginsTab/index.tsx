@@ -6,6 +6,7 @@ import MenuItem from "@mui/material/MenuItem";
 import { LunaPlugin } from "@luna/core";
 import { LunaPluginSettings } from "./LunaPluginSettings";
 import { ReloadAllPlugins } from "./ReloadAllPlugins";
+import { UnverifiedBanner } from "./UnverifiedBanner";
 import { installedPlugins, matchingPluginNames, watchInstalledPlugins } from "./installedPlugins";
 
 export const PluginsTab = React.memo(() => {
@@ -19,6 +20,7 @@ export const PluginsTab = React.memo(() => {
 	return (
 		<Stack spacing={2}>
 			<ReloadAllPlugins />
+			<UnverifiedBanner />
 			<Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ width: "100%", alignItems: { sm: "center" } }}>
 				<TextField
 					fullWidth

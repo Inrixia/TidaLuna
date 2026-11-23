@@ -9,8 +9,43 @@ import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
+import { RegistryBadge, registryEntryOf } from "./RegistryBadge";
+
 /** First 12 hex digits, enough to tell versions apart and compare with a published hash */
 const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slice(0, 12));
+
+/** What the plugin registry says about the new version's exact code (its raw sha256, the registry's key) */
+const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
+	const entry = registryEntryOf(plugin, update.rawSha256);
+	const title = `sha256 of the ${update.version ?? "new"} .mjs (the registry's key): ${update.rawSha256 ?? "?"}`;
+	if (entry?.revoked !== undefined)
+		return (
+			<Typography variant="body2" component="div" sx={{ color: "error.main" }} gutterBottom title={title}>
+				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} /> The Luna plugin registry revoked this version: {entry.revoked.reason}. It
+				can't be installed.
+			</Typography>
+		);
+	if (entry?.verified !== undefined)
+		return (
+			<Typography variant="body2" component="div" gutterBottom title={title}>
+				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} /> The Luna plugin registry built this version from its source and reviewed it
+				{entry.verified.report !== undefined && (
+					<>
+						:{" "}
+						<a href={entry.verified.report} target="_blank">
+							{entry.verified.report}
+						</a>
+					</>
+				)}
+				.
+			</Typography>
+		);
+	return (
+		<Typography variant="body2" sx={{ color: "warning.main" }} gutterBottom title={title}>
+			Not verified: the Luna plugin registry has no entry for this version's code (sha256 <code>{shortHash(update.rawSha256)}</code>).
+		</Typography>
+	);
+};
 
 /** What the update changes that the user should know about before running it */
 const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
@@ -23,9 +58,10 @@ const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginP
 			<Typography variant="body2" gutterBottom title={`sha256 ${plugin.package?.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
 				Code sha256: <code>{shortHash(plugin.package?.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
 			</Typography>
+			<UpdateRegistryStatus plugin={plugin} update={update} />
 			<Typography variant="body2" gutterBottom>
-				Until you update, the version you have keeps running. The new code runs with the same access to TIDAL as the plugin has now. Luna doesn't
-				check what it does: update only if you trust the author and {plugin.url}.
+				Until you update, the version you have keeps running. The new code runs with the same access to TIDAL as the plugin has now. Unless the
+				registry verified it, nobody checked what it does: update only if you trust the author and {plugin.url}.
 			</Typography>
 			{files.length !== 0 && (
 				<Typography variant="body2" gutterBottom>
@@ -56,6 +92,8 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			description: <UpdateDetails plugin={plugin} update={update} />,
 			confirmationText: "Update",
 			cancellationText: "Not now",
+			// acceptUpdate refuses a revoked version too
+			confirmationButtonProps: { disabled: plugin.revokedUpdate(update) !== undefined },
 		});
 		if (!confirmed) return;
 		setUpdating(true);

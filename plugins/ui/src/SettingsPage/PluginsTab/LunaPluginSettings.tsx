@@ -16,6 +16,7 @@ import { LunaSwitch, LunaTrashButton, SpinningButton } from "../../components";
 import { LiveReloadToggle } from "./LiveReloadToggle";
 import { LunaPluginHeader } from "./LunaPluginHeader";
 import { PluginUpdateButton } from "./PluginUpdateButton";
+import { RegistryBadge } from "./RegistryBadge";
 
 import SettingsIcon from "@mui/icons-material/Settings";
 import { grey, red } from "@mui/material/colors";
@@ -133,6 +134,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 						>
 							{collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
 						</IconButton>
+						<RegistryBadge plugin={plugin} rawSha256={pkg.rawSha256} />
 						<PluginUpdateButton plugin={plugin} />
 						{!collapsed && (
 							<>
