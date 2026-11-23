@@ -1,6 +1,6 @@
 import React from "react";
 
-import { LunaPlugin, unverifiedPlugins, type RegistryFileStatus } from "@luna/core";
+import { isCoreUrl, LunaPlugin, LunaRegistry, unverifiedPlugins, type RegistryFileStatus } from "@luna/core";
 import { effect } from "oby";
 
 import Alert from "@mui/material/Alert";
@@ -53,14 +53,24 @@ export const UnverifiedBanner = React.memo(() => {
 				: `Could not get the latest list of revoked plugins, using #${status["revoked.json"].serial}${status["revoked.json"].generated ? ` from ${status["revoked.json"].generated.slice(0, 10)}` : ""}. Plugins revoked since then still run.`}
 		</div>
 	);
-	if (unverified.length === 0)
+	if (unverified.length === 0) {
+		// Green only when there is something verified to speak of: a running plugin that isn't Luna's own, checked against a verified.json
+		const thirdParty = plugins.some(
+			(plugin) => plugin.installed && plugin.enabled && !isCoreUrl(plugin.url) && LunaRegistry.revokedEntry(plugin.rawSha256) === undefined,
+		);
+		const allVerified = thirdParty && verified !== undefined;
 		return (
-			<Alert severity={stale ? "warning" : "success"} variant="filled">
-				All enabled plugins are verified by the Luna plugin registry.
+			<Alert severity={stale ? "warning" : allVerified ? "success" : "info"} variant="filled">
+				{allVerified
+					? "All enabled plugins are verified by the Luna plugin registry."
+					: thirdParty
+						? "No enabled plugin is unverified, but the registry's list of verified plugins is not available."
+						: "No plugins other than Luna's own are enabled."}
 				{stale}
 				<Lists text={lists} />
 			</Alert>
 		);
+	}
 	return (
 		<Alert severity="warning" variant="filled">
 			<b>
