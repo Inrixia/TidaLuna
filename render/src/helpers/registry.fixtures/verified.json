@@ -1,0 +1,18 @@
+{
+	"schema": 1,
+	"serial": 3,
+	"generated": "2026-11-23T12:00:00.000Z",
+	"entries": {
+		"f78bd66d09fbd77ae03592094c6913519ef87a4623d234d3ceb0228717d48a0a": {
+			"id": "test.fixture",
+			"name": "Fixture",
+			"repo": "https://github.com/Inrixia/luna-plugins",
+			"commit": "0000000000000000000000000000000000000000",
+			"natives": {},
+			"capabilities": [],
+			"report": "https://github.com/Inrixia/luna-registry/pull/7",
+			"verifiedAt": "2026-11-23T12:00:00.000Z",
+			"sig": "USj6+Pqd44tMcjUFk+mnDLroSb/Acsa7pST3axaQB5aizNctdmii+Tl7TB0o/tv5Onvf550fvTs2eYZASjqIBA=="
+		}
+	}
+}
