@@ -1,11 +1,11 @@
 // POC offline cache for the page's requests (stale-if-error). Every GET the page makes goes through the injector's https / luna-module handlers,
 // which fetch it here: a good response is kept on disk, and when the network fails the last kept one is served instead.
 // So TIDAL never sees itself offline (its api.tidal.com/v1/ping is replayed too) and needs no hooks into its render code.
-// shortcut: the cache is never pruned, add a size cap (LRU by mtime) before this ships.
+// The folder is kept under its limit (1GB by default), least recently used responses (by mtime, a replay touches its file) go first.
 import electron from "electron";
 
 import { createHash } from "crypto";
-import { mkdir, readFile, rename, utimes, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from "fs/promises";
 import path from "path";
 
 import { tidalMainHosts } from "./tidalHosts";
@@ -46,6 +46,54 @@ let isOffline = false;
 
 type Meta = { url: string; status: number; statusText: string; headers: [string, string][]; sha256?: string };
 
+const defaultLimit = 1024 ** 3;
+/** Bytes the folder may use, `undefined` for the default of 1GB */
+let userLimit: number | undefined;
+const limit = () => userLimit ?? defaultLimit;
+/** Bytes in the folder as of the last prune plus what was written since, `undefined` until the first prune */
+let usage: number | undefined;
+// Bytes written since the last prune, the next one runs once they pass a 32nd of the limit
+let writtenBytes = 0;
+let pruning: Promise<void> | undefined;
+/** Deletes the least recently used responses (body + .json) until the folder is within its limit */
+const prune = (): Promise<void> =>
+	(pruning ??= (async () => {
+		writtenBytes = 0;
+		const dir = cacheDir();
+		const names = await readdir(dir).catch(() => <string[]>[]);
+		const kept = new Map<string, { size: number; used: number }>();
+		let bytes = 0;
+		await Promise.all(
+			names.map(async (name) => {
+				const info = await stat(path.join(dir, name)).catch(() => undefined);
+				if (info === undefined) return;
+				if (name.endsWith(".part")) {
+					// A write in progress is left alone, one older than an hour was cut off (crash, full disk)
+					if (Date.now() - info.mtimeMs > 60 * 60_000) await rm(path.join(dir, name), { force: true });
+					else bytes += info.size;
+					return;
+				}
+				bytes += info.size;
+				const key = name.replace(/\.json$/, "");
+				const entry = kept.get(key) ?? { size: 0, used: 0 };
+				entry.size += info.size;
+				entry.used = Math.max(entry.used, info.mtimeMs);
+				kept.set(key, entry);
+			}),
+		);
+		const max = limit();
+		for (const [key, { size }] of [...kept].sort(([, a], [, b]) => a.used - b.used)) {
+			if (bytes <= max) break;
+			await rm(path.join(dir, key + ".json"), { force: true });
+			await rm(path.join(dir, key), { force: true });
+			bytes -= size;
+		}
+		usage = bytes;
+	})()
+		.catch((err) => console.error("[Luna.native] [OfflineCache] Failed to prune", err))
+		.finally(() => (pruning = undefined)));
+electron.app.whenReady().then(() => setTimeout(prune, 30_000));
+
 let partId = 0;
 /** Reads a copy of the response body to its end and writes it, unless the kept copy already has the same body */
 const keep = async (file: string, meta: Meta, body: ReadableStream<Uint8Array>) => {
@@ -75,7 +123,24 @@ const keep = async (file: string, meta: Meta, body: ReadableStream<Uint8Array>) 
 	await writeFile(part, chunks);
 	await rename(part, file);
 	await writeFile(file + ".json", JSON.stringify(meta));
+	// shortcut: counts a rewrite of a kept response as new bytes, the next prune recounts the folder
+	const written = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+	writtenBytes += written;
+	if (usage !== undefined) usage += written;
+	if (writtenBytes > limit() / 32) prune();
 };
+
+export type OfflineCacheStats = { path: string; usage: number; limit: number; userLimit?: number };
+export const offlineCacheStats = async (): Promise<OfflineCacheStats> => {
+	if (usage === undefined) await prune();
+	return { path: cacheDir(), usage: usage ?? 0, limit: limit(), userLimit };
+};
+/** Bytes the cache may use, `undefined` for the default of 1GB */
+export const offlineCacheSetLimit = (bytes?: number) => {
+	userLimit = bytes;
+	return prune();
+};
+export const offlineCacheOpenFolder = () => electron.shell.openPath(cacheDir());
 
 const replay = async (file: string, req?: Request): Promise<Response | undefined> => {
 	let meta: Meta, body: Buffer<ArrayBuffer>;
@@ -84,6 +149,9 @@ const replay = async (file: string, req?: Request): Promise<Response | undefined
 	} catch {
 		return;
 	}
+	// Used now, so prune keeps it longer
+	const now = new Date();
+	utimes(file, now, now).catch(() => {});
 	const headers = new Headers(meta.headers);
 	// TIDAL takes the server time from Date (trueTime) and counts a recent one as being online
 	headers.set("date", new Date().toUTCString());

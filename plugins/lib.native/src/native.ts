@@ -24,3 +24,9 @@ export const audioCacheStatus = luna.audioCacheStatus;
 export const audioCacheStats = luna.audioCacheStats;
 export const audioCacheSetLimit = luna.audioCacheSetLimit;
 export const audioCacheOpenFolder = luna.audioCacheOpenFolder;
+
+// Offline cache, see native/offlineCache.ts
+export type { OfflineCacheStats } from "../../../native/offlineCache";
+export const offlineCacheStats = luna.offlineCacheStats;
+export const offlineCacheSetLimit = luna.offlineCacheSetLimit;
+export const offlineCacheOpenFolder = luna.offlineCacheOpenFolder;
