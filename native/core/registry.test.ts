@@ -349,6 +349,18 @@ describe("core registry", () => {
 		assert.strictEqual(registry.info(OTHER_URL)?.pending?.hash, "v2");
 	});
 
+	it("shows a change to the world alone in the update window", async () => {
+		const { deps, serveWorld } = fakeDeps();
+		serveWorld(URL, "v1", { "w.native.ts": "world native" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serveWorld(URL, "v1", { "w.native.ts": "changed world native" });
+		await registry.load(URL);
+		const ask = asker(false);
+		await registry.acceptUpdate(URL, ask);
+		assert.match(ask.asked[0].lines.join("\n"), /World sha256: \w{12} -> \w{12}/);
+	});
+
 	it("moves a world plugin silently only when the new url serves the same world", async () => {
 		const NEW_URL = "https://example.org/plugin";
 		const { deps, serveWorld } = fakeDeps();

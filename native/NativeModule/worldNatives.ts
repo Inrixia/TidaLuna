@@ -6,6 +6,9 @@ export { worldFilePrefix } from "../worldBundle";
 const loaded = new Set<string>();
 export const markWorldNative = (nativeHash: string) => void loaded.add(nativeHash);
 
+/** luna.modules name -> url of the plugin world that put it there (worlds.ts); page natives can't take these names */
+export const moduleOwners = new Map<string, string>();
+
 /** Native code of a plugin world, which page code may not register (see NativeModule/index.ts registerNative) */
 export const isWorldNative = (hash: string) =>
 	loaded.has(hash) || Object.values(getStore().natives).some((record) => record.nativeHashes?.includes(hash) === true);

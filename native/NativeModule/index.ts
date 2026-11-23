@@ -13,7 +13,7 @@ import { registry } from "../core/registryMain";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
 import { secureLoad } from "./secureLoad";
-import { isWorldNative, worldFilePrefix } from "./worldNatives";
+import { isWorldNative, moduleOwners, worldFilePrefix } from "./worldNatives";
 
 declare global {
 	var luna: {
@@ -80,6 +80,9 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: unkn
 /** Runs a native file (in its sandbox, after the user allowed it) and handles its channel */
 const loadNative = async (event: Electron.IpcMainInvokeEvent, channel: string, moduleInfo: NativeModuleInfo): Promise<string> => {
 	const { fileName, code, url, isCore } = moduleInfo;
+	// Other natives import a world's native module by name: page natives can't replace it
+	const worldOwner = moduleOwners.get(fileName);
+	if (worldOwner !== undefined) throw new Error(`[🛑Security🛑] Native module ${fileName} belongs to the plugin world of ${worldOwner}`);
 	let exports;
 	try {
 		exports = await secureLoad(moduleInfo, BrowserWindow.fromWebContents(event.sender) ?? undefined);

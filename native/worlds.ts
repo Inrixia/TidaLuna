@@ -18,19 +18,17 @@ import { registry } from "./core/registryMain";
 import { ipcHandle } from "./ipc";
 import { isIsolated } from "./isolatedContents";
 import { secureLoad } from "./NativeModule/secureLoad";
-import { markWorldNative, worldFilePrefix } from "./NativeModule/worldNatives";
+import { markWorldNative, moduleOwners, worldFilePrefix } from "./NativeModule/worldNatives";
 import { parseBundle } from "./worldBundle";
 
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
-// One isolated world per plugin url for the life of the process. 999 is Electron's preload world
-const worldIds = new Map<string, number>();
+// A new isolated world for each load (see core/coreWorld.ts). 999 is Electron's preload world
 let nextWorldId = 1001;
 
 /** `${url}\n${fileName}` -> exports, and the accepted world text they were loaded for */
 const owned = new Map<string, { exports: Record<string, unknown>; world: string }>();
-/** luna.modules name -> url of the world that put it there */
-const moduleOwners = new Map<string, string>();
+
 const ownedKey = (url: string, fileName: string) => `${url}\n${fileName}`;
 
 /**
@@ -72,9 +70,7 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 		moduleOwners.set(fileName, url);
 	}
 
-	let worldId = worldIds.get(url);
-	if (worldId === undefined) worldIds.set(url, (worldId = nextWorldId++));
-	return { worldId, code: bundle.code };
+	return { worldId: nextWorldId++, code: bundle.code };
 });
 
 ipcHandle("__LunaWorld.invoke", async (event, url: unknown, fileName: unknown, exportName: unknown, ...args: unknown[]) => {

@@ -77,12 +77,14 @@ const loadCore = async (url: string) => {
 
 // #region Plugin worlds
 // One isolated world per plugin url (see native/worlds.ts). Main loads only the world of an enabled plugin, at the
-// version the user accepted, and names its world id
-type WorldState = { worldId?: number; active: boolean; queue: Promise<unknown> };
+// version the user accepted, and names a new world id for each load: code an earlier load left running (a timer it
+// never handed to onUnload) stays in its own world, whose bridge is off for good
+type WorldLoad = { worldId: number; active: boolean };
+type WorldState = { current?: WorldLoad; queue: Promise<unknown> };
 const worlds = new Map<string, WorldState>();
 const worldOf = (url: string) => {
 	let world = worlds.get(url);
-	if (world === undefined) worlds.set(url, (world = { active: false, queue: Promise.resolve() }));
+	if (world === undefined) worlds.set(url, (world = { queue: Promise.resolve() }));
 	return world;
 };
 // One load or unload of a world at a time
@@ -92,19 +94,20 @@ const queuedWorld = <T>(world: WorldState, task: () => Promise<T>): Promise<T> =
 	return run;
 };
 const unloadWorldNow = async (world: WorldState) => {
-	if (!world.active || world.worldId === undefined) return;
+	const load = world.current;
+	if (load === undefined || !load.active) return;
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	try {
 		// Its unloads may still call its natives (e.g. to undo what they changed). Like page unloads (render/src/helpers/unloadSet.ts)
 		// they get 5s, so a hung one can't keep the plugin from unloading
 		await Promise.race([
 			// No user gesture: the world's code must not get the frame's user activation
-			webFrame.executeJavaScriptInIsolatedWorld(world.worldId, [{ code: "globalThis.__lunaWorldUnload?.()" }], false),
+			webFrame.executeJavaScriptInIsolatedWorld(load.worldId, [{ code: "globalThis.__lunaWorldUnload?.()" }], false),
 			new Promise((_, reject) => (timeout = setTimeout(() => reject(new Error("[Luna.worlds] Unload took longer than 5s to run...")), 5000))),
 		]);
 	} finally {
 		clearTimeout(timeout);
-		world.active = false;
+		load.active = false;
 	}
 };
 const loadWorld = async (url: string) => {
@@ -114,19 +117,18 @@ const loadWorld = async (url: string) => {
 		// The earlier load is stopped either way (its bridge is off): a failed unload of it must not keep the new one from loading
 		await unloadWorldNow(world).catch((err) => console.error("[Luna.worlds]", url, err));
 		const { worldId, code } = (await ipcRenderer.invoke("__LunaWorld.load", url)) as { worldId: number; code: string };
-		if (world.worldId === undefined) {
-			world.worldId = worldId;
-			webFrame.setIsolatedWorldInfo(worldId, { name: `Luna plugin ${url}` });
-			contextBridge.exposeInIsolatedWorld(worldId, "__LunaNative", {
-				url,
-				invoke: (fileName: string, exportName: string, ...args: unknown[]) => {
-					if (!world.active) return Promise.reject(new Error(`[Luna.worlds] ${url} is not loaded`));
-					return ipcRenderer.invoke("__LunaWorld.invoke", url, fileName, exportName, ...args);
-				},
-			});
-		}
 		// Active before it runs: its top level may already call its natives
-		world.active = true;
+		const load: WorldLoad = { worldId, active: true };
+		world.current = load;
+		webFrame.setIsolatedWorldInfo(worldId, { name: `Luna plugin ${url}` });
+		// This load's bridge only: it stays off once this load is unloaded, whatever loads after it
+		contextBridge.exposeInIsolatedWorld(worldId, "__LunaNative", {
+			url,
+			invoke: (fileName: string, exportName: string, ...args: unknown[]) => {
+				if (!load.active) return Promise.reject(new Error(`[Luna.worlds] ${url} is not loaded`));
+				return ipcRenderer.invoke("__LunaWorld.invoke", url, fileName, exportName, ...args);
+			},
+		});
 		try {
 			await webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code, url: `${url}.world.js` }], false);
 		} catch (err) {

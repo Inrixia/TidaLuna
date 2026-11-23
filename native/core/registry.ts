@@ -258,6 +258,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 		const lines = [
 			`${accepted.package.version ?? "?"} -> ${pending.package.version ?? "?"}`,
 			`Code sha256: ${shortHash(accepted.codeSha256)} -> ${shortHash(pending.codeSha256)}`,
+			// The world drives the plugin's natives: a change to it alone is shown too
+			...(accepted.package.worldHash !== pending.package.worldHash
+				? [`World sha256: ${shortHash(accepted.package.worldHash ?? "none")} -> ${shortHash(pending.package.worldHash ?? "none")}`]
+				: []),
 			"Until you update, the version you have keeps running.",
 			...describe(url, pending),
 		];
