@@ -6,7 +6,7 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
-import { nativeFileChanges, updateWaitsForUser } from "./helpers/pluginUpdates";
+import { isDevUrl, nativeFileChanges, updateWaitsForUser } from "./helpers/pluginUpdates";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
 
@@ -399,7 +399,7 @@ export class LunaPlugin {
 		return this.store.installed;
 	}
 	public get isDev(): boolean {
-		return this.url.startsWith("http://127.0.0.1");
+		return isDevUrl(this.url);
 	}
 	// #endregion
 

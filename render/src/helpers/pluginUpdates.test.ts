@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { nativeFileChanges, nativeFileNames, updateWaitsForUser } from "./pluginUpdates";
+import { isDevUrl, nativeFileChanges, nativeFileNames, updateWaitsForUser } from "./pluginUpdates";
 
 const installed = { codeChanged: true, hasCode: true, isDev: false, liveReload: false, isCore: false };
 
@@ -18,7 +18,16 @@ test("unchanged code, first install, dev, live reload and core plugins don't wai
 	assert.equal(updateWaitsForUser({ ...installed, isCore: true }), false);
 });
 
-const register = (file: string) => `await __ipcRenderer.invoke("__Luna.registerNative", "${file}", "export const x = 1;");`;
+test("only plugins served from 127.0.0.1 are dev plugins", () => {
+	assert.equal(isDevUrl("http://127.0.0.1:3002/Tidal Tags"), true);
+	assert.equal(isDevUrl("http://127.0.0.1/Plugin"), true);
+	assert.equal(isDevUrl("http://127.0.0.1.example.com/Plugin"), false);
+	assert.equal(isDevUrl("http://127.0.0.1@example.com/Plugin"), false);
+	assert.equal(isDevUrl("https://github.com/x/releases/download/latest/Plugin"), false);
+	assert.equal(isDevUrl("not a url"), false);
+});
+
+const register =(file: string) => `await __ipcRenderer.invoke("__Luna.registerNative", "${file}", "export const x = 1;");`;
 
 test("finds the native files a bundle registers", () => {
 	const bundle = [

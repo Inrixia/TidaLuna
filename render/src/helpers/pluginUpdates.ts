@@ -12,6 +12,19 @@ export const updateWaitsForUser = (plugin: {
 }): boolean => plugin.codeChanged && plugin.hasCode && !plugin.isDev && !plugin.liveReload && !plugin.isCore;
 
 /**
+ * A dev plugin is served from this machine (`slot.mjs serve`, `pnpm watch`): http on host 127.0.0.1, any port.
+ * Checked by host, not by prefix, so `http://127.0.0.1.example.com` or `http://127.0.0.1@example.com` don't count (dev plugins skip the update prompt).
+ */
+export const isDevUrl = (url: string): boolean => {
+	try {
+		const { protocol, hostname } = new URL(url);
+		return protocol === "http:" && hostname === "127.0.0.1";
+	} catch {
+		return false;
+	}
+};
+
+/**
  * Names of the native files a plugin bundle registers (the call build/plugins/lunaNativePlugin.ts emits, as LunaPlugin.loadExports finds it).
  * For display only: the native permission window (native/NativeModule/trust.ts) still checks each file's code before it runs.
  * native/NativeModule/permissions/verifySource.ts nativeFilesOf reads the same call, but needs Node's vm and crypto, which the renderer lacks.
