@@ -79,16 +79,15 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 			// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
 			globalThis.luna.modules[fileName] = exports;
 		}
-	} catch (err) {
-		// Free this url's names that were never filled (refused or failed natives), unless another load of it still waits
-		if (loadsInFlight.get(url) === 1)
-			for (const fileName of Object.keys(bundle.natives))
-				if (moduleOwners.get(fileName) === url && globalThis.luna.modules[fileName] === undefined) moduleOwners.delete(fileName);
-		throw err;
 	} finally {
 		const left = (loadsInFlight.get(url) ?? 1) - 1;
 		if (left > 0) loadsInFlight.set(url, left);
-		else loadsInFlight.delete(url);
+		else {
+			loadsInFlight.delete(url);
+			// The last load of this url frees its names never filled (refused or failed natives, of any of its bundles)
+			for (const [fileName, owner] of moduleOwners)
+				if (owner === url && globalThis.luna.modules[fileName] === undefined) moduleOwners.delete(fileName);
+		}
 	}
 
 	return { worldId: nextWorldId++, code: bundle.code };
