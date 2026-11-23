@@ -87,3 +87,4 @@ ipcHandle("__LunaCore.enable", (event, url: unknown) => registry().enable(url, a
 ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => registry().acceptUpdate(url, askerFor(event.sender)));
 ipcHandle("__LunaCore.disable", (_, url: unknown) => registry().disable(url));
 ipcHandle("__LunaCore.uninstall", (_, url: unknown) => registry().uninstall(url));
+ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => registry().moveUrl(from, to));

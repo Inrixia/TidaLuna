@@ -66,22 +66,31 @@ export async function applySeedSettings(): Promise<void> {
 }
 
 /**
- * Remove every stored plugin that isn't declared (core plugins are kept).
+ * Remove every installed plugin that isn't declared (core plugins are kept), from Luna core and from the page's copy.
  * Returns the declared ids (lowercase → as written) that aren't installed yet.
  */
 async function removeUndeclaredPlugins(declaredIds: string[]): Promise<Map<string, string>> {
 	const missing = new Map(declaredIds.map((id) => [id.toLowerCase(), id]));
 	const declared = new Set(missing.keys());
+	const idsOf = (name: string, url?: string) => [name, urlName(url)].filter((id) => id !== undefined).map((id) => id.toLowerCase());
+	// Luna core holds what is installed (the page's storage is only a copy): hand over what the page had first
+	await LunaPlugin.migrateToCore();
+	for (const { url, name } of await __LunaCore.list()) {
+		if (LunaPlugin.corePlugins.has(name)) continue;
+		const ids = idsOf(name, url);
+		if (ids.some((id) => declared.has(id))) {
+			for (const id of ids) missing.delete(id);
+			continue;
+		}
+		await __LunaCore.uninstall(url);
+		trace.log(`Removed plugin ${name}, it is not declared in luna-settings.json`);
+	}
+	// The page's copies of plugins that aren't declared
 	for (const name of await LunaPlugin.pluginStorage.keys()) {
 		if (LunaPlugin.corePlugins.has(name)) continue;
 		const stored = await LunaPlugin.pluginStorage.get<LunaPluginStorage>(name);
-		const ids = [name, urlName(stored?.url)].filter((id) => id !== undefined).map((id) => id.toLowerCase());
-		if (ids.some((id) => declared.has(id))) {
-			if (stored?.installed) for (const id of ids) missing.delete(id);
-			continue;
-		}
+		if (idsOf(name, stored?.url).some((id) => declared.has(id))) continue;
 		await LunaPlugin.pluginStorage.del(name);
-		trace.log(`Removed plugin ${name}, it is not declared in luna-settings.json`);
 	}
 	return missing;
 }

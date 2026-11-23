@@ -143,7 +143,8 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 									/>
 								)}
 								<SpinningButton title="Reload plugin" spin={loading} disabled={disabled} onClick={handleReload} />
-								<LiveReloadToggle plugin={plugin} disabled={disabled} sx={{ marginLeft: 1 }} />
+								{/* Luna core runs a new version of other urls only once the user accepts it: live reload is for dev urls */}
+								{(isCore || plugin.isDev) && <LiveReloadToggle plugin={plugin} disabled={disabled} sx={{ marginLeft: 1 }} />}
 								<SpinningButton
 									title={hideSettings ? "Show settings" : "Hide settings"}
 									spin={loading}

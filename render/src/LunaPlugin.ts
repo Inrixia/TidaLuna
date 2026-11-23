@@ -188,31 +188,51 @@ export class LunaPlugin {
 	// Moves installed plugins to a new store url <3
 	public static async migrateBaseUrl(fromBaseUrl: string, toBaseUrl: string): Promise<void> {
 		const fromPrefix = `${fromBaseUrl}/`.toLowerCase();
-		for (const name of await this.pluginStorage.keys()) {
-			const store = await this.pluginStorage.getReactive<LunaPluginStorage>(name);
-			if (!store.url?.toLowerCase().startsWith(fromPrefix)) continue;
-
-			const newUrl = `${toBaseUrl}/${store.url.slice(fromPrefix.length)}`;
+		await this.migrateToCore();
+		// Luna core holds what is installed: its record moves (other code at the new url waits as an update), the page's copy follows
+		for (const { url, name } of await __LunaCore.list()) {
+			if (!url.toLowerCase().startsWith(fromPrefix)) continue;
+			const newUrl = `${toBaseUrl}/${url.slice(fromPrefix.length)}`;
+			try {
+				await __LunaCore.moveUrl(url, newUrl);
+			} catch (err) {
+				this.trace.msg.err.withContext(`Failed to move plugin ${name} to ${newUrl}`)(err);
+				continue;
+			}
 			// Re-key loaded plugin so it isnt duplicated <3
-			const plugin = this.plugins[store.url];
+			const plugin = this.plugins[url];
 			if (plugin !== undefined) {
-				delete this.plugins[store.url];
+				delete this.plugins[url];
 				this.plugins[newUrl] = plugin;
 			}
-			this.trace.log(`Migrating plugin ${name} from ${store.url} to ${newUrl}`);
-			store.url = newUrl;
+			this.trace.log(`Migrating plugin ${name} from ${url} to ${newUrl}`);
+			const store = await this.pluginStorage.getReactive<LunaPluginStorage>(name);
+			if (store.url === url) store.url = newUrl;
+			if (plugin !== undefined && plugin.store.url === url) plugin.store.url = newUrl;
 		}
 	}
 
-	public static async loadStoredPlugins() {
-		// The first start with Luna core hands over what the page had stored (native plugins then wait for the user)
-		if (await __LunaCore.needsMigration()) {
+	private static migrated?: Promise<void>;
+	/** The first start with Luna core hands over what the page had stored (native plugins then wait for the user) */
+	public static migrateToCore(): Promise<void> {
+		return (this.migrated ??= (async () => {
+			if (!(await __LunaCore.needsMigration())) return;
 			const stored = await LunaPlugin.pluginStorage.dump();
-			const entries = Object.values(stored).flatMap((value: any) =>
-				value?.installed && typeof value.url === "string" ? [{ url: value.url, name: value.package?.name, enabled: value.enabled === true }] : [],
+			const entries = Object.entries(stored).flatMap(([key, value]: [string, any]) =>
+				value?.installed && typeof value.url === "string"
+					? [{ url: value.url, name: typeof value.package?.name === "string" ? value.package.name : key, enabled: value.enabled === true }]
+					: [],
 			);
 			await __LunaCore.migrate(entries);
-		}
+		})().catch((err) => {
+			// Tried again by the next caller
+			this.migrated = undefined;
+			throw err;
+		}));
+	}
+
+	public static async loadStoredPlugins() {
+		await this.migrateToCore();
 		// What is installed comes from Luna core, not from the page's storage (page code can write that)
 		const installed = await __LunaCore.list();
 		return Promise.all(
@@ -498,6 +518,18 @@ export class LunaPlugin {
 		try {
 			this.loading._ = true;
 			await this.loadExports();
+			if (!isCoreUrl(this.url)) {
+				// The switch shows Luna core's state: it may have refused to run the plugin (a migrated native plugin waits
+				// until the user enables it again, which shows them its native code)
+				const info = await __LunaCore.info(this.url);
+				this.store.installed = info !== undefined;
+				this.setPendingUpdate(info?.pending);
+				if (info?.enabled !== true) {
+					this._enabled._ = false;
+					if (this.coreRefusal !== undefined) this.trace.msg.warn(this.coreRefusal);
+					return;
+				}
+			}
 			this._enabled._ = true;
 			this.store.installed = true;
 			// Ensure live reload is running it it should be
@@ -613,9 +645,11 @@ export class LunaPlugin {
 	 * Gets the code to run from Luna core: the version the user accepted (Luna's own plugins: what its bundle serves).
 	 * Returns true if code changed, should never be called outside of loadExports
 	 */
+	private coreRefusal?: string;
 	private async fetchPackage(): Promise<boolean> {
 		try {
 			this.fetching._ = true;
+			this.coreRefusal = undefined;
 			const { package: newPackage, code, pending } = await __LunaCore.load(this.url);
 			const codeChanged = this.package?.hash !== newPackage.hash || this.code !== code;
 			this.package = { ...newPackage, code };
@@ -623,7 +657,8 @@ export class LunaPlugin {
 			return codeChanged;
 		} catch (err) {
 			// The core runs nothing it hasn't got: the page's copy of the code must not run instead
-			this.trace.warn(`Failed to get code from Luna core: ${(err as Error)?.message ?? err}`);
+			this.coreRefusal = `Failed to get code from Luna core: ${(err as Error)?.message ?? err}`;
+			this.trace.warn(this.coreRefusal);
 			if (this.package !== undefined) this.package = { ...this.package, code: undefined };
 		} finally {
 			this.fetching._ = false;

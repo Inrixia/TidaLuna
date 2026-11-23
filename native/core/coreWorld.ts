@@ -99,6 +99,7 @@ export const exposeCore = () => {
 		acceptUpdate: (url: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.acceptUpdate", url),
 		disable: (url: unknown): Promise<void> => ipcRenderer.invoke("__LunaCore.disable", url),
 		uninstall: (url: unknown): Promise<void> => ipcRenderer.invoke("__LunaCore.uninstall", url),
+		moveUrl: (from: unknown, to: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.moveUrl", from, to),
 	});
 };
 // #endregion

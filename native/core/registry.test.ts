@@ -196,6 +196,9 @@ describe("core registry", () => {
 
 		await assert.rejects(registry.load(URL), /has native code/);
 		assert.strictEqual(registry.isEnabled(URL), false);
+		// Waiting for its first review, not an update: the page shows it disabled, with no Update button
+		assert.strictEqual(registry.info(URL)?.pending, undefined);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), false);
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
 		assert.strictEqual((await registry.load(DEV_URL)).package.hash, "d1");
 
@@ -258,5 +261,42 @@ describe("core registry", () => {
 		assert.strictEqual(ask.asked.length, 0);
 		await assert.rejects(registry.install("file:///C:/x", ask), /Not a plugin url/);
 		assert.throws(() => registry.info(42), /Not a plugin url/);
+	});
+
+	it("moves a plugin to a new store url, other code there waits as an update", async () => {
+		const NEW_URL = "https://example.org/plugin";
+		const { deps, serve, served, forgotten } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+
+		// The same code (fetchCode adds the url's sourceURL in Luna; the fake serves it bare)
+		served.set(NEW_URL, served.get(URL)!);
+		assert.strictEqual(await registry.moveUrl(URL, NEW_URL), true);
+		assert.strictEqual(registry.info(URL), undefined);
+		assert.strictEqual(registry.info(NEW_URL)?.enabled, true);
+		assert.strictEqual(registry.info(NEW_URL)?.pending, undefined);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), NEW_URL);
+		assert.deepStrictEqual(forgotten, [URL]);
+
+		const OTHER_URL = "https://example.net/plugin";
+		serve(OTHER_URL, "v2");
+		assert.strictEqual(await registry.moveUrl(NEW_URL, OTHER_URL), true);
+		assert.strictEqual(registry.info(OTHER_URL)?.hash, "v1");
+		assert.strictEqual(registry.info(OTHER_URL)?.pending?.hash, "v2");
+	});
+
+	it("doesn't move to or from a dev url, nor over an installed plugin", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		serve(DEV_URL, "d1");
+		serve("https://example.org/plugin", "v2");
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		await registry.install("https://example.org/plugin", asker(true));
+		await assert.rejects(registry.moveUrl(URL, DEV_URL), /Can't move/);
+		await assert.rejects(registry.moveUrl(URL, "https://example.org/plugin"), /already installed/);
+		assert.strictEqual(await registry.moveUrl("https://example.com/none", "https://example.com/other"), false);
+		assert.strictEqual(registry.info(URL)?.hash, "v1");
 	});
 });

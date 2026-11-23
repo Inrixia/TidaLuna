@@ -1,5 +1,5 @@
 import { ReactiveStore } from "./ReactiveStore";
-import { LunaPlugin } from "./LunaPlugin";
+import { LunaPlugin, type LunaPluginStorage } from "./LunaPlugin";
 
 export interface ExportData
 {
@@ -38,7 +38,12 @@ export class SettingsTransfer
 		};
 	}
 
-	public static async restore(data: ExportData)
+	/**
+	 * Writes the exported stores back. The installed plugins live in Luna core, not in the page's storage: the
+	 * exported ones are installed through it (it asks the user for each, in its own window) and the others uninstalled.
+	 * @returns The plugins that were not installed (cancelled, or the core could not ask)
+	 */
+	public static async restore(data: ExportData): Promise<string[]>
 	{
 		for (const store of this.exportableStores)
 		{
@@ -51,6 +56,45 @@ export class SettingsTransfer
 			for (const [key, value] of Object.entries(storeData))
 				await store.set(key, value);
 		}
+
+		const plugins = data.stores[LunaPlugin.pluginStorage.idbName];
+		if (!plugins)
+			return [];
+		const wanted = new Map<string, { name: string; enabled: boolean }>();
+		for (const [key, value] of Object.entries(plugins))
+		{
+			const entry = value as Partial<LunaPluginStorage> | null;
+			if (entry?.installed !== true || typeof entry.url !== "string" || !/^https?:\/\//.test(entry.url) || LunaPlugin.corePlugins.has(key))
+				continue;
+			wanted.set(entry.url, { name: typeof entry.package?.name === "string" ? entry.package.name : key, enabled: entry.enabled !== false });
+		}
+
+		await LunaPlugin.migrateToCore();
+		for (const { url } of await __LunaCore.list())
+			if (!wanted.has(url))
+				await __LunaCore.uninstall(url);
+
+		const notInstalled: string[] = [];
+		for (const [url, { name, enabled }] of wanted)
+		{
+			try
+			{
+				// One window at a time: the user's answer lets the next one open (see confirmGate)
+				if (!(await __LunaCore.install(url)))
+				{
+					notInstalled.push(name);
+					continue;
+				}
+				if (!enabled)
+					await __LunaCore.disable(url);
+			}
+			catch (err)
+			{
+				console.warn(`[Luna] Failed to install ${name} from the imported settings`, err);
+				notInstalled.push(name);
+			}
+		}
+		return notInstalled;
 	}
 
 	public static validate(data: unknown): data is ExportData
