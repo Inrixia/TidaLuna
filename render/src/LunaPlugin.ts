@@ -186,8 +186,8 @@ export class LunaPlugin {
 			else if (next.action === "load") loads.push(plugin);
 		}
 		const stop = (plugin: LunaPlugin) => plugin.stopRevoked().catch(plugin.trace.err.withContext("Failed to stop revoked plugin"));
-		// Revoked plugins stop at once (a slow one doesn't hold the others up), except dependants of another one stopping: its unload unloads them,
-		// and unloading them at the same time would run their unloads twice. They are marked after
+		// Revoked plugins stop at once (a slow one doesn't hold the others up), except dependants of another one stopping: its unload unloads them
+		// (they are marked after). A dependant two of them share is unloaded once, see unload
 		const first = stops.filter((plugin) => !dependsOnAny(plugin, stops));
 		await Promise.all(first.map(stop));
 		for (const plugin of stops) if (!first.includes(plugin)) await stop(plugin);
@@ -514,7 +514,15 @@ export class LunaPlugin {
 	 * Are you sure you didnt mean disable() or reload()?
 	 * This will unload the plugin without disabling it!
 	 */
-	private async unload(): Promise<void> {
+	private unloading?: Promise<void>;
+	/**
+	 * Unload this plugin and its dependants. Callers at the same time share one unload: two revoked plugins stopping at once
+	 * (LunaPlugin.applyRevocations) can both reach a dependant they share, whose unloads must run once
+	 */
+	private unload(): Promise<void> {
+		return (this.unloading ??= this.unloadOnce().finally(() => (this.unloading = undefined)));
+	}
+	private async unloadOnce(): Promise<void> {
 		const wasLoaded = this.exports !== undefined;
 		try {
 			this.loading._ = true;
