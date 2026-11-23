@@ -7,6 +7,8 @@ import { BrowserWindow } from "electron";
 import { ipcHandle } from "../ipc";
 
 import { createHash } from "crypto";
+import { askerFor } from "../core/confirmWindow";
+import { coreNativeQuestion, coreNativeRule } from "../core/policy";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
 import { secureLoad } from "./secureLoad";
@@ -57,7 +59,16 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 	globalThis.luna.modules[fileName] = exports;
 	const channel = `__LunaNative.${fileName}`;
 
-	ipcHandle(channel, async (_, exportName, ...args) => {
+	ipcHandle(channel, async (event, exportName, ...args) => {
+		// Luna's own natives are open to all page code: some may not be called from there, some only after the user confirms
+		if (moduleInfo.isCore) {
+			const rule = coreNativeRule(String(exportName));
+			if (rule === "deny") throw new Error(`[🛑Security🛑] ${String(exportName)} can't be called from the page`);
+			if (rule === "confirm") {
+				const [title, lines, confirmText] = coreNativeQuestion(String(exportName), args);
+				if (!(await askerFor(event.sender)({ title, lines, confirmText }))) throw new Error(`[Luna] ${String(exportName)} cancelled by the user`);
+			}
+		}
 		try {
 			return await exports[exportName](...args);
 		} catch (err: any) {
