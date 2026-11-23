@@ -1,4 +1,4 @@
-import { parseDasha, type DashManifest } from "./getPlaybackInfo.dasha.native";
+import { parseDashManifest, type DashManifest } from "./parseDashManifest";
 
 import type { PlaybackInfoResponse, VideoPlaybackInfoResponse, VideoQuality } from "../classes/TidalApi";
 import { TidalApi } from "../classes/TidalApi";
@@ -36,7 +36,7 @@ export const getPlaybackInfo = async (mediaItemId: ItemId, audioQuality: AudioQu
 			return { ...playbackInfo, manifestMimeType: playbackInfo.manifestMimeType, manifest, mimeType: manifest.mimeType };
 		}
 		case "application/dash+xml": {
-			const manifest = await parseDasha(atob(playbackInfo.manifest), "https://sp-ad-cf.audio.tidal.com");
+			const manifest = parseDashManifest(atob(playbackInfo.manifest), "https://sp-ad-cf.audio.tidal.com");
 			return { ...playbackInfo, manifestMimeType: playbackInfo.manifestMimeType, manifest, mimeType: "audio/mp4" };
 		}
 		default: {

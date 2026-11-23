@@ -9,7 +9,6 @@
 	"exports": "./src/index.ts",
 	"dependencies": {
 		"@tidal-music/api": "0.57.0",
-		"dasha": "3.2.0",
 		"mediabunny": "^1.66.2",
 		"music-metadata": "^12.7.0",
 		"node-taglib-sharp": "^6.0.3",
