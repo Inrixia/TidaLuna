@@ -431,7 +431,12 @@ export class LunaPlugin {
 	public addDependant(plugin: LunaPlugin) {
 		if (!(plugin instanceof LunaPlugin)) throw new Error("Cannot add dependancy to non plugin!");
 		this.dependants.add(plugin);
+		plugin.importing?.add(this);
 	}
+	/** While this plugin's module is imported: the plugins it imports (see loadExports) */
+	private importing?: Set<LunaPlugin>;
+	/** Counts this plugin's unloads, so a dependant can tell its dependency was unloaded while it was imported */
+	private unloadCount = 0;
 	/**
 	 * Another enabled plugin that `dependant` depends on and that has not finished loading, if any.
 	 * That plugin will load `dependant` itself once its own exports are available.
@@ -536,7 +541,10 @@ export class LunaPlugin {
 			this.exports = undefined;
 			this.loading._ = false;
 			delete modules[this.name];
-			if (wasLoaded) this.trace.log("Unloaded");
+			if (wasLoaded) {
+				this.unloadCount++;
+				this.trace.log("Unloaded");
+			}
 		}
 	}
 	/**
@@ -949,9 +957,14 @@ export class LunaPlugin {
 			this.revoked._ = undefined;
 
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+			// The plugins this code imports and how often each was unloaded so far: one unloaded during the import (revoked, disabled
+			// or reloading) found no exports here to unload, see below
+			const unloadCounts = new Map(Object.values(LunaPlugin.plugins).map((plugin) => [plugin.url, plugin.unloadCount]));
+			const imported = (this.importing = new Set());
 			try {
 				this.exports = await import(blobURL);
 			} finally {
+				this.importing = undefined;
 				// The imported module stays alive; the blob would otherwise keep a copy of the code per load
 				URL.revokeObjectURL(blobURL);
 			}
@@ -984,9 +997,9 @@ export class LunaPlugin {
 				await this.unload();
 				return this.stopAsRevoked(late.revoked);
 			}
-			// A dependency unloaded during the import (revoked, or reloading): its unload found no exports here to unload, and it loads this
-			// plugin itself once it loads again. Running now would keep the exports it unloaded
-			const dependency = this.pendingDependencyOf(this);
+			// A dependency unloaded during the import: running now would keep the exports it unloaded. It loads this plugin once it loads again
+			// (a dependency reloaded meanwhile already queued that load)
+			const dependency = [...imported].find((plugin) => plugin.unloadCount !== unloadCounts.get(plugin.url) || plugin.exports === undefined);
 			if (dependency !== undefined) {
 				await this.unload();
 				this.loadError._ =
