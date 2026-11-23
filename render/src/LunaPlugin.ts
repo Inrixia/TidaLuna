@@ -587,12 +587,9 @@ export class LunaPlugin {
 	public async enable(queued = false) {
 		try {
 			this.loading._ = true;
-			await this.loadExports();
-			if (queued && !(this.enabled && this.installed !== false)) {
-				// Turned off meanwhile (disable and uninstall don't wait for loads): the user's choice stands
-				await this.unload();
-				return;
-			}
+			await this.loadExports(undefined, undefined, queued);
+			// Turned off while queued (see loadExports): the user's choice stands
+			if (queued && !this.wanted) return;
 			this._enabled._ = true;
 			// Loaded, or refused (revoked) or waiting for a dependency, not failed: the user's choice is stored (the setter skips it while there is
 			// a load error), so the plugin loads once the revocation is lifted or the dependency loads, also after a restart
@@ -704,8 +701,9 @@ export class LunaPlugin {
 			for (const dependant of plugin.dependants) {
 				if (seen.has(dependant)) continue;
 				seen.add(dependant);
-				if (dependant.exports === undefined && dependant.enabled && dependant.installed !== false)
-					dependant.loadError._ = dependencyWaitMessage({ name: this.name, revoked: true, pending: false });
+				// Only the ones down because of it (enabled, not loaded), and through them only: one that is off stops the chain
+				if (dependant.exports !== undefined || !dependant.enabled || dependant.installed === false) continue;
+				dependant.loadError._ = dependencyWaitMessage({ name: this.name, revoked: true, pending: false });
 				mark(dependant);
 			}
 		};
@@ -952,9 +950,21 @@ export class LunaPlugin {
 	/**
 	 * @param update A pending update the user accepted, stored before fetching (see acceptUpdate)
 	 */
-	private async loadExports(reload?: true, update?: PluginPackage): Promise<void> {
+	/** Whether the user still wants this plugin running (enabled and installed) */
+	private get wanted(): boolean {
+		return this.enabled && this.installed !== false;
+	}
+	/**
+	 * `queued`: a load for an enabled plugin (load()), which may wait on the semaphore and fetch while the user disables or uninstalls it
+	 * (they don't wait for loads): it stops wherever it finds that, and unloads if it got as far as importing
+	 */
+	private async loadExports(reload?: true, update?: PluginPackage, queued?: boolean): Promise<void> {
 		// Ensure we cant start loading midway through loading
 		const release = await this.loadSemaphore.obtain();
+		if (queued && !this.wanted) {
+			release();
+			return;
+		}
 		// The list may have changed while waiting for the semaphore: a revoked update replaces nothing and the running version keeps running
 		const revokedUpdate = update !== undefined ? this.revokedUpdate(update) : undefined;
 		if (revokedUpdate !== undefined) {
@@ -966,6 +976,7 @@ export class LunaPlugin {
 			if (update !== undefined) replaced = { previous: this.applyUpdate(update) };
 			// If code hasnt changed and we have already loaded exports we are done
 			const codeChanged = await this.fetchPackage();
+			if (queued && !this.wanted) return;
 			if (!reload && !codeChanged && this.exports !== undefined) return;
 
 			// If code failed to fetch then nothing we can do
@@ -1028,6 +1039,11 @@ export class LunaPlugin {
 				unload.source = this.name + (unload.source ? `.${unload.source}` : "");
 			}
 
+			// Turned off during the import: its unload found no exports to unload, so unload here (before the dependants loop below loads any)
+			if (queued && !this.wanted) {
+				await this.unload();
+				return;
+			}
 			// A revoked.json accepted during the import: applyRevocations skipped this plugin (no exports yet), so it is stopped here,
 			// once its unloads are known
 			const late = LunaRegistry.loadDecision({ url: this.url, rawSha256: keys });
