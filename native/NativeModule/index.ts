@@ -72,6 +72,8 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: unkn
 		return done;
 	}
 	const url = registry().nativeOwner(fileName, code);
+	const refusal = url === undefined ? registry().legacyRefusal(fileName, code) : undefined;
+	if (refusal !== undefined) throw new Error(`[🛑Security🛑] ${refusal}`);
 	if (url === undefined)
 		throw new Error(`[🛑Security🛑] '${fileName}' is not native code of an enabled plugin: native code registers only through Luna core`);
 	return loadNative(event, channel, { fileName, code, hash, url, isCore: false });

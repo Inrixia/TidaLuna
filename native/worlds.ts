@@ -14,7 +14,7 @@ import { BrowserWindow } from "electron";
 
 import { createHash } from "crypto";
 
-import { lunaNet, registry } from "./core/registryMain";
+import { lunaNet, onPluginStopped, registry } from "./core/registryMain";
 import { ipcHandle } from "./ipc";
 import { isIsolated } from "./isolatedContents";
 import { secureLoad } from "./NativeModule/secureLoad";
@@ -32,6 +32,28 @@ const owned = new Map<string, { exports: Record<string, unknown>; world: string 
 const ownedKey = (url: string, fileName: string) => `${url}\n${fileName}`;
 // Loads of each url still running: a url's names are freed only once none of them is
 const loadsInFlight = new Map<string, number>();
+// The latest load of each url: an older one still waiting on the user fills nothing (see release)
+const generations = new Map<string, number>();
+const nextGeneration = (url: string) => {
+	const generation = (generations.get(url) ?? 0) + 1;
+	generations.set(url, generation);
+	return generation;
+};
+
+/** Takes a url's world natives out of `luna.modules` (other natives import them by name). `keep`: names its new load still has */
+const releaseModules = (url: string, keep: ReadonlySet<string> = new Set()) => {
+	for (const [fileName, owner] of moduleOwners) {
+		if (owner !== url || keep.has(fileName)) continue;
+		moduleOwners.delete(fileName);
+		delete globalThis.luna.modules[fileName];
+	}
+};
+// Disabled or uninstalled: nothing of its world stays reachable, and a load of it still running fills nothing
+onPluginStopped((url) => {
+	nextGeneration(url);
+	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
+	releaseModules(url);
+});
 
 /**
  * Without contextIsolation the page shares the preload's realm and could send these channels itself, with any url:
@@ -57,6 +79,7 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 	// Reserved now, before any wait: a page native or another world taking the same name meanwhile is refused
 	for (const fileName of Object.keys(bundle.natives)) moduleOwners.set(fileName, url);
 	loadsInFlight.set(url, (loadsInFlight.get(url) ?? 0) + 1);
+	const generation = nextGeneration(url);
 
 	// Natives of an earlier load of this url can't be called any more, whatever happens below
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
@@ -74,11 +97,16 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 			);
 			if ((moduleOwners.get(fileName) ?? url) !== url)
 				throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} was taken by another plugin while loading`);
+			// A newer load of this url, or a disable, came while the user was asked: the newer state wins
+			if (generations.get(url) !== generation || registry().acceptedWorld(url) !== accepted)
+				throw new Error(`[Luna.worlds] ${url}: a newer load or a disable replaced this load`);
 			moduleOwners.set(fileName, url);
 			owned.set(ownedKey(url, fileName), { exports, world: accepted });
 			// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
 			globalThis.luna.modules[fileName] = exports;
 		}
+		// Natives an earlier version had and this one dropped
+		releaseModules(url, new Set(Object.keys(bundle.natives)));
 	} finally {
 		const left = (loadsInFlight.get(url) ?? 1) - 1;
 		if (left > 0) loadsInFlight.set(url, left);

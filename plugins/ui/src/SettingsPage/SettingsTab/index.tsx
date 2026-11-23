@@ -16,7 +16,7 @@ import { LunaVersionInfo } from "./LunaVersionInfo";
 export const SettingsTab = React.memo(() => {
 	const corePlugins = [];
 	for (const plugin of Object.values(LunaPlugin.plugins)) {
-		if (!LunaPlugin.corePlugins.has(plugin.name)) continue;
+		if (!plugin.isCore) continue;
 		corePlugins.push(<LunaPluginSettings key={plugin.url} plugin={plugin} />);
 	}
 	return (

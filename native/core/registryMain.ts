@@ -88,8 +88,21 @@ ipcHandle("__LunaCore.load", (_, url: unknown) => registry().load(url));
 ipcHandle("__LunaCore.install", (event, url: unknown) => registry().install(url, askerFor(event.sender)));
 ipcHandle("__LunaCore.enable", (event, url: unknown) => registry().enable(url, askerFor(event.sender)));
 ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => registry().acceptUpdate(url, askerFor(event.sender)));
-ipcHandle("__LunaCore.disable", (_, url: unknown) => registry().disable(url));
-ipcHandle("__LunaCore.uninstall", (_, url: unknown) => registry().uninstall(url));
+/** Called after a plugin is disabled or uninstalled (worlds.ts lets go of its world's natives) */
+const stoppedListeners = new Set<(url: string) => void>();
+export const onPluginStopped = (listener: (url: string) => void) => void stoppedListeners.add(listener);
+const stopped = (url: unknown) => {
+	if (typeof url !== "string" || registry().isEnabled(url)) return;
+	for (const listener of stoppedListeners) listener(url);
+};
+ipcHandle("__LunaCore.disable", async (_, url: unknown) => {
+	await registry().disable(url);
+	stopped(url);
+});
+ipcHandle("__LunaCore.uninstall", async (_, url: unknown) => {
+	await registry().uninstall(url);
+	stopped(url);
+});
 ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => registry().moveUrl(from, to));
 
 // luna.fetch (net.ts). Node's fetch, not Electron's net: no TIDAL session, so no cookies of the user's account are sent

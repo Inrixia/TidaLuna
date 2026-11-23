@@ -224,7 +224,15 @@ export class LunaPlugin {
 			const stored = await LunaPlugin.pluginStorage.dump();
 			const entries = Object.entries(stored).flatMap(([key, value]: [string, any]) =>
 				value?.installed && typeof value.url === "string"
-					? [{ url: value.url, name: typeof value.package?.name === "string" ? value.package.name : key, enabled: value.enabled === true }]
+					? [
+							{
+								url: value.url,
+								name: typeof value.package?.name === "string" ? value.package.name : key,
+								enabled: value.enabled === true,
+								// The version installed before Luna core: only it keeps the old native format (registry.ts LegacyEntry)
+								hash: typeof value.package?.hash === "string" ? value.package.hash : undefined,
+							},
+						]
 					: [],
 			);
 			await __LunaCore.migrate(entries);
@@ -256,7 +264,7 @@ export class LunaPlugin {
 	 */
 	public static async reloadAll(): Promise<LunaPlugin[]> {
 		const plugins = Object.values(LunaPlugin.plugins).filter(
-			(plugin) => plugin.installed && plugin.enabled && !LunaPlugin.corePlugins.has(plugin.name),
+			(plugin) => plugin.installed && plugin.enabled && !plugin.isCore,
 		);
 		const failed: LunaPlugin[] = [];
 		const dependants: LunaPlugin[] = [];
@@ -421,7 +429,7 @@ export class LunaPlugin {
 	 */
 	public static fromStack(stack?: string): LunaPlugin | undefined {
 		if (stack === undefined) return undefined;
-		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !LunaPlugin.corePlugins.has(plugin.name) && plugin.url.length > 0);
+		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !plugin.isCore && plugin.url.length > 0);
 		for (const frame of stack.split("\n")) {
 			const plugin = plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
 			if (plugin !== undefined) return plugin;
@@ -448,6 +456,10 @@ export class LunaPlugin {
 	}
 	public get installed(): boolean {
 		return this.store.installed;
+	}
+	/** One of Luna's own plugins: served from its bundle (`https://luna/`), not just named like one */
+	public get isCore(): boolean {
+		return isCoreUrl(this.url) && LunaPlugin.corePlugins.has(this.name);
 	}
 	public get isDev(): boolean {
 		return isDevUrl(this.url);
