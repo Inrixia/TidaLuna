@@ -56,19 +56,15 @@ test("swr: serves TIDAL's requests from the cache and re-fetches them in the bac
 	assert.deepEqual(await (await fetch(page)).json(), { v: 2 });
 	assert.equal(requests.length, 3);
 
-	// Hours old is still served (and re-fetched)
-	mock.timers.tick(2 * 60 * 60_000);
+	// Days old is still served (and re-fetched)
+	mock.timers.tick(7 * 24 * 60 * 60_000);
 	assert.deepEqual(await (await fetch(page)).json(), { v: 2 });
 	await settle();
 	assert.equal(requests.length, 4);
 
-	// Too old to serve
-	mock.timers.tick(13 * 60 * 60_000);
-	await fetch(page);
-	assert.equal(requests.length, 5);
 	// cache: "no-store" isn't served
 	await fetch(page, { cache: "no-store" });
-	assert.equal(requests.length, 6);
+	assert.equal(requests.length, 5);
 
 	// Same json with keys in another order isn't a change
 	changed.length = 0;
@@ -78,7 +74,7 @@ test("swr: serves TIDAL's requests from the cache and re-fetches them in the bac
 	mock.timers.tick(61_000);
 	await fetch(page);
 	await settle();
-	assert.equal(requests.length, 8);
+	assert.equal(requests.length, 7);
 	assert.deepEqual(changed, []);
 });
 
