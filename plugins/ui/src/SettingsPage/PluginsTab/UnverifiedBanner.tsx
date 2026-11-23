@@ -22,9 +22,7 @@ const Lists = ({ text }: { text: string }) => <div style={{ opacity: 0.7, fontSi
  */
 export const UnverifiedBanner = React.memo(() => {
 	const { verified, revoked, status } = useRegistry();
-	const [plugins, setPlugins] = React.useState<
-		{ url: string; name: string; installed: boolean; enabled: boolean; rawSha256: CodeSha256 }[]
-	>([]);
+	const [plugins, setPlugins] = React.useState<{ url: string; name: string; installed: boolean; enabled: boolean; rawSha256: CodeSha256 }[]>([]);
 	// The fields read here are oby-tracked: re-run when plugins are added, enabled, disabled, or their code changes
 	React.useEffect(
 		() =>

@@ -19,7 +19,8 @@ export const useRegistry = () => {
 	return { verified, revoked, status };
 };
 
-export type RegistryEntry = { revoked: RevokedEntry; verified?: undefined } | { verified: VerifiedEntry; sha256: string; revoked?: undefined } | undefined;
+export type RegistryEntry =
+	{ revoked: RevokedEntry; verified?: undefined } | { verified: VerifiedEntry; sha256: string; revoked?: undefined } | undefined;
 /**
  * What the registry says about this code of this plugin: revoked, verified (for `name`, the name the code carries) or nothing.
  * Luna's own plugins: nothing. `rawSha256`: the code's registry key, or the keys it may have (see packageSha256s)

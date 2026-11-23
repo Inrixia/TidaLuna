@@ -237,6 +237,21 @@ export const versionToRestore = <P extends { rawSha256?: string }>(
 	current: { rawSha256?: string } | undefined,
 ): P | undefined => (replaced !== undefined && current?.rawSha256 === replaced.rawSha256 ? replaced.previous : undefined);
 
+/** Whether `plugin` is a dependant, directly or through others, of one of `plugins` (dependants: the plugins that import it) */
+export const dependsOnAny = <P extends { dependants: Set<P> }>(plugin: P, plugins: readonly P[]): boolean => {
+	const seen = new Set<P>();
+	const walk = (from: P): boolean => {
+		for (const dependant of from.dependants) {
+			if (dependant === plugin) return true;
+			if (seen.has(dependant)) continue;
+			seen.add(dependant);
+			if (walk(dependant)) return true;
+		}
+		return false;
+	};
+	return plugins.some((other) => other !== plugin && walk(other));
+};
+
 /** Whether live reload polls again: not once the plugin is disabled, live reload is off, or its code is revoked (nothing to run; a load that succeeds restarts it) */
 export const keepsLiveReloading = (plugin: { enabled: boolean; liveReload: boolean; revoked: boolean }): boolean =>
 	plugin.enabled && plugin.liveReload && !plugin.revoked;

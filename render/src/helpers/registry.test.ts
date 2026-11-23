@@ -10,6 +10,7 @@ import {
 	acceptRegistryFile,
 	asSentence,
 	decodeServedCode,
+	dependsOnAny,
 	keepsLiveReloading,
 	legacyBomSha256,
 	packageSha256s,
@@ -305,7 +306,9 @@ test("code stored before exact fetching matches its refetch only when it differs
 test("code stored before exact fetching is looked up by both keys it may have (a BOM dropped or not)", async () => {
 	const text = "export const x = 1;";
 	const stored = `${text}\n//# sourceURL=https://example.com/X.mjs`;
-	const withBom = createHash("sha256").update(Buffer.from(`\uFEFF${text}`, "utf8")).digest("hex");
+	const withBom = createHash("sha256")
+		.update(Buffer.from(`\uFEFF${text}`, "utf8"))
+		.digest("hex");
 	assert.equal(await legacyBomSha256(stored), withBom);
 	// A text that starts with a BOM (the file had two) or has U+FFFD (a literal one) may still have lost a BOM
 	const sha = (s: string) => createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex");
@@ -318,7 +321,7 @@ test("code stored before exact fetching is looked up by both keys it may have (a
 	assert.equal(packageSha256s({ rawSha256: plain }), plain);
 	assert.equal(packageSha256s(undefined), undefined);
 
-	const file = <T,>(kind: "verified" | "revoked", entries: Record<string, T>) => ({ schema: 1 as const, kind, serial: 1, entries });
+	const file = <T>(kind: "verified" | "revoked", entries: Record<string, T>) => ({ schema: 1 as const, kind, serial: 1, entries });
 	const revoked = <RevokedFile>file("revoked", { [withBom]: { reason: "Bad" } });
 	assert.equal(revokedEntryFor(revoked, keys)?.reason, "Bad");
 	assert.equal(revokedEntryFor(revoked, plain), undefined);
@@ -349,4 +352,21 @@ test("live reload stops while the plugin's code is revoked", () => {
 	assert.equal(keepsLiveReloading({ enabled: true, liveReload: true, revoked: true }), false);
 	assert.equal(keepsLiveReloading({ enabled: false, liveReload: true, revoked: false }), false);
 	assert.equal(keepsLiveReloading({ enabled: true, liveReload: false, revoked: false }), false);
+});
+
+test("dependants of another revoked plugin stopping are found, through other plugins and cycles", () => {
+	type Node = { name: string; dependants: Set<Node> };
+	const node = (name: string): Node => ({ name, dependants: new Set() });
+	const [a, b, c, d] = ["a", "b", "c", "d"].map(node);
+	// b depends on a, c on b; d on nothing
+	a.dependants.add(b);
+	b.dependants.add(c);
+	assert.equal(dependsOnAny(b, [a, b]), true);
+	assert.equal(dependsOnAny(c, [a, c]), true);
+	assert.equal(dependsOnAny(a, [a, b, c]), false);
+	assert.equal(dependsOnAny(d, [a, b, c, d]), false);
+	assert.equal(dependsOnAny(b, [b]), false);
+	// A cycle doesn't loop
+	c.dependants.add(a);
+	assert.equal(dependsOnAny(d, [a]), false);
 });

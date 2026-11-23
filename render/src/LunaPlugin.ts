@@ -10,6 +10,7 @@ import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, update
 import {
 	asSentence,
 	decodeServedCode,
+	dependsOnAny,
 	keepsLiveReloading,
 	legacyBomSha256,
 	packageSha256s,
@@ -166,7 +167,7 @@ export class LunaPlugin {
 	 * whose code is no longer revoked. A plugin still loading checks again after its import (see loadExports)
 	 */
 	private static async applyRevocations(): Promise<void> {
-		const stops: Promise<void>[] = [];
+		const stops: LunaPlugin[] = [];
 		const loads: LunaPlugin[] = [];
 		for (const plugin of Object.values(LunaPlugin.plugins)) {
 			plugin.dropRevokedPending();
@@ -181,18 +182,31 @@ export class LunaPlugin {
 				},
 				LunaRegistry.revoked._,
 			);
-			if (next.action === "stop") stops.push(plugin.stopRevoked().catch(plugin.trace.err.withContext("Failed to stop revoked plugin")));
+			if (next.action === "stop") stops.push(plugin);
 			else if (next.action === "load") loads.push(plugin);
 		}
-		// Every revoked plugin stops at once, before any plugin loads again (a slow plugin or fetch doesn't hold the others up)
-		await Promise.all(stops);
+		const stop = (plugin: LunaPlugin) => plugin.stopRevoked().catch(plugin.trace.err.withContext("Failed to stop revoked plugin"));
+		// Revoked plugins stop at once (a slow one doesn't hold the others up), except dependants of another one stopping: its unload unloads them,
+		// and unloading them at the same time would run their unloads twice. They are marked after
+		const first = stops.filter((plugin) => !dependsOnAny(plugin, stops));
+		await Promise.all(first.map(stop));
+		for (const plugin of stops) if (!first.includes(plugin)) await stop(plugin);
 		await Promise.all(
 			loads.map((plugin) => {
+				// A dependency that is not loaded yet (one in this list, or still revoked) loads it once it loads, as reloadAll leaves it
+				const dependency = plugin.pendingDependencyOf(plugin);
+				if (dependency !== undefined) {
+					plugin.revoked._ = undefined;
+					plugin.loadError._ =
+						dependency.revoked._ !== undefined ? `Not running: it depends on ${dependency.name}, which the Luna plugin registry revoked` : undefined;
+					return;
+				}
 				plugin.trace.log("No longer revoked, loading again");
 				return plugin.reload().catch(plugin.trace.err.withContext("Failed to load again after the revocation was lifted"));
 			}),
 		);
 	}
+
 
 	/**
 	 * Create a plugin instance from a store:LunaPluginStorage, if package is not populated it will be fetched using the url so we can get the name
@@ -532,6 +546,9 @@ export class LunaPlugin {
 			this.loading._ = true;
 			await this.loadExports();
 			this._enabled._ = true;
+			// Revoked code is refused, not failed: the user's choice is stored (the setter skips it while there is a load error), so the plugin
+			// loads once the revocation is lifted, also after a restart
+			if (this.revoked._ !== undefined) this.store.enabled = true;
 			this.store.installed = true;
 			// Ensure live reload is running it it should be
 			if (this._liveReload._) this.startReloadLoop();
@@ -635,7 +652,8 @@ export class LunaPlugin {
 		this.loadError._ = `Revoked by the Luna plugin registry: ${entry.reason}`;
 		// Unloading this plugin unloaded its dependants too: say why on their cards
 		for (const dependant of this.dependants)
-			if (dependant.exports === undefined) dependant.loadError._ = `Not running: it depends on ${this.name}, which the Luna plugin registry revoked`;
+			if (dependant.exports === undefined && dependant.enabled && dependant.installed !== false)
+				dependant.loadError._ = `Not running: it depends on ${this.name}, which the Luna plugin registry revoked`;
 		// Once per revoked build: live reload calls loadExports every second, and each fetched revoked.json has new entry objects
 		const sha = this.package?.rawSha256;
 		if (this.revokedSha256 === sha && this.revoked._?.reason === entry.reason && this.revoked._?.report === entry.report) return;
@@ -667,8 +685,8 @@ export class LunaPlugin {
 	/** After loadExports found the code it was loading revoked (and unloaded): mark it, and put back the version a revoked accepted update replaced */
 	private stopAsRevoked(entry: RevokedEntry) {
 		this.markRevoked(entry);
-		// Run it again once this load has released the semaphore
-		if (this.restoreReplaced()) setTimeout(() => void this.loadRestored());
+		// Run it again once this load has released the semaphore. Not while a dependency isn't loaded: that one loads it once it loads
+		if (this.restoreReplaced() && this.pendingDependencyOf(this) === undefined) setTimeout(() => void this.loadRestored());
 	}
 	/**
 	 * Unload this plugin because a newly accepted revoked.json revokes its code. It stays enabled: a version that isn't revoked loads again.
@@ -680,14 +698,17 @@ export class LunaPlugin {
 		try {
 			// Checked again: the code may have changed while waiting for the semaphore
 			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: packageSha256s(this.package) });
-			if (decision.load || this.exports === undefined) return;
-			await this.unload();
+			if (decision.load) return;
+			// Already unloaded: by a revoked dependency's unload (marked here all the same), or disabled meanwhile (nothing to do)
+			if (this.exports === undefined && !(this.enabled && this.installed !== false)) return;
+			if (this.exports !== undefined) await this.unload();
 			this.markRevoked(decision.revoked);
 			restored = this.restoreReplaced();
 		} finally {
 			release();
 		}
-		if (restored) await this.loadRestored();
+		// Not while a dependency isn't loaded (revoked too, or stopping): that one loads it once it loads
+		if (restored && this.pendingDependencyOf(this) === undefined) await this.loadRestored();
 	}
 	// #endregion
 
@@ -795,6 +816,9 @@ export class LunaPlugin {
 			// Ensure that code is fetched if its changed or undefined
 			if (newPackage.code === undefined) newPackage.code = `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
 			newPackage.exactCode = true;
+			// Hashed here too, not only in loadExports: a loaded plugin whose code didn't change returns early there and must keep its registry key
+			newPackage.rawSha256 ??= await rawSha256(newPackage.code);
+			newPackage.codeSha256 ??= await sha256Hex(codeToImport(newPackage.code, this.url));
 			// Code fetched again only to read its exact bytes is an update when it differs from what is stored (beyond a BOM),
 			// so it waits for the user like any other update instead of replacing the stored code silently
 			if (!codeChanged && known?.code !== undefined && !known.exactCode && !sameServedCode(known.code, newPackage.code)) codeChanged = true;
