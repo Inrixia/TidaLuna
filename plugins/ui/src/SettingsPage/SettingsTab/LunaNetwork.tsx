@@ -57,7 +57,7 @@ export const LunaNetwork = React.memo(() => {
 				<Typography variant="body2">No requests yet</Typography>
 			) : (
 				<Stack spacing={0.5}>
-					{log.reverse().map((entry, index) => (
+					{[...log].reverse().map((entry, index) => (
 						<Typography
 							key={`${entry.time}-${index}`}
 							variant="body2"

@@ -72,10 +72,10 @@ const crossOriginDropped = ["authorization", "cookie", "proxy-authorization"];
 // Headers about the body, dropped with it when a redirect continues as GET
 const bodyHeaders = ["content-type", "content-encoding", "content-language", "content-location", "content-length"];
 // The encodings fetch decodes: their content-encoding/content-length describe the encoded body, not the one handed on
-const decodedEncodings = new Set(["gzip", "x-gzip", "deflate", "br"]);
+const decodedEncodings = new Set(["gzip", "x-gzip", "deflate", "br", "zstd"]);
 /** Request bodies larger than this are refused (they are held in the main process) */
 const maxRequestBytes = 32 * 1024 * 1024;
-/** Requests one plugin (or the bucket of unknown callers) may have in flight, and all of them together */
+/** Requests one plugin may have in flight, and all plugins together */
 const maxInFlightPerPlugin = 16;
 const maxInFlight = 64;
 
@@ -177,7 +177,7 @@ export const createNet = (deps: NetDeps) => {
 		if (plugin === undefined) refuse(`${entry.plugin} is not an enabled plugin`);
 		if (!methods.has(method)) refuse(`method ${method.slice(0, 20)} is not allowed`);
 		if (body !== undefined && typeof body !== "string" && !(body instanceof Uint8Array)) refuse("the body must be a string or bytes");
-		if (body !== undefined && (typeof body === "string" ? body.length * 3 : body.byteLength) > maxRequestBytes)
+		if (body !== undefined && (typeof body === "string" ? Buffer.byteLength(body) : body.byteLength) > maxRequestBytes)
 			refuse(`the body is larger than ${maxRequestBytes} bytes`);
 		const headers: Record<string, string> = {};
 		if (rawHeaders !== undefined && (typeof rawHeaders !== "object" || rawHeaders === null)) refuse("headers must be an object");

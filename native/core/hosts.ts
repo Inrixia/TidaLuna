@@ -138,16 +138,46 @@ export const isLocalHost = (hostname: string): boolean => {
 			(a === 100 && b >= 64 && b <= 127)
 		);
 	}
-	// IPv6 literals: loopback, unspecified, unique local, link-local, and IPv4-mapped ones
 	if (host.includes(":")) {
-		if (host === "::1" || host === "::" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:")) return true;
-		// An IPv4 address inside: IPv4-compatible (::7f00:1), NAT64 (64:ff9b::7f00:1) and 6to4 (2002:7f00:1::)
-		const embedded = /^(?:::|64:ff9b::)([\da-f]{1,4}):([\da-f]{1,4})$/.exec(host) ?? /^2002:([\da-f]{1,4}):([\da-f]{1,4})(?::|$)/.exec(host);
-		if (embedded === null) return false;
-		const [high, low] = [parseInt(embedded[1], 16), parseInt(embedded[2], 16)];
-		return isLocalHost(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+		const g = ipv6Groups(host);
+		// Not an address we can read: refused rather than guessed
+		if (g === undefined) return true;
+		// Unique local fc00::/7, link-local fe80::/10
+		if ((g[0] & 0xfe00) === 0xfc00 || (g[0] & 0xffc0) === 0xfe80) return true;
+		const v4 = (high: number, low: number) => isLocalHost(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+		const zero = (from: number, to: number) => g.slice(from, to).every((group) => group === 0);
+		// IPv4-compatible (::a.b.c.d, also :: and ::1) and IPv4-mapped (::ffff:a.b.c.d)
+		if (zero(0, 5) && (g[5] === 0 || g[5] === 0xffff)) return v4(g[6], g[7]);
+		// NAT64 64:ff9b::a.b.c.d
+		if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) return v4(g[6], g[7]);
+		// 6to4 2002:aabb:ccdd::
+		if (g[0] === 0x2002) return v4(g[1], g[2]);
+		return false;
 	}
 	return false;
+};
+
+/**
+ * The 8 groups of an IPv6 address, in any form: compressed (`2002:a01::1`), or with a dotted IPv4 tail (`::127.0.0.1`,
+ * as dns.lookup writes it). Undefined if it isn't one
+ */
+const ipv6Groups = (address: string): number[] | undefined => {
+	let text = address;
+	const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+	if (dotted !== null) {
+		const [a, b, c, d] = dotted.slice(2).map(Number);
+		if ([a, b, c, d].some((part) => part > 255)) return undefined;
+		text = `${dotted[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+	}
+	const halves = text.split("::");
+	if (halves.length > 2) return undefined;
+	const parse = (part: string) => (part === "" ? [] : part.split(":").map((group) => (/^[\da-f]{1,4}$/.test(group) ? parseInt(group, 16) : NaN)));
+	const head = parse(halves[0]);
+	const tail = halves.length === 2 ? parse(halves[1]) : [];
+	const missing = 8 - head.length - tail.length;
+	if (halves.length === 2 ? missing < 1 : missing !== 0) return undefined;
+	const groups = [...head, ...new Array<number>(halves.length === 2 ? missing : 0).fill(0), ...tail];
+	return groups.some(Number.isNaN) ? undefined : groups;
 };
 
 /** CSP source expressions for the entries (cspReportOnly.ts adds them to the network directives) */

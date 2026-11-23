@@ -144,4 +144,25 @@ describe("plugin hosts", () => {
 		for (const url of ["http://[64:ff9b::8.8.8.8]/", "http://[2002:808:808::]/", "http://[2001:db8::1]/", "http://198.20.0.1/"])
 			assert.equal(isLocalHost(new URL(url).hostname), false, url);
 	});
+
+	it("reads IPv6 in every form: compressed groups and the dotted tail dns.lookup writes", () => {
+		for (const host of [
+			"::127.0.0.1",
+			"::10.0.0.1",
+			"::ffff:192.168.1.1",
+			"64:ff9b::10.1.2.3",
+			"2002:a01::1",
+			"2002:c0a8::",
+			"::100",
+			"64:ff9b::1",
+			"::",
+			"::1",
+			"fd00::1",
+			"fe80::1%eth0",
+			"1::2::3",
+		])
+			assert.equal(isLocalHost(host), true, host);
+		for (const host of ["::8.8.8.8", "::ffff:8.8.8.8", "2002:808:808::1", "2001:4860:4860::8888", "64:ff9b::8.8.8.8"])
+			assert.equal(isLocalHost(host), false, host);
+	});
 });
