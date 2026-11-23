@@ -493,6 +493,43 @@ describe("core registry", () => {
 		assert.strictEqual(restarted.nativeOwner("a.native.ts", "native a"), undefined);
 	});
 
+	it("takes a plugin off the old format once other code is installed where its old-format version ran", async () => {
+		const { deps, serve, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await installLegacy(registry, deps, URL, "v1");
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+		await registry.uninstall(URL);
+		// The store serves an update meanwhile: installed fresh, not through an update
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.install(URL, asker(true));
+		assert.deepStrictEqual(writes.at(-1)?.legacyOff, [URL]);
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
+	it("takes a plugin off the old format on an update also while the list can't be read", async () => {
+		const { deps, serve, list } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		let readable = false;
+		const registry = createRegistry({ ...deps, legacyAllows: (id, sha) => readable && deps.legacyAllows(id, sha) });
+		list(URL, "v1");
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true }]);
+		await registry.load(URL).catch(() => {});
+		assert.strictEqual(await registry.enable(URL, asker(true)), true);
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		// The list arrives, and the user goes back to the listed version
+		readable = true;
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
 	it("keeps the old native format only for the version on the list", async () => {
 		const { deps, serve, list } = fakeDeps();
 		// The url already serves a newer version than the listed one

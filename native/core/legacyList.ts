@@ -94,3 +94,85 @@ export const listAllows = (list: LegacyList | undefined, url: string, code: stri
 	const sha = servedSha256(code);
 	return list.entries.some((e) => e.sha256 === sha && e.id === id);
 };
+
+export type LegacyStoreDeps = {
+	/** The cached copy written by `writeCache`, or undefined if there is none */
+	readCache(): string | undefined;
+	/** Replaces the cached copy at once (one file, written aside and renamed) */
+	writeCache(text: string): void;
+	/** legacy.json and its .sig from the registry */
+	fetchList(): Promise<{ bytes: Buffer; sig: string }>;
+	publicKey?: string;
+	log?(message: string): void;
+	/** How long the first check of a start with no cached copy waits for the first fetch */
+	firstWaitMs?: number;
+};
+
+/**
+ * The accepted list: the cached copy (its signature checked again on each start), replaced only by a fetched list
+ * that may replace it (replacesList). The list bytes and their signature are cached together in one file, so a crash
+ * mid-write can't leave a copy that fails its check (and with it the "only shrinks" rule).
+ */
+export const createLegacyStore = (deps: LegacyStoreDeps) => {
+	let current: { list: LegacyList; bytes: Buffer } | undefined;
+	/** `${id}\n${sha256}` of the current list */
+	let allowed = new Set<string>();
+	const use = (list: LegacyList, bytes: Buffer) => {
+		current = { list, bytes };
+		allowed = new Set(list.entries.map((e) => `${e.id}\n${e.sha256}`));
+	};
+
+	let readCache = false;
+	const loadCache = () => {
+		if (readCache) return;
+		readCache = true;
+		try {
+			const text = deps.readCache();
+			if (text === undefined) return;
+			const cached = JSON.parse(text);
+			const bytes = Buffer.from(String(cached?.list), "base64");
+			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes);
+		} catch (err) {
+			deps.log?.(`[Luna.core] The cached old native format list is not usable: ${(err as Error)?.message ?? err}`);
+		}
+	};
+
+	/** Fetches the registry's list once; throws if it can't be used */
+	const refresh = async () => {
+		loadCache();
+		const { bytes, sig } = await deps.fetchList();
+		const next = parseLegacyList(bytes, sig, deps.publicKey);
+		const replaces = replacesList(current?.list, next);
+		if (!replaces.ok) throw new Error(`refused: ${replaces.reason}`);
+		// A removal under the same serial is still a removal: only the same bytes change nothing
+		if (current !== undefined && current.bytes.equals(bytes)) return;
+		deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
+		use(next, bytes);
+		deps.log?.(`[Luna.core] Old native format list: serial ${next.serial}, ${next.entries.length} plugins`);
+	};
+
+	let first: Promise<void> | undefined;
+	/** The first refresh (started once); never rejects */
+	const start = () =>
+		(first ??= refresh().catch((err) => deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`)));
+	let firstWait: Promise<void> | undefined;
+
+	return {
+		refresh,
+		/** Whether the current list has this plugin's code (see RegistryDeps.legacyAllows) */
+		allows: (id: string, servedSha256: string): boolean => {
+			loadCache();
+			void start();
+			return allowed.has(`${id}\n${servedSha256}`);
+		},
+		/** Before a check: with no list yet, waits (once per start, at most firstWaitMs) for the first fetch */
+		ready: async (): Promise<void> => {
+			loadCache();
+			const started = start();
+			if (current !== undefined) return;
+			firstWait ??= Promise.race([started, new Promise<void>((resolve) => setTimeout(resolve, deps.firstWaitMs ?? 10000).unref?.())]);
+			await firstWait;
+		},
+		current: () => current?.list,
+	};
+};

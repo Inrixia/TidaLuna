@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 
-import { listAllows, parseLegacyList, replacesList, servedSha256, type LegacyList } from "./legacyList";
+import { createLegacyStore, listAllows, parseLegacyList, replacesList, servedSha256, type LegacyList } from "./legacyList";
 
 const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -66,6 +66,72 @@ describe("old native format list", () => {
 		// A replayed older, bigger list
 		assert.match((replacesList(shrunk, base) as { reason: string }).reason, /rollback/);
 		assert.match((replacesList(base, parse(doc(2, [A], { cutoff: "2027-01-01T00:00:00.000Z" }))) as { reason: string }).reason, /cut-off/);
+	});
+
+	it("keeps the cached list until a fetched one may replace it, and checks the cache's signature", async () => {
+		let cache: string | undefined;
+		let served = signed(doc(2, [A, B]));
+		const make = () =>
+			createLegacyStore({
+				readCache: () => cache,
+				writeCache: (text) => void (cache = text),
+				fetchList: async () => ({ bytes: served.bytes, sig: served.sig }),
+				publicKey: pub,
+				firstWaitMs: 50,
+			});
+		const store = make();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		await store.ready();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+
+		// A grown list, or a rollback, is refused: the cache stays
+		const before = cache;
+		served = signed(doc(3, [A, B, entry("c.mjs", "code c")]));
+		await assert.rejects(store.refresh(), /adds c\.mjs/);
+		served = signed(doc(1, [A, B]));
+		await assert.rejects(store.refresh(), /rollback/);
+		assert.strictEqual(cache, before);
+
+		// A removal under the same serial applies
+		served = signed(doc(2, [A]));
+		await store.refresh();
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+
+		// The next start reads the cache: a grown list is still refused
+		const restarted = make();
+		served = signed(doc(2, [A, B]));
+		await assert.rejects(restarted.refresh(), /adds b\.mjs/);
+		assert.strictEqual(restarted.allows("a.mjs", A.sha256), true);
+
+		// A cache edited by hand fails its check and isn't used
+		const edited = JSON.parse(cache!);
+		edited.list = Buffer.from(JSON.stringify(doc(2, [A, B]))).toString("base64");
+		cache = JSON.stringify(edited);
+		const tampered = make();
+		served = { bytes: Buffer.from("not json"), sig: "" };
+		await tampered.ready();
+		assert.strictEqual(tampered.allows("b.mjs", B.sha256), false);
+		assert.strictEqual(tampered.current(), undefined);
+	});
+
+	it("waits once for the first fetch when nothing is cached, and refuses meanwhile", async () => {
+		let release: () => void = () => {};
+		const fetched = new Promise<void>((resolve) => (release = resolve));
+		const { bytes, sig } = signed(doc(1, [A]));
+		const store = createLegacyStore({
+			readCache: () => undefined,
+			writeCache: () => {},
+			fetchList: async () => (await fetched, { bytes, sig }),
+			publicKey: pub,
+			firstWaitMs: 20,
+		});
+		const started = Date.now();
+		await Promise.all([store.ready(), store.ready()]);
+		assert.ok(Date.now() - started < 1000);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		release();
+		await store.ready();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
 	});
 
 	it("allows exactly the listed code of a listed plugin", () => {

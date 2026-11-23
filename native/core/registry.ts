@@ -49,10 +49,15 @@ export type CoreState = {
 	version: 1;
 	plugins: Record<string, CoreRecord>;
 	/**
-	 * Urls whose plugin ran the old native format here and then accepted code the registry's list doesn't have (an
-	 * update): it stays off the old format on this computer, also if it goes back to the listed version later.
+	 * Urls whose plugin had old-format natives here and then accepted other code (an update): it stays off the old
+	 * format on this computer, also if it goes back to the listed version later.
 	 */
 	legacyOff?: string[];
+	/**
+	 * Url -> the sha256 of the served code whose old-format natives ran here. Accepting other code at that url takes it
+	 * off the old format for good, whatever the list says at that moment and also after an uninstall.
+	 */
+	legacyRan?: Record<string, string>;
 };
 export type PendingUpdate = {
 	version?: string;
@@ -159,6 +164,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 	/** No state was stored yet and the page never handed over its plugins: it may, once (see migrate) */
 	let fresh = state !== stored && deps.wasMigrated?.() !== true;
 	const legacyOff = new Set(Array.isArray(state.legacyOff) ? state.legacyOff : []);
+	const legacyRan: Record<string, string> =
+		state.legacyRan !== null && typeof state.legacyRan === "object" ? state.legacyRan : (state.legacyRan = {});
 	// Plugins from before this format kept their list in `legacy`: the registry's signed list replaces it
 	delete (state as { legacy?: unknown }).legacy;
 	let saving: Promise<unknown> = Promise.resolve();
@@ -200,18 +207,35 @@ export const createRegistry = (deps: RegistryDeps) => {
 	};
 	/** Old-format natives of this version run: a dev url, or its exact code is on the list (and the plugin didn't leave it here) */
 	const legacyRuns = (url: string, version: Version | undefined) =>
-		isDevUrl(url) || (version !== undefined && !legacyOff.has(url) && deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true);
+		isDevUrl(url) ||
+		(version !== undefined &&
+			!legacyOff.has(url) &&
+			(legacyRan[url] === undefined || legacyRan[url] === servedOf(version)) &&
+			deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true);
+	/** Old-format natives of this url's accepted version ran: remembered, so other code accepted later leaves the format */
+	const ranLegacy = (url: string, version: Version) => {
+		if (isDevUrl(url) || legacyRan[url] !== undefined) return;
+		legacyRan[url] = servedOf(version);
+		void save();
+	};
 	const leaveLegacy = (url: string) => {
 		if (legacyOff.has(url)) return;
 		legacyOff.add(url);
 		state.legacyOff = [...legacyOff];
-		deps.log?.(`[Luna.core] ${url} left the old native format: it accepted code that isn't on the list`);
+		deps.log?.(`[Luna.core] ${url} left the old native format: it accepted other code than its old-format version`);
+	};
+	/** Code a url accepts (an update, an install, a move): code other than the one that ran the old format here leaves it */
+	const leavesLegacy = (url: string, before: Version | undefined, version: Version) => {
+		if (isDevUrl(url)) return;
+		const ran = legacyRan[url];
+		const sha = servedOf(version);
+		// Not asking the list: it may be missing or older at this moment
+		if ((ran !== undefined && ran !== sha) || (before !== undefined && legacyNativesOf(before).length !== 0 && servedOf(before) !== sha))
+			leaveLegacy(url);
 	};
 	/** The only way a version becomes accepted: leaving listed old-format code for unlisted code is for good */
 	const accept = (record: CoreRecord, version: Version) => {
-		const before = record.accepted;
-		if (before !== undefined && legacyNativesOf(before).length !== 0 && legacyRuns(record.url, before) && !legacyRuns(record.url, version))
-			leaveLegacy(record.url);
+		leavesLegacy(record.url, record.accepted, version);
 		record.accepted = version;
 	};
 	// #endregion
@@ -313,6 +337,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (!(await ask({ title: `Install ${version.package.name}?`, lines, confirmText: "Install" }))) return false;
 		// Queued by url, but a moveUrl to this url (queued by its source) may have landed while the user was asked
 		if (state.plugins[url] !== undefined) throw new Error(`[Luna.core] ${url} was installed meanwhile: try again`);
+		leavesLegacy(url, undefined, version);
 		state.plugins[url] = { url, name: version.package.name, enabled: true, accepted: version };
 		await save();
 		return true;
@@ -354,7 +379,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 
 	const uninstall = async (url: string) => {
 		if (state.plugins[url] === undefined) return;
-		// legacyOff stays: a reinstall doesn't bring the old format back to a plugin that left it
+		// legacyOff and legacyRan stay: a reinstall doesn't bring the old format back to a plugin that left it
 		delete state.plugins[url];
 		await save();
 		// A reinstall asks for native permissions again
@@ -392,8 +417,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 		)
 			moved.accepted = found;
 		else if (found !== undefined && accepted !== undefined) moved.pending = found;
-		// A plugin that left the old format here stays off it at its new url
+		// A plugin that left the old format here stays off it at its new url, and other code there leaves it
 		if (legacyOff.has(from)) leaveLegacy(to);
+		if (legacyRan[from] !== undefined && legacyRan[to] === undefined) legacyRan[to] = legacyRan[from];
 		delete state.plugins[from];
 		state.plugins[to] = moved;
 		await save();
@@ -423,8 +449,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 		record.accepted.natives.includes(fileName) &&
 		sourcesOf(record.accepted)[fileName] === code;
 	// The page registers only old-format natives (worlds load theirs in worlds.ts)
-	const ownsNative = (record: CoreRecord | undefined, fileName: string, code: string) =>
-		holdsNative(record, fileName, code) && legacyRuns(record.url, record.accepted);
+	const ownsNative = (record: CoreRecord | undefined, fileName: string, code: string) => {
+		if (!holdsNative(record, fileName, code) || !legacyRuns(record.url, record.accepted)) return false;
+		ranLegacy(record.url, record.accepted);
+		return true;
+	};
 	// Checked on every native call: read each accepted bundle once
 	const sources = new WeakMap<Version, Record<string, string>>();
 	const sourcesOf = (version: Version) => {
