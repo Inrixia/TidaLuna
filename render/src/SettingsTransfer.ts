@@ -1,5 +1,6 @@
 import { ReactiveStore } from "./ReactiveStore";
 import { LunaPlugin, type LunaPluginStorage } from "./LunaPlugin";
+import { isCoreUrl } from "../../native/core/policy";
 
 export interface ExportData
 {
@@ -64,7 +65,7 @@ export class SettingsTransfer
 		for (const [key, value] of Object.entries(plugins))
 		{
 			const entry = value as Partial<LunaPluginStorage> | null;
-			if (entry?.installed !== true || typeof entry.url !== "string" || !/^https?:\/\//.test(entry.url) || LunaPlugin.corePlugins.has(key))
+			if (entry?.installed !== true || typeof entry.url !== "string" || !/^https?:\/\//.test(entry.url) || isCoreUrl(entry.url))
 				continue;
 			wanted.set(entry.url, { name: typeof entry.package?.name === "string" ? entry.package.name : key, enabled: entry.enabled !== false });
 		}
