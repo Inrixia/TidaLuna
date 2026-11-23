@@ -78,11 +78,18 @@ export class ReactiveStore {
 	}
 
 	public del(key: string) {
-		// Its reactive object stops writing: a change still on its way (an uninstall's last writes) would store it again
+		return idbDel(key, this.idbStore);
+	}
+
+	/**
+	 * Deletes a key whose reactive object is done with (an uninstalled plugin): the object stops writing, so a change still
+	 * on its way can't store it again, and the next getReactive starts fresh
+	 */
+	public forget(key: string) {
 		this.reactiveListeners[key]?.();
 		delete this.reactiveListeners[key];
 		delete this.reactiveCache[key];
-		return idbDel(key, this.idbStore);
+		return this.del(key);
 	}
 
 	public keys(): Promise<string[]> {

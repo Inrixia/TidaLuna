@@ -164,6 +164,11 @@ export class LunaPlugin {
 		const createNonPersistedStore = () => obyStore({ ...storeInit, installed: false, enabled: false }) as LunaPluginStorage;
 
 		let store: LunaPluginStorage;
+		// A plugin only named like one of Luna's own never touches that plugin's stored copy (stored by name)
+		if (LunaPlugin.corePlugins.has(name) && !isCoreUrl(storeInit.url)) {
+			const plugin = (this.plugins[storeInit.url] ??= new this(name, createNonPersistedStore()));
+			return plugin.load();
+		}
 		// Get persisted store to check if this URL matches
 		const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(name);
 		if (persistedStore.url === undefined || persistedStore.url === storeInit.url) {
@@ -461,6 +466,10 @@ export class LunaPlugin {
 	public get isCore(): boolean {
 		return isCoreUrl(this.url) && LunaPlugin.corePlugins.has(this.name);
 	}
+	/** Named like one of Luna's own plugins but served from elsewhere: it has no stored copy, that name's belongs to Luna's */
+	private get namedLikeCore(): boolean {
+		return LunaPlugin.corePlugins.has(this.name) && !isCoreUrl(this.url);
+	}
 	public get isDev(): boolean {
 		return isDevUrl(this.url);
 	}
@@ -628,18 +637,20 @@ export class LunaPlugin {
 		this.loading._ = true;
 
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
-		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);
+		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed && !p.isCore);
 		for (const other of otherVersions) {
 			coreTrace.msg.log(`Switching plugin ${this.name} from ${other.url} to ${this.url}`);
 			await other.uninstall();
 		}
 
-		// Update persisted store with this plugin's URL so it loads on restart
-		const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(this.name);
-		persistedStore.url = this.url;
-		persistedStore.package = this.store.package;
-		persistedStore.installed = true;
-		persistedStore.enabled = true;
+		// Update persisted store with this plugin's URL so it loads on restart (not a lookalike of Luna's own: see fromStorage)
+		if (!this.namedLikeCore) {
+			const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(this.name);
+			persistedStore.url = this.url;
+			persistedStore.package = this.store.package;
+			persistedStore.installed = true;
+			persistedStore.enabled = true;
+		}
 
 		this.store.installed = true;
 		await this.loadEnabled();
@@ -655,7 +666,7 @@ export class LunaPlugin {
 		this.store.installed = false;
 		this.pendingUpdate._ = undefined;
 		delete LunaPlugin.plugins[this.url];
-		await LunaPlugin.pluginStorage.del(this.name);
+		if (!this.namedLikeCore) await LunaPlugin.pluginStorage.forget(this.name);
 		// Luna core also forgets its native permissions, so a reinstall asks again
 		await __LunaCore.uninstall(this.url).catch(this.trace.err.withContext("Failed to uninstall in Luna core"));
 		this.loading._ = false;
