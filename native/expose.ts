@@ -23,3 +23,4 @@ export {
 	type AudioCacheStats,
 	type AudioCacheStatus,
 } from "./audioCache";
+export { offlineCacheOpenFolder, offlineCacheSetLimit, offlineCacheStats, type OfflineCacheStats } from "./offlineCache";

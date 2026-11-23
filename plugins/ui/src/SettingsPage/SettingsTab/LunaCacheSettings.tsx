@@ -1,7 +1,7 @@
 import React from "react";
 
 import { requestCache } from "@luna/core";
-import { AudioCache, type AudioCacheStats } from "@luna/lib";
+import { AudioCache, OfflineCache, type AudioCacheStats, type OfflineCacheStats } from "@luna/lib";
 
 import Typography from "@mui/material/Typography";
 
@@ -12,10 +12,12 @@ const formatBytes = (bytes: number) => (bytes >= GB ? `${(bytes / GB).toFixed(2)
 
 export const LunaCacheSettings = React.memo(() => {
 	const [audio, setAudio] = React.useState<AudioCacheStats>();
+	const [offline, setOffline] = React.useState<OfflineCacheStats>();
 	const [requests, setRequests] = React.useState(requestCache.stats());
 	React.useEffect(() => {
 		const update = () => {
 			AudioCache.stats().then(setAudio);
+			OfflineCache.stats().then(setOffline);
 			setRequests(requestCache.stats());
 		};
 		update();
@@ -35,6 +37,13 @@ export const LunaCacheSettings = React.memo(() => {
 				onNumber={(gb) => AudioCache.setLimit(Math.max(0, gb) * GB).then(() => AudioCache.stats().then(setAudio))}
 			/>
 			<LunaButtonSetting title="Open audio cache folder" desc={audio?.path} onClick={() => AudioCache.openFolder()} children="Open" />
+			<LunaNumberSetting
+				title="Offline cache limit (GB)"
+				desc={offline && `Pages and images kept for offline use, using ${formatBytes(offline.usage)} of ${formatBytes(offline.limit)}. 0 for 1 GB`}
+				value={offline?.userLimit === undefined ? 0 : Math.round(offline.userLimit / GB)}
+				onNumber={(gb) => OfflineCache.setLimit(Math.max(0, gb) * GB).then(() => OfflineCache.stats().then(setOffline))}
+			/>
+			<LunaButtonSetting title="Open offline cache folder" desc={offline?.path} onClick={() => OfflineCache.openFolder()} children="Open" />
 			{audio && (
 				<Typography variant="body2" sx={{ paddingLeft: 2 }}>
 					Audio: {formatBytes(audio.servedBytes)} played from the cache, {formatBytes(audio.fetchedBytes)} fetched

@@ -6,6 +6,7 @@ export * from "./ContextMenu";
 export * from "./ImageOverrides";
 export * from "./MediaCollection";
 export * from "./MediaItem";
+export * from "./OfflineCache";
 export * from "./Playlist";
 export * from "./PlayState";
 export * from "./Quality";
