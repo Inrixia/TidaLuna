@@ -1,6 +1,9 @@
 import path from "path";
 
-/** What a plugin's native code can be allowed to do. Node modules outside moduleWhitelist.ts are asked for by category. */
+/**
+ * Groups of Node modules outside moduleWhitelist.ts, to show what a plugin's native code names in words.
+ * For information only: a file allowed to run in the main process is not held to them (see trust.ts).
+ */
 export type PermissionCategory = {
 	id: string;
 	label: string;
@@ -8,17 +11,7 @@ export type PermissionCategory = {
 	modules: string[];
 };
 
-/** Not a module: what every file loaded into the main process is asked for before any of its code runs (see loadWithPermissions) */
-export const MAIN_PROCESS = "MainProcess";
-
-export const permissionCategories: PermissionCategory[] = [
-	{
-		id: "main",
-		label: "Run in TIDAL's Main Process",
-		description:
-			"Run this file's code inside the TIDAL app itself. Luna asks separately for the Node modules it uses, but code running there can't be fully contained: allow it only if you trust the plugin with your computer and your TIDAL account.",
-		modules: [MAIN_PROCESS],
-	},
+const permissionCategories: PermissionCategory[] = [
 	{
 		id: "network",
 		label: "Network Access",
@@ -70,20 +63,26 @@ export const permissionCategories: PermissionCategory[] = [
 ];
 
 const byModule = new Map(permissionCategories.flatMap((category) => category.modules.map((module) => [module, category])));
-const byId = new Map(permissionCategories.map((category) => [category.id, category]));
+const OTHER: Omit<PermissionCategory, "modules"> = { id: "other", label: "Other Modules", description: "Use other Node modules." };
 
-/** Modules without a category of their own are asked for one by one, as `module:<name>` */
-export const categoryOf = (moduleName: string): string => {
+const categoryOf = (moduleName: string): Omit<PermissionCategory, "modules"> => {
 	const category = byModule.get(moduleName);
-	if (category !== undefined) return category.id;
+	if (category !== undefined) return category;
 	// TIDAL's own files, resolved from the resources folder (see nativeRequire). Normalized, so "./app/../../x" is not one
-	if (/^\.[\\/]/.test(moduleName) && /^(original\.asar|app)\//.test(path.posix.normalize(moduleName.replaceAll("\\", "/")))) return "tidal";
-	return `module:${moduleName}`;
+	if (/^\.[\\/]/.test(moduleName) && /^(original\.asar|app)\//.test(path.posix.normalize(moduleName.replaceAll("\\", "/"))))
+		return permissionCategories.find(({ id }) => id === "tidal")!;
+	return OTHER;
 };
 
-export const categoryInfo = (id: string): Omit<PermissionCategory, "id"> => {
-	const category = byId.get(id);
-	if (category !== undefined) return category;
-	const moduleName = id.replace(/^module:/, "");
-	return { label: `Module "${moduleName}"`, description: `Use the Node module "${moduleName}".`, modules: [moduleName] };
+/** `modules` by category, in the order of permissionCategories, those without one last */
+export const groupModules = (modules: Iterable<string>): PermissionCategory[] => {
+	const groups = new Map<string, PermissionCategory>();
+	for (const moduleName of modules) {
+		const { id, label, description } = categoryOf(moduleName);
+		let group = groups.get(id);
+		if (group === undefined) groups.set(id, (group = { id, label, description, modules: [] }));
+		group.modules.push(moduleName);
+	}
+	const order = [...permissionCategories.map(({ id }) => id), OTHER.id];
+	return [...groups.values()].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 };

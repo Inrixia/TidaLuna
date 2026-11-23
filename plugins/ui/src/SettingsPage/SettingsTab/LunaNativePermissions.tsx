@@ -26,8 +26,8 @@ export const LunaNativePermissions = React.memo(() => {
 	React.useEffect(() => void refresh(), [refresh]);
 
 	const revoke = React.useCallback(
-		async (key: string, category?: string) => {
-			await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key, category);
+		async (key: string) => {
+			await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key);
 			await refresh();
 		},
 		[refresh],
@@ -37,42 +37,33 @@ export const LunaNativePermissions = React.memo(() => {
 	return (
 		<LunaSettings
 			title="Native permissions"
-			desc="What plugins' native code may do, as you answered when it asked. Revoke an answer to be asked again the next time the plugin uses it (or loads, for running in the main process)"
+			desc="Whether plugins' native code may run in TIDAL's main process, as you answered when it asked. Revoke an answer to be asked again the next time the plugin loads"
 		>
 			{[...entries]
 				.sort((a, b) => a.fileName.localeCompare(b.fileName))
-				.map(({ key, fileName, url, claimedUrl, categories }) => (
-					<Stack key={key} spacing={0.5}>
-						<LunaSetting title={fileName} desc={url ?? `${claimedUrl ?? "Unknown source"} (not checked: answers hold for this version only)`}>
-							<Stack direction="row" sx={{ flexGrow: 1, justifyContent: "flex-end" }}>
-								<LunaTrashButton title="Revoke all answers of this file" onClick={() => revoke(key)} />
-							</Stack>
-						</LunaSetting>
-						{[...categories]
-							// As in the window: whether it may run first
-							.sort((a, b) => Number(b.category === "main") - Number(a.category === "main") || a.label.localeCompare(b.label))
-							.map(({ category, label, answer, modules, onlyModules }) => (
-								<LunaSetting
-									key={category}
-									sx={{ paddingLeft: 3 }}
-									title={label}
-									desc={
-										category === "main"
-											? "Asked before any of the file's code runs"
-											: onlyModules
-												? `Only ${modules.join(", ")} (answered before permissions had categories)`
-												: modules.join(", ")
-									}
-								>
-									<Stack direction="row" spacing={1} sx={{ flexGrow: 1, alignItems: "center", justifyContent: "flex-end" }}>
-										<Typography variant="body2" sx={{ color: answerColor[answer] }}>
-											{answerText[answer]}
-										</Typography>
-										<LunaTrashButton title="Revoke" onClick={() => revoke(key, category)} />
-									</Stack>
-								</LunaSetting>
-							))}
-					</Stack>
+				.map(({ key, fileName, url, claimedUrl, answer, modules }) => (
+					<LunaSetting
+						key={key}
+						title={fileName}
+						desc={
+							<>
+								{url ?? `${claimedUrl ?? "Unknown source"} (not checked: the answer holds for this version only)`}
+								{modules.length > 0 && (
+									<>
+										<br />
+										Its code named: {modules.join(", ")} (for information, not a limit)
+									</>
+								)}
+							</>
+						}
+					>
+						<Stack direction="row" spacing={1} sx={{ flexGrow: 1, alignItems: "center", justifyContent: "flex-end" }}>
+							<Typography variant="body2" sx={{ color: answerColor[answer], whiteSpace: "nowrap" }}>
+								{answerText[answer]}
+							</Typography>
+							<LunaTrashButton title="Revoke" onClick={() => revoke(key)} />
+						</Stack>
+					</LunaSetting>
 				))}
 		</LunaSettings>
 	);
