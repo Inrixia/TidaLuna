@@ -11,10 +11,7 @@ import { green } from "@mui/material/colors";
 
 /** What the update changes that the user should know about before running it */
 const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
-	const before = new Set(LunaPlugin.nativeFileNames(plugin.code ?? ""));
-	const after = LunaPlugin.nativeFileNames(update.code ?? "");
-	const added = after.filter((name) => !before.has(name));
-	const removed = [...before].filter((name) => !after.includes(name));
+	const { files, added, removed } = LunaPlugin.nativeFileChanges(plugin.code ?? "", update.code ?? "");
 	return (
 		<>
 			<Typography variant="body2" gutterBottom>
@@ -24,9 +21,10 @@ const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginP
 				Until you update, the version you have keeps running. The new code runs with the same access to TIDAL as the plugin has now. Luna doesn't
 				check what it does: update only if you trust the author and {plugin.url}.
 			</Typography>
-			{after.length !== 0 && (
+			{files.length !== 0 && (
 				<Typography variant="body2" gutterBottom>
-					Native code (runs in TIDAL's main process): {after.join(", ")}. Changed native files ask for permission again.
+					Native code (runs in TIDAL's main process): {files.join(", ")}. Changed native files ask for permission again, unless you allowed this
+					plugin for all versions.
 				</Typography>
 			)}
 			{added.length !== 0 && (

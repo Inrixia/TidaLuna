@@ -6,7 +6,7 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
-import { nativeFileNames } from "./helpers/nativeFileNames";
+import { nativeFileChanges, updateWaitsForUser } from "./helpers/pluginUpdates";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
 
@@ -195,16 +195,7 @@ export class LunaPlugin {
 
 	public static async loadStoredPlugins() {
 		const keys = await LunaPlugin.pluginStorage.keys();
-		const plugins = await Promise.all(
-			keys.map(async (name) => LunaPlugin.fromName(name).catch(this.trace.err.withContext("loadStoredPlugins", name))),
-		);
-		const updates = LunaPlugin.pendingUpdates;
-		if (updates.length !== 0) {
-			coreTrace.msg.log(
-				`Plugin updates are waiting for you: ${updates.map((plugin) => plugin.name).join(", ")}. Review them in Luna Settings > Plugins`,
-			);
-		}
-		return plugins;
+		return Promise.all(keys.map(async (name) => LunaPlugin.fromName(name).catch(this.trace.err.withContext("loadStoredPlugins", name))));
 	}
 
 	/**
@@ -475,10 +466,6 @@ export class LunaPlugin {
 	 * The stored code keeps running until acceptUpdate. Refetched each time the plugin loads (client start, reload).
 	 */
 	public readonly pendingUpdate: Signal<PluginPackage | undefined> = new Signal(undefined);
-	/** Dev plugins, live reload (the user asked for every change) and Luna's own plugins update without asking */
-	private get updatesNeedConfirm(): boolean {
-		return !this.isDev && !this._liveReload._ && !LunaPlugin.corePlugins.has(this.name);
-	}
 	/**
 	 * Store the update and run it if the plugin is enabled.
 	 * @param update The update the user was shown. If the url has served a newer one since, that one becomes the pending update.
@@ -494,17 +481,35 @@ export class LunaPlugin {
 			release();
 		}
 	}
-	/** Call while holding loadSemaphore */
-	private applyUpdate(update: PluginPackage) {
+	/**
+	 * Call while holding loadSemaphore.
+	 * @returns The package it replaced, to put back if the update fails to load
+	 */
+	private applyUpdate(update: PluginPackage): PluginPackage | undefined {
+		const previous = this.package;
 		this.package = update;
-		if (this.pendingUpdate._ === update) this.pendingUpdate._ = undefined;
+		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
+		return previous;
 	}
 	/** The installed plugins with an update waiting for the user */
 	public static get pendingUpdates(): LunaPlugin[] {
 		return Object.values(LunaPlugin.plugins).filter((plugin) => plugin.installed && plugin.pendingUpdate._ !== undefined);
 	}
-	/** Names of the native files a bundle registers, for display (see helpers/nativeFileNames) */
-	public static readonly nativeFileNames = nativeFileNames;
+	/** The native files of an update and which it adds or removes, for display (see helpers/pluginUpdates) */
+	public static readonly nativeFileChanges = nativeFileChanges;
+
+	private static readonly announcedUpdates: Set<string> = new Set();
+	private static announceTimeout?: ReturnType<typeof setTimeout>;
+	/** One message for the updates found while plugins load (the client loads them all at start, dependants later) */
+	private static announceUpdate(name: string) {
+		LunaPlugin.announcedUpdates.add(name);
+		clearTimeout(LunaPlugin.announceTimeout);
+		LunaPlugin.announceTimeout = setTimeout(() => {
+			const names = [...LunaPlugin.announcedUpdates].join(", ");
+			LunaPlugin.announcedUpdates.clear();
+			coreTrace.msg.log(`Plugin updates are waiting for you: ${names}. Review them in Luna Settings > Plugins`);
+		}, 2000);
+	}
 	// #endregion
 
 	// #region install/uninstall
@@ -569,10 +574,20 @@ export class LunaPlugin {
 			newPackage.code ??= `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
 
 			// New code for a plugin that already has code waits for the user (see acceptUpdate), the stored code keeps running
-			if (codeChanged && this.code !== undefined && this.updatesNeedConfirm) {
-				if (this.pendingUpdate._?.hash !== newPackage.hash)
+			const waits = updateWaitsForUser({
+				codeChanged,
+				hasCode: this.code !== undefined,
+				isDev: this.isDev,
+				liveReload: this._liveReload._,
+				isCore: LunaPlugin.corePlugins.has(this.name),
+			});
+			if (waits) {
+				// The same update fetched again keeps its object, so an open update dialog still matches it
+				if (this.pendingUpdate._?.hash !== newPackage.hash) {
 					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);
-				this.pendingUpdate._ = newPackage;
+					this.pendingUpdate._ = newPackage;
+					LunaPlugin.announceUpdate(this.name);
+				}
 				return false;
 			}
 			this.pendingUpdate._ = undefined;
@@ -598,8 +613,9 @@ export class LunaPlugin {
 	private async loadExports(reload?: true, update?: PluginPackage): Promise<void> {
 		// Ensure we cant start loading midway through loading
 		const release = await this.loadSemaphore.obtain();
+		let replaced: { previous: PluginPackage | undefined } | undefined;
 		try {
-			if (update !== undefined) this.applyUpdate(update);
+			if (update !== undefined) replaced = { previous: this.applyUpdate(update) };
 			// If code hasnt changed and we have already loaded exports we are done
 			const codeChanged = await this.fetchPackage();
 			if (!reload && !codeChanged && this.exports !== undefined) return;
@@ -669,6 +685,12 @@ export class LunaPlugin {
 			this.trace.msg.err.withContext(`Failed to load`)(err);
 			// Ensure we arnt partially loaded
 			await this.unload();
+			// An accepted update that fails to load waits again, the version the user had is the one stored (and runs on the next load)
+			if (replaced !== undefined && update !== undefined && this.package?.hash === update.hash) {
+				if (replaced.previous !== undefined) this.package = replaced.previous;
+				// Unless the url served a newer update meanwhile
+				if (this.pendingUpdate._ === undefined) this.pendingUpdate._ = update;
+			}
 			// For sanity throw the error just to be safe
 			throw err;
 		} finally {

@@ -133,9 +133,9 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 						>
 							{collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
 						</IconButton>
+						<PluginUpdateButton plugin={plugin} />
 						{!collapsed && (
 							<>
-								<PluginUpdateButton plugin={plugin} />
 								{!isCore && (
 									<Tooltip
 										title={enabled ? `Disable ${name}` : `Enable ${name}`}
