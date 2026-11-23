@@ -46,6 +46,8 @@ export type RevokedEntry = {
 };
 export type RegistryFile<Entry> = {
 	schema: 1;
+	/** Which file this is ("verified" for verified.json, "revoked" for revoked.json), checked against the file fetched */
+	kind: "verified" | "revoked";
 	serial: number;
 	generated?: string;
 	/** Keyed by raw sha256 (lowercase hex). Has no prototype, so a key like `__proto__` or `constructor` is only ever an entry */
@@ -108,6 +110,9 @@ export function parseRegistryFile(fileName: RegistryFileName, text: string): Ver
 	const json: unknown = JSON.parse(text);
 	if (!isObject(json)) throw new Error(`${fileName} is not an object`);
 	if (json.schema !== 1) throw new Error(`${fileName} has schema ${String(json.schema)}, expected 1`);
+	// Signed with the bytes: one signed file served as the other (its serial would pin the other's rollback check) is rejected
+	const kind = fileName === "verified.json" ? "verified" : "revoked";
+	if (json.kind !== kind) throw new Error(`${fileName} has kind ${JSON.stringify(json.kind)}, expected "${kind}"`);
 	if (typeof json.serial !== "number" || !Number.isSafeInteger(json.serial) || json.serial < 0)
 		throw new Error(`${fileName} has no valid serial`);
 	if (!isObject(json.entries)) throw new Error(`${fileName} has no entries`);
@@ -117,7 +122,7 @@ export function parseRegistryFile(fileName: RegistryFileName, text: string): Ver
 		const entry = fileName === "verified.json" ? toVerifiedEntry(value) : toRevokedEntry(value);
 		if (entry !== undefined) entries[sha256] = entry;
 	}
-	return { schema: 1, serial: json.serial, generated: optionalString(json.generated), entries };
+	return { schema: 1, kind, serial: json.serial, generated: optionalString(json.generated), entries };
 }
 
 export const base64ToBytes = (base64: string): Uint8Array<ArrayBuffer> => Uint8Array.from(atob(base64.trim()), (char) => char.charCodeAt(0));

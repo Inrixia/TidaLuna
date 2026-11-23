@@ -1,5 +1,6 @@
 {
 	"schema": 1,
+	"kind": "revoked",
 	"serial": 2,
 	"generated": "2026-11-23T12:00:00.000Z",
 	"entries": {

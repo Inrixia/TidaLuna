@@ -88,9 +88,9 @@ test("rejects signed bytes that are not a registry file", async () => {
 	assert.deepEqual(await acceptRegistryFile("verified.json", notJson), { ok: false, reason: "verified.json: the signature does not verify" });
 	assert.throws(() => parseRegistryFile("verified.json", "[]"), /not an object/);
 	assert.throws(() => parseRegistryFile("verified.json", `{"schema":2,"serial":1,"entries":{}}`), /schema 2/);
-	assert.throws(() => parseRegistryFile("verified.json", `{"schema":1,"serial":-1,"entries":{}}`), /serial/);
-	assert.throws(() => parseRegistryFile("verified.json", `{"schema":1,"serial":1.5,"entries":{}}`), /serial/);
-	assert.throws(() => parseRegistryFile("revoked.json", `{"schema":1,"serial":1}`), /entries/);
+	assert.throws(() => parseRegistryFile("verified.json", `{"schema":1,"kind":"verified","serial":-1,"entries":{}}`), /serial/);
+	assert.throws(() => parseRegistryFile("verified.json", `{"schema":1,"kind":"verified","serial":1.5,"entries":{}}`), /serial/);
+	assert.throws(() => parseRegistryFile("revoked.json", `{"schema":1,"kind":"revoked","serial":1}`), /entries/);
 });
 
 const sha = (char: string) => char.repeat(64);
@@ -98,6 +98,7 @@ const verified: VerifiedFile = parseRegistryFile(
 	"verified.json",
 	JSON.stringify({
 		schema: 1,
+		kind: "verified",
 		serial: 1,
 		entries: {
 			[sha("a")]: { id: "x.avatar", name: "Avatar", report: "https://github.com/Inrixia/luna-registry/pull/3" },
@@ -112,6 +113,7 @@ const revoked: RevokedFile = parseRegistryFile(
 	"revoked.json",
 	JSON.stringify({
 		schema: 1,
+		kind: "revoked",
 		serial: 1,
 		entries: { [sha("d")]: { id: "x.avatar", reason: "Steals tokens", report: "https://r/1" }, [sha("e")]: null },
 	}),
@@ -235,7 +237,7 @@ test("verified entries in the current format: path, build, out and a commit url 
 		verifiedAt: "2026-11-23T12:00:00.000Z",
 		sig: "x",
 	};
-	const file = parseRegistryFile("verified.json", JSON.stringify({ schema: 1, serial: 1, entries: { [sha]: entry } }));
+	const file = parseRegistryFile("verified.json", JSON.stringify({ schema: 1, kind: "verified", serial: 1, entries: { [sha]: entry } }));
 	assert.deepEqual(file.entries[sha], entry);
 });
 
@@ -269,4 +271,20 @@ test("served code keeps a BOM and refuses invalid UTF-8, so its raw sha256 is th
 	assert.notEqual(await rawSha256(decodeServedCode(withBom)), codes.sha256.revoked);
 	assert.equal(await rawSha256(decodeServedCode(new TextEncoder().encode(codes.revoked))), codes.sha256.revoked);
 	assert.throws(() => decodeServedCode(new Uint8Array([0x2f, 0x2f, 0xff, 0x0a])), /not valid UTF-8/);
+});
+
+test("a signed file served as the other file, or without kind, is rejected", async () => {
+	// revoked.json is validly signed, but its kind says what it is
+	const asVerified = await acceptRegistryFile("verified.json", signed("revoked.json"));
+	assert.equal(asVerified.ok, false);
+	assert.match(!asVerified.ok ? asVerified.reason : "", /kind "revoked", expected "verified"/);
+	const asRevoked = await acceptRegistryFile("revoked.json", signed("verified.json"));
+	assert.equal(asRevoked.ok, false);
+	assert.match(!asRevoked.ok ? asRevoked.reason : "", /kind "verified", expected "revoked"/);
+	const noKind = await acceptRegistryFile("revoked.json", signed("nokind.json"));
+	assert.equal(noKind.ok, false);
+	assert.match(!noKind.ok ? noKind.reason : "", /kind undefined/);
+	// The right file is accepted and keeps its kind
+	const ok = await acceptRegistryFile("revoked.json", signed("revoked.json"));
+	assert.equal(ok.ok && ok.file.kind, "revoked");
 });
