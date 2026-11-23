@@ -1,4 +1,5 @@
 export * from "./LunaButtonSetting";
+export * from "./LunaCacheSetting";
 export * from "./LunaNumberSetting";
 export * from "./LunaSecureTextSetting";
 export * from "./LunaSelectSetting";

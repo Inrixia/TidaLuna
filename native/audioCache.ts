@@ -5,14 +5,17 @@
 // - Requests are answered as bytes arrive. A read of bytes nothing is fetching soon starts fetching from there (instant seeks).
 // - Wanted entries (the player's track, the renderer's window, hovered tracks) are filled in the background, only the most important at a time.
 // - Once a wanted track is completely in memory, @luna/lib persists it to disk via MediaItem.download (decrypted, tagged and named from its tags)
-//   with an <id>.json sidecar. Persisted files are served directly from disk with encryptionKey cleared, until pruned by LRU when over the limit.
+//   with an <id>.json sidecar. Persisted files are served directly from disk with encryptionKey cleared, until evicted (least recently / frequently
+//   played first, see cache/DiskCache.ts) when over the limit.
 import electron from "electron";
 
 import { createHash, randomBytes } from "crypto";
 import { constants } from "fs";
-import { mkdir, open, readdir, readFile, rm, stat, statfs, utimes, writeFile, type FileHandle } from "fs/promises";
+import { open, type FileHandle } from "fs/promises";
 import http from "http";
 import path from "path";
+
+import { DiskCache } from "./cache/DiskCache";
 
 const audioHost = /^[\w-]+\.audio\.tidal\.com$/;
 const GB = 1024 ** 3;
@@ -47,22 +50,19 @@ type Entry = {
 	error?: unknown;
 	waiters: Set<() => void>;
 };
-type DiskEntry = {
-	file: string;
-	size: number;
-	type: string;
-	used: number;
-	refs: number;
-	handle?: Promise<FileHandle>;
+/** What the sidecar of a persisted track says: its file in the cache folder and content type */
+type Meta = { file: string; type: string };
+/** What `DiskCacheStats.extra` holds for the audio cache */
+export type AudioCacheExtra = {
+	servedBytes: number;
+	fetchedBytes: number;
+	fetching: { id: string; priority: number; held: number; size?: number }[];
 };
+/** Open file of a persisted track, shared by the reads of it */
+type DiskHandle = { refs: number; handle?: Promise<FileHandle> };
 
-// Set when ready: reading userData fixes it, and it is derived from TIDAL's name which native/injector.ts sets after this module loads
-let dir = "";
 const entries = new Map<string, Entry>();
-/** Complete, decrypted and tagged files persisted on disk */
-const disk = new Map<string, DiskEntry>();
-let usage = 0;
-let userLimit: number | undefined;
+const handles = new Map<string, DiskHandle>();
 const stats = { servedBytes: 0, fetchedBytes: 0 };
 
 let currentId: string | undefined;
@@ -74,7 +74,6 @@ let windowIds: string[] = [];
 let hoverIds: string[] = [];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const fileOf = (name: string) => path.join(dir, name);
 // Keyed by path, the token in the query changes
 const idOf = (rawUrl: string) => {
 	let url: URL;
@@ -95,9 +94,8 @@ const openEntry = (rawUrl: string): Entry | undefined => {
 	if (id === undefined) return;
 	let entry = entries.get(id);
 	if (entry === undefined) {
-		const onDisk = disk.get(id);
 		entry = {
-			...{ id, url: rawUrl, size: onDisk?.size, type: onDisk?.type ?? "application/octet-stream", have: [], complete: false },
+			...{ id, url: rawUrl, size: disk.bytesOf(id), type: disk.meta(id)?.type ?? "application/octet-stream", have: [], complete: false },
 			...{ fetches: new Set(), waiters: new Set(), waiting: 0, readers: 0, failures: 0 },
 		};
 		entries.set(id, entry);
@@ -187,79 +185,43 @@ const trimMemory = () => {
 	for (const entry of entries.values()) maybeFreeMemory(entry);
 };
 
-const acquireDisk = (onDisk: DiskEntry) => {
+const acquireDisk = (id: string) => {
+	const onDisk = handles.get(id) ?? { refs: 0 };
+	handles.set(id, onDisk);
 	onDisk.refs++;
-	return (onDisk.handle ??= ready.then(() => open(fileOf(onDisk.file), constants.O_RDONLY)));
+	return (onDisk.handle ??= open(disk.fileOf(disk.fileNameOf(id)!), constants.O_RDONLY));
 };
-const releaseDisk = (onDisk: DiskEntry) => {
+const releaseDisk = (id: string) => {
+	const onDisk = handles.get(id)!;
 	if (--onDisk.refs !== 0) return;
-	const handle = onDisk.handle;
-	onDisk.handle = undefined;
-	handle?.then((fh) => fh.close()).catch(() => {});
+	handles.delete(id);
+	onDisk.handle?.then((fh) => fh.close()).catch(() => {});
 };
 
-const touch = (onDisk: DiskEntry) => {
-	onDisk.used = Date.now();
-	utimes(fileOf(onDisk.file), new Date(), new Date()).catch(() => {});
-};
-
-const limit = async () => {
-	let free = Infinity;
-	try {
-		const { bavail, bsize } = await statfs(dir);
-		free = bavail * bsize;
-	} catch {}
-	return Math.min(userLimit ?? 128 * GB, 0.75 * (free + usage));
-};
-let pruning: Promise<void> | undefined;
-/** Deletes the least recently used complete files until the cache is within its limit */
-const prune = (): Promise<void> =>
-	(pruning ??= (async () => {
-		const max = await limit();
-		if (usage <= max) return;
-		for (const [id, onDisk] of [...disk].sort(([, a], [, b]) => a.used - b.used)) {
-			if (usage <= max) break;
-			const entry = entries.get(id);
-			if (onDisk.refs > 0 || id === currentId || id === preloadId || windowIds.includes(id)) continue;
-			if (entry !== undefined && (entry.readers > 0 || entry.persisting)) continue;
-			entries.delete(id);
-			disk.delete(id);
-			usage -= onDisk.size;
-			await rm(fileOf(id) + ".json", { force: true });
-			await rm(fileOf(onDisk.file), { force: true });
-		}
-	})()
-		.catch((err) => console.error("[Luna.native] [AudioCache] Failed to prune", err))
-		.finally(() => (pruning = undefined)));
-
-// Only complete files with a valid <id>.json sidecar referencing their named audio file are kept; orphans and legacy raw files are dropped
-const ready = electron.app
-	.whenReady()
-	.then(async () => {
-		dir = path.join(electron.app.getPath("userData"), "luna-audio-cache");
-		await mkdir(dir, { recursive: true });
-		const names = new Set(await readdir(dir));
-		const kept = new Set<string>();
-		await Promise.all(
-			[...names].map(async (name) => {
-				if (!name.endsWith(".json")) return;
-				try {
-					const id = name.slice(0, -5);
-					const meta = JSON.parse(await readFile(fileOf(name), "utf8"));
-					if (typeof meta.file !== "string" || meta.file !== path.basename(meta.file) || !names.has(meta.file)) return;
-					const { size, mtimeMs } = await stat(fileOf(meta.file));
-					if (!(size > 0)) return;
-					disk.set(id, { file: meta.file, size, type: meta.type ?? "audio/flac", used: mtimeMs, refs: 0 });
-					usage += size;
-					kept.add(name);
-					kept.add(meta.file);
-				} catch {}
-			}),
+// Complete, decrypted and tagged files persisted on disk, with an <id>.json sidecar naming the file. The cache folder is the DiskCache's: only
+// files with a valid sidecar are kept, orphans and legacy raw files are dropped, and what no longer fits is evicted
+const disk = new DiskCache<Meta>({
+	name: "audio",
+	defaultLimit: 128 * GB,
+	// It never takes more than 75% of the free disk space
+	freeShare: 0.75,
+	bodyOf: (_, meta) => meta.file,
+	isPinned: (id) => {
+		const entry = entries.get(id);
+		return (
+			(handles.get(id)?.refs ?? 0) > 0 ||
+			id === currentId ||
+			id === preloadId ||
+			windowIds.includes(id) ||
+			(entry !== undefined && (entry.readers > 0 || entry.persisting === true))
 		);
-		await Promise.all([...names].filter((name) => !kept.has(name)).map((name) => rm(fileOf(name), { force: true })));
-		await prune();
-	})
-	.catch((err) => console.error("[Luna.native] [AudioCache] Failed to read the cache folder", err));
+	},
+	extraStats: (): AudioCacheExtra => ({
+		...stats,
+		fetching: [...active].map((entry) => ({ id: entry.id, priority: priorityOf(entry), held: heldBytes(entry.have), size: entry.size })),
+	}),
+});
+const ready = disk.ready;
 
 const isAbort = (err: unknown) => err instanceof Error && err.name === "AbortError";
 /** Fetches [start, end) into `entry.data` in memory while `keepGoing`, in turn with other entries' fetches by priority */
@@ -276,7 +238,8 @@ const fetchRange = async (entry: Entry, start: number, end: number, keepGoing: (
 			signal: abort.signal,
 			bypassCustomProtocolHandlers: true,
 		});
-		if (res.body === null || (res.status !== 206 && !(res.status === 200 && start === 0))) throw new Error(`Audio fetch failed, HTTP ${res.status}`);
+		if (res.body === null || (res.status !== 206 && !(res.status === 200 && start === 0)))
+			throw new Error(`Audio fetch failed, HTTP ${res.status}`);
 		const size = Number(res.status === 206 ? res.headers.get("content-range")?.split("/")[1] : res.headers.get("content-length"));
 		if (!(size > 0)) throw new Error("Audio fetch has no size");
 		if (entry.data === undefined) {
@@ -384,12 +347,12 @@ const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
 	if (urlSecret !== secret) return void res.writeHead(404).end();
 
 	if (mode === "disk") {
-		const onDisk = disk.get(id);
-		if (onDisk === undefined) return void res.writeHead(404).end();
-		touch(onDisk);
-		const fh = acquireDisk(onDisk);
+		const onDisk = disk.meta(id);
+		const size = disk.bytesOf(id);
+		if (onDisk === undefined || size === undefined) return void res.writeHead(404).end();
+		disk.touch(id);
+		const fh = acquireDisk(id);
 		try {
-			const size = onDisk.size;
 			const rangeHeader = req.headers.range;
 			const range = parseRange(rangeHeader, size);
 			if (rangeHeader !== undefined && range === undefined) return void res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
@@ -403,7 +366,7 @@ const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
 			});
 			if (req.method === "HEAD") return void res.end();
 
-			for (let pos = start; pos <= end && !res.destroyed; ) {
+			for (let pos = start; pos <= end && !res.destroyed;) {
 				const buffer = Buffer.allocUnsafe(Math.min(end + 1 - pos, 1024 ** 2));
 				const { bytesRead } = await (await fh).read(buffer, 0, buffer.length, pos);
 				if (bytesRead === 0) throw new Error(`Audio file ${onDisk.file} is shorter than expected`);
@@ -413,7 +376,7 @@ const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
 			}
 			res.end();
 		} finally {
-			releaseDisk(onDisk);
+			releaseDisk(id);
 		}
 		return;
 	}
@@ -441,7 +404,7 @@ const serve = async (req: http.IncomingMessage, res: http.ServerResponse) => {
 		});
 		if (req.method === "HEAD") return void res.end();
 
-		for (let pos = start; pos <= end && !res.destroyed; ) {
+		for (let pos = start; pos <= end && !res.destroyed;) {
 			const held = Math.min(heldUntil(entry.have, pos), end + 1);
 			if (held === pos) {
 				await need(entry, pos);
@@ -541,7 +504,7 @@ export const audioCacheWaitFilled = async (url: string): Promise<string | undefi
 	}
 	if (disk.has(entry.id) || !entry.complete || entry.data === undefined) return;
 	entry.persisting = true;
-	return dir;
+	return disk.dir;
 };
 
 /**
@@ -555,20 +518,9 @@ export const audioCachePersist = async (url: string, filePath?: string): Promise
 	const entry = entries.get(id);
 	try {
 		if (filePath === undefined) return;
-		const fileName = path.basename(filePath);
-		const { size, mtimeMs } = await stat(filePath);
-		if (!(size > 0)) return;
 		const type = entry?.type && entry.type !== "application/octet-stream" ? entry.type : "audio/flac";
-		for (const [otherId, other] of disk) {
-			if (other.file !== fileName && otherId !== id) continue;
-			disk.delete(otherId);
-			usage -= other.size;
-			if (otherId !== id) await rm(fileOf(otherId) + ".json", { force: true });
-		}
-		await writeFile(fileOf(id) + ".json", JSON.stringify({ file: fileName, size, type }));
-		disk.set(id, { file: fileName, size, type, used: mtimeMs, refs: 0 });
-		usage += size;
-		await prune();
+		// The file is in the cache folder, MediaItem.download wrote it there
+		await disk.adopt(id, { file: path.basename(filePath), type });
 	} finally {
 		if (entry !== undefined) {
 			entry.persisting = false;
@@ -581,37 +533,9 @@ export const audioCachePersist = async (url: string, filePath?: string): Promise
 export type AudioCacheStatus = { size?: number; held: number; complete: boolean };
 export const audioCacheStatus = (url: string): AudioCacheStatus => {
 	const id = idOf(url);
-	const onDisk = id === undefined ? undefined : disk.get(id);
-	if (onDisk !== undefined) return { size: onDisk.size, held: onDisk.size, complete: true };
+	const onDisk = id === undefined ? undefined : disk.bytesOf(id);
+	if (onDisk !== undefined) return { size: onDisk, held: onDisk, complete: true };
 	const entry = id === undefined ? undefined : entries.get(id);
 	if (entry === undefined) return { size: undefined, held: 0, complete: false };
 	return { size: entry.size, held: heldBytes(entry.have), complete: entry.complete };
 };
-
-export type AudioCacheStats = {
-	path: string;
-	usage: number;
-	limit: number;
-	userLimit?: number;
-	files: number;
-	servedBytes: number;
-	fetchedBytes: number;
-	fetching: { id: string; priority: number; held: number; size?: number }[];
-};
-export const audioCacheStats = async (): Promise<AudioCacheStats> => ({
-	path: dir,
-	usage,
-	limit: await limit(),
-	userLimit,
-	files: disk.size,
-	...stats,
-	fetching: [...active].map((entry) => ({ id: entry.id, priority: priorityOf(entry), held: heldBytes(entry.have), size: entry.size })),
-});
-
-/** Bytes the cache may use, `undefined` for the default of 128GB. It never uses more than 75% of free disk space */
-export const audioCacheSetLimit = (bytes?: number) => {
-	userLimit = bytes;
-	return prune();
-};
-
-export const audioCacheOpenFolder = () => electron.shell.openPath(dir);

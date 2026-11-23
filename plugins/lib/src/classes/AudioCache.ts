@@ -1,26 +1,22 @@
 import {
 	audioCacheHover,
-	audioCacheOpenFolder,
 	audioCachePersist,
-	audioCacheSetLimit,
-	audioCacheStats,
 	audioCacheStatus,
 	audioCacheWaitFilled,
 	audioCacheWindow,
-	type AudioCacheStats,
+	type AudioCacheExtra,
 	type AudioCacheStatus,
 } from "../../../lib.native/src/index.native";
 
-import { ReactiveStore } from "@luna/core";
-
 import { getPlaybackInfo } from "../helpers/getPlaybackInfo";
 import { safeTimeout } from "../helpers/safeTimeout";
-import { libTrace, unloads } from "../index.safe";
+import { unloads } from "../index.safe";
 import * as redux from "../redux";
+import { Cache } from "./Cache";
 import { MediaItem } from "./MediaItem";
 import { PlayState } from "./PlayState";
 
-export type { AudioCacheStats, AudioCacheStatus };
+export type { AudioCacheExtra, AudioCacheStatus };
 
 const encoder = new TextEncoder();
 /** Cuts `text` to at most `maxBytes` of UTF-8 without splitting a character */
@@ -35,30 +31,29 @@ const fitBytes = (text: string, maxBytes: number): string => {
 };
 
 /**
- * The cache TIDAL's native player plays audio from, see native/audioCache.ts. It holds the audio of tracks played, hovered, next and previous
+ * The cache TIDAL's native player plays audio from, see native/audioCache.ts (`audioCache`). It holds the audio of tracks played, hovered, next and previous
  * in the queue, and of every `MediaItem` read (downloads, formats). Only tracks the native player plays (BTS manifests), DASH plays in the page.
  */
-export class AudioCache {
-	private static readonly trace = libTrace.withSource("AudioCache").trace;
-	private static readonly persisting = new Set<string>();
+export class AudioCache extends Cache {
+	private readonly persisting = new Set<string>();
 
 	/** The url of a track's audio at the streaming quality, the url TIDAL's player plays */
-	public static async url(trackId: redux.ItemId): Promise<string | undefined> {
+	public async url(trackId: redux.ItemId): Promise<string | undefined> {
 		const info = await getPlaybackInfo(trackId, redux.store.getState().settings.quality.streaming).catch(() => undefined);
 		if (info?.manifestMimeType === "application/vnd.tidal.bts") return info.manifest.urls[0];
 	}
 	/** How much of a track's audio is cached */
-	public static async status(trackId: redux.ItemId): Promise<AudioCacheStatus | undefined> {
+	public async status(trackId: redux.ItemId): Promise<AudioCacheStatus | undefined> {
 		const url = await this.url(trackId);
 		if (url !== undefined) return audioCacheStatus(url);
 	}
 	/** Fetches what a track needs to start playing at once, ahead of everything but the playing track. The latest call goes first */
-	public static async prefetch(trackId: redux.ItemId): Promise<void> {
+	public async prefetch(trackId: redux.ItemId): Promise<void> {
 		const url = await this.url(trackId);
 		if (url !== undefined) await audioCacheHover(url);
 	}
 	/** Waits for a track's audio to finish filling in memory, then persists it to disk decrypted and tagged via `MediaItem.download` */
-	private static async persist(trackId: redux.ItemId, url: string): Promise<void> {
+	private async persist(trackId: redux.ItemId, url: string): Promise<void> {
 		if (this.persisting.has(url)) return;
 		this.persisting.add(url);
 		try {
@@ -83,22 +78,8 @@ export class AudioCache {
 			this.persisting.delete(url);
 		}
 	}
-	public static stats(): Promise<AudioCacheStats> {
-		return audioCacheStats();
-	}
-	/** 0 for the default */
-	private static readonly storage: Promise<{ limitBytes: number }> = ReactiveStore.getPluginStorage("@luna/lib.AudioCache", { limitBytes: 0 });
-	/** Bytes the cache may use, kept across restarts. 0 for the default of 128GB. It never uses more than 75% of free disk space */
-	public static async setLimit(bytes: number): Promise<void> {
-		(await this.storage).limitBytes = bytes;
-		return audioCacheSetLimit(bytes || undefined);
-	}
-	public static openFolder(): Promise<string> {
-		return audioCacheOpenFolder();
-	}
-
-	static {
-		this.storage.then(({ limitBytes }) => (limitBytes ? audioCacheSetLimit(limitBytes) : undefined)).catch(this.trace.err.withContext("limit"));
+	public constructor() {
+		super("audio", "@luna/lib.AudioCache");
 
 		// The current, next and previous track are fetched in the background and persisted to disk once filled,
 		// debounced as skipping through tracks shouldn't fetch each
@@ -136,3 +117,5 @@ export class AudioCache {
 		unloads.add(() => document.removeEventListener("pointerover", onPointerOver));
 	}
 }
+
+export const audioCache = new AudioCache();

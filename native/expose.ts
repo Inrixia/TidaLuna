@@ -12,15 +12,12 @@ export const showErrorBox = dialog.showErrorBox;
 export * from "./update";
 export {
 	audioCacheHover,
-	audioCacheOpenFolder,
 	audioCachePersist,
-	audioCacheSetLimit,
-	audioCacheStats,
 	audioCacheStatus,
 	audioCacheUrl,
 	audioCacheWaitFilled,
 	audioCacheWindow,
-	type AudioCacheStats,
+	type AudioCacheExtra,
 	type AudioCacheStatus,
 } from "./audioCache";
-export { offlineCacheOpenFolder, offlineCacheSetLimit, offlineCacheStats, type OfflineCacheStats } from "./offlineCache";
+export { cacheClear, cacheList, cacheOpenFolder, cacheSetLimit, cacheStats, type CacheStats, type DiskCacheStats } from "./cache";

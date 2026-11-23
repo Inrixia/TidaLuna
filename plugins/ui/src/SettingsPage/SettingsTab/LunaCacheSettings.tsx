@@ -1,102 +1,36 @@
 import React from "react";
 
-import { AudioCache, OfflineCache, type AudioCacheStats, type OfflineCacheStats } from "@luna/lib";
-import { requestCache, Tracer } from "@luna/core";
+import { audioCache, offlineCache, type AudioCacheExtra } from "@luna/lib";
+import { requestCache, unloadSet, type LunaUnloads } from "@luna/core";
 
 import Typography from "@mui/material/Typography";
-import { useConfirm } from "material-ui-confirm";
 
-import { LunaButtonSetting, LunaNumberSetting, LunaSettings } from "../../components";
-
-const { trace } = Tracer("[@luna/ui]", null);
-
-const GB = 1024 ** 3;
-const formatBytes = (bytes: number) => (bytes >= GB ? `${(bytes / GB).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`);
+import { formatBytes, LunaCacheSetting, LunaSettings } from "../../components";
 
 export const LunaCacheSettings = React.memo(() => {
-	const [audio, setAudio] = React.useState<AudioCacheStats>();
-	const [offline, setOffline] = React.useState<OfflineCacheStats>();
 	const [requests, setRequests] = React.useState(requestCache.stats());
 	React.useEffect(() => {
-		const update = () => {
-			AudioCache.stats().then(setAudio);
-			OfflineCache.stats().then(setOffline);
-			setRequests(requestCache.stats());
-		};
-		update();
-		const interval = setInterval(update, 2000);
-		return () => clearInterval(interval);
+		const unloads: LunaUnloads = new Set();
+		requestCache.onStats(unloads, setRequests);
+		return () => void unloadSet(unloads);
 	}, []);
 
-	// A lower limit deletes tracks at once, so it is applied when typing stops (Enter, leaving the field, or a pause), not per keystroke:
-	// typing "100" would otherwise first set 1 GB
-	const [draftGb, setDraftGb] = React.useState<number>();
-	const pendingGb = React.useRef<number>(undefined);
-	const applyTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
-	const confirm = useConfirm();
-	/** `canConfirm` false (leaving the page) drops a limit that would delete tracks instead of asking */
-	const applyLimit = React.useCallback(async (canConfirm = true) => {
-		clearTimeout(applyTimer.current);
-		const gb = pendingGb.current;
-		if (gb === undefined) return;
-		pendingGb.current = undefined;
-		try {
-			const bytes = Math.max(0, gb) * GB;
-			const { usage } = await AudioCache.stats();
-			if ((bytes || 128 * GB) < usage) {
-				if (!canConfirm) return;
-				const { confirmed } = await confirm({
-					title: "Delete cached tracks?",
-					description: `The cache uses ${formatBytes(usage)}. A ${gb || 128} GB limit deletes the least recently played tracks until it fits.`,
-					confirmationText: "Delete tracks",
-				});
-				if (!confirmed) return;
-			}
-			await AudioCache.setLimit(bytes);
-			setAudio(await AudioCache.stats());
-		} catch (err) {
-			trace.msg.err.withContext("Failed to set the audio cache limit")(err);
-		} finally {
-			// Shows the applied limit again, or the old one if it was cancelled or failed
-			if (pendingGb.current === undefined) setDraftGb(undefined);
-		}
-	}, []);
-	// Leaving the page applies what was typed
-	React.useEffect(() => () => void applyLimit(false), []);
-
-	const limitDesc =
-		audio &&
-		`Using ${formatBytes(audio.usage)} of ${formatBytes(audio.limit)} in ${audio.files} tracks. 0 for 128 GB, never more than 75% of free disk space`;
 	return (
 		<LunaSettings title="Cache" desc="Audio of tracks played, hovered and next in the queue, and TIDAL's requests">
-			<LunaNumberSetting
-				title="Audio cache limit (GB)"
-				desc={limitDesc}
-				min={0}
-				value={draftGb ?? (audio === undefined ? 0 : Math.round((audio.userLimit ?? 128 * GB) / GB))}
-				onNumber={(gb) => {
-					setDraftGb(gb);
-					pendingGb.current = gb;
-					clearTimeout(applyTimer.current);
-					applyTimer.current = setTimeout(applyLimit, 2000);
-				}}
-				onBlur={() => applyLimit()}
-				onKeyDown={(e) => e.key === "Enter" && applyLimit()}
+			<LunaCacheSetting
+				cache={audioCache}
+				title="Audio"
+				desc="Never more than 75% of free disk space."
+				entries="tracks"
+				details={({ extra }) => (
+					<Typography variant="body2" sx={{ paddingLeft: 2 }}>
+						Audio: {formatBytes((extra as AudioCacheExtra).servedBytes)} played from the cache, {formatBytes((extra as AudioCacheExtra).fetchedBytes)}{" "}
+						fetched
+						{(extra as AudioCacheExtra).fetching.length !== 0 && `, fetching ${(extra as AudioCacheExtra).fetching.length} tracks`} this session
+					</Typography>
+				)}
 			/>
-			<LunaButtonSetting title="Open audio cache folder" desc={audio?.path} onClick={() => AudioCache.openFolder()} children="Open" />
-			<LunaNumberSetting
-				title="Offline cache limit (GB)"
-				desc={offline && `Pages and images kept for offline use, using ${formatBytes(offline.usage)} of ${formatBytes(offline.limit)}. 0 for 1 GB`}
-				value={offline?.userLimit === undefined ? 0 : Math.round(offline.userLimit / GB)}
-				onNumber={(gb) => OfflineCache.setLimit(Math.max(0, gb) * GB).then(() => OfflineCache.stats().then(setOffline))}
-			/>
-			<LunaButtonSetting title="Open offline cache folder" desc={offline?.path} onClick={() => OfflineCache.openFolder()} children="Open" />
-			{audio && (
-				<Typography variant="body2" sx={{ paddingLeft: 2 }}>
-					Audio: {formatBytes(audio.servedBytes)} played from the cache, {formatBytes(audio.fetchedBytes)} fetched
-					{audio.fetching.length !== 0 && `, fetching ${audio.fetching.length} tracks`} this session
-				</Typography>
-			)}
+			<LunaCacheSetting cache={offlineCache} title="Offline" desc="Pages and images kept for offline use." entries="responses" />
 			<Typography variant="body2" sx={{ paddingLeft: 2 }}>
 				Requests: {requests.entries} cached, {requests.served} answered from the cache, {requests.fetched} fetched this session
 			</Typography>

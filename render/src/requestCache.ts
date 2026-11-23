@@ -1,3 +1,4 @@
+import { Cache } from "../../native/cache/Cache";
 import { tidalRequestKey, tidalRequestPath } from "../../native/tidalHosts";
 import type { LunaUnloads } from "./helpers/unloadSet";
 
@@ -28,7 +29,6 @@ type Entry = {
 };
 
 const rules = new Set<RequestCacheRule>();
-const entries = new Map<string, Entry>();
 /** In-flight entries that may fill extraUrls, by path */
 const pending = new Map<Promise<unknown>, string>();
 const changeListeners = new Set<(url: string) => void>();
@@ -41,8 +41,8 @@ const fetching = new Set<string>();
  * what they change, so a page revisited after a break shows at once instead of waiting on the network
  */
 const revalidateAfterMs = 60_000;
-/** The least recently used entries are dropped past this */
-const maxEntries = 10_000;
+/** Entries in memory, past this the least recently and frequently used are dropped (see native/cache/Cache.ts) */
+const entries = new Cache<Entry>({ maxEntries: 10_000 });
 const stats = { served: 0, fetched: 0 };
 
 const maxAgeOf = (href: string) => {
@@ -59,7 +59,7 @@ const parse = (raw: RawResponse) => {
 	if (!raw.headers.has("x-luna-offline-miss") && (raw.status === 403 || raw.status === 404)) return undefined;
 	throw new Error(`${raw.status} ${raw.statusText}`);
 };
-const drop = (key: string, entry: Entry) => entries.get(key) === entry && entries.delete(key);
+const drop = (key: string, entry: Entry) => entries.peek(key) === entry && entries.delete(key);
 const valueOf = (key: string, entry: Entry) => {
 	if (entry.value === undefined) {
 		entry.value = entry.raw!.then(parse);
@@ -71,10 +71,7 @@ const valueOf = (key: string, entry: Entry) => {
 const store = (url: URL, key: string, value: Promise<unknown> | undefined, raw?: Promise<RawResponse>) => {
 	const entry: Entry = { value, raw, time: Date.now() };
 	(raw ?? value)!.catch(() => drop(key, entry));
-	// Re-inserted so the map stays in use order for eviction
-	entries.delete(key);
 	entries.set(key, entry);
-	if (entries.size > maxEntries) entries.delete(entries.keys().next().value!);
 	const aliasRules: Required<RequestCacheRule>[] = [];
 	for (const rule of rules) if (rule.extraUrls !== undefined && rule.pattern.test(url.href)) aliasRules.push(<Required<RequestCacheRule>>rule);
 	if (aliasRules.length === 0) return entry;
@@ -126,7 +123,7 @@ const invalidate = (url: URL) => {
 	for (const part of url.pathname.split("/")) if (idLike.test(part)) ids.push(part);
 	for (const value of url.searchParams.values()) for (const part of value.split(",")) if (idLike.test(part)) ids.push(part);
 	if (ids.length === 0) return;
-	for (const key of entries.keys()) {
+	for (const key of [...entries.keys()]) {
 		for (const id of ids) {
 			if (!key.includes(id)) continue;
 			entries.delete(key);
@@ -139,6 +136,7 @@ const invalidate = (url: URL) => {
  * Cache of request responses shared by everything in the page.
  * Responses to requests matching a registered rule fill it. TIDAL's own requests are only served from it for `swr` rules.
  */
+const statsOf = () => ({ ...entries.stats(), ...stats });
 export const requestCache = {
 	register(unloads: LunaUnloads, rule: RequestCacheRule) {
 		rules.add(rule);
@@ -153,9 +151,15 @@ export const requestCache = {
 	clear() {
 		entries.clear();
 	},
-	/** How many TIDAL requests were answered from the cache and how many went to the network through it */
+	/** The entries held and how many TIDAL requests were answered from the cache and how many went to the network through it */
 	stats() {
-		return { entries: entries.size, ...stats };
+		return statsOf();
+	},
+	/** Calls `listener` when the stats changed, at most once a second */
+	onStats(unloads: LunaUnloads, listener: (stats: ReturnType<typeof statsOf>) => void) {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const unload = entries.onChange(() => (timer ??= setTimeout(() => ((timer = undefined), listener(statsOf())), 1000)));
+		unloads.add(() => (clearTimeout(timer), unload()));
 	},
 	/**
 	 * The cached or in-flight value for `url`, otherwise the result of `fetcher` which is cached.
@@ -204,7 +208,7 @@ const revalidate = (url: URL, key: string, entry: Entry, input: FetchInput, init
 		.call(globalThis, request)
 		.then(readRaw)
 		.then(async (raw) => {
-			if (entries.get(key) !== entry || raw.headers.has("x-luna-offline-miss")) return;
+			if (entries.peek(key) !== entry || raw.headers.has("x-luna-offline-miss")) return;
 			const old = await entry.raw!;
 			if (raw.status === 304 || sameResponse(old, raw)) return void (entry.time = Date.now());
 			if (raw.status !== 200) return void entries.delete(key);
@@ -224,9 +228,6 @@ const fromCache = (url: URL, key: string, input: FetchInput, init: FetchInit): P
 	const age = Date.now() - entry.time;
 	if (age > maxAgeOf(url.href)) return;
 	if (age > revalidateAfterMs && !entry.revalidating) revalidate(url, key, entry, input, init);
-	// Moved to the end so eviction drops the least recently used
-	entries.delete(key);
-	entries.set(key, entry);
 	const fallback = () => fill(url, key, input, init);
 	return entry.raw.then((raw) => {
 		if (raw.status !== 200) return fallback();
