@@ -456,11 +456,12 @@ export class LunaPlugin {
 			this.load().catch(this.trace.err.withContext(`Failed to load after ${dependency.name} loaded`));
 		});
 	}
-	/** The enabled plugin, not loaded, that an import failed to find in luna.core.modules (the build/index.ts shim's error), if any */
+	/** The enabled plugin that an import failed to find in luna.core.modules (the build/index.ts shim's error), if any */
 	private static missingDependencyOf(err: unknown): LunaPlugin | undefined {
 		const name = /^Cannot find module (.+) in luna\.core\.modules$/.exec((<any>err)?.message ?? "")?.[1];
 		const plugin = name === undefined ? undefined : LunaPlugin.getByName(name);
-		return plugin?.enabled && plugin.installed !== false && plugin.exports === undefined ? plugin : undefined;
+		// Loaded already is fine too (it loaded as this import failed): waitFor loads this plugin again then
+		return plugin?.enabled && plugin.installed !== false ? plugin : undefined;
 	}
 	/**
 	 * Another enabled plugin that `dependant` depends on and that has not finished loading, if any.
@@ -576,16 +577,22 @@ export class LunaPlugin {
 	 * Load the plugin if it is enabled
 	 */
 	public async load(): Promise<LunaPlugin> {
-		if (this.enabled && this.installed !== false) await this.enable();
+		if (this.enabled && this.installed !== false) await this.enable(true);
 		return this;
 	}
 	// #endregion
 
 	// #region enable/disable
-	public async enable() {
+	/** `queued`: from load(), which may have waited on the load semaphore while the plugin was disabled or uninstalled */
+	public async enable(queued = false) {
 		try {
 			this.loading._ = true;
 			await this.loadExports();
+			if (queued && !(this.enabled && this.installed !== false)) {
+				// Turned off meanwhile (disable and uninstall don't wait for loads): the user's choice stands
+				await this.unload();
+				return;
+			}
 			this._enabled._ = true;
 			// Loaded, or refused (revoked) or waiting for a dependency, not failed: the user's choice is stored (the setter skips it while there is
 			// a load error), so the plugin loads once the revocation is lifted or the dependency loads, also after a restart
@@ -691,10 +698,18 @@ export class LunaPlugin {
 	private revokedSha256?: string;
 	private markRevoked(entry: RevokedEntry) {
 		this.loadError._ = `Revoked by the Luna plugin registry: ${entry.reason}`;
-		// Unloading this plugin unloaded its dependants too: say why on their cards
-		for (const dependant of this.dependants)
-			if (dependant.exports === undefined && dependant.enabled && dependant.installed !== false)
-				dependant.loadError._ = dependencyWaitMessage({ name: this.name, revoked: true, pending: false });
+		// Unloading this plugin unloaded its dependants too, and theirs: say why on their cards
+		const seen = new Set<LunaPlugin>([this]);
+		const mark = (plugin: LunaPlugin) => {
+			for (const dependant of plugin.dependants) {
+				if (seen.has(dependant)) continue;
+				seen.add(dependant);
+				if (dependant.exports === undefined && dependant.enabled && dependant.installed !== false)
+					dependant.loadError._ = dependencyWaitMessage({ name: this.name, revoked: true, pending: false });
+				mark(dependant);
+			}
+		};
+		mark(this);
 		// Once per revoked build: live reload calls loadExports every second, and each fetched revoked.json has new entry objects
 		const sha = this.package?.rawSha256;
 		if (this.revokedSha256 === sha && this.revoked._?.reason === entry.reason && this.revoked._?.report === entry.report) return;
