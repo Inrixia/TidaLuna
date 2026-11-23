@@ -2,10 +2,8 @@ import { objectify } from "@inrixia/helpers";
 import vm from "vm";
 
 import { nativeRequire, type NativeModuleInfo } from ".";
-import { categoryOf } from "./permissions/categories";
 import { loadWithPermissions, NativeTrust } from "./trust";
 
-import { builtinModules } from "module";
 import type Module from "module";
 import { moduleWhitelist } from "./moduleWhitelist";
 
@@ -26,11 +24,11 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 			// so it can't be used to read the real, unfiltered process.env (USERPROFILE, PATH, APPDATA, ...).
 			if (moduleName === "process") return mockProcess;
 
+			// Code that may no longer run (revoked, uninstalled, a load that failed) gets no module: loading one can run its code
+			if (!trust.allowed) throw new Error(`[🛑Security🛑] Access Denied: Blocked require of '${moduleName}' in '${fileName}'`);
+
 			// Load the real module
 			const realModule = target.apply(thisArg, argumentsList);
-
-			// Asked for together with the file's other modules once it has loaded. Not one that failed to load (e.g. an optional dependency)
-			trust.seen(moduleName);
 
 			// REVERSE LOOKUP (Critical for fixing "Incompatible Receiver")
 			const proxyToTarget = new WeakMap<any, any>();
@@ -65,8 +63,8 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 					},
 
 					apply: (fn, thisArg, args) => {
-						if (!trust.check(moduleName)) {
-							throw new Error(`[🛑Security🛑] Access Denied: User blocked execution of '${moduleName}' in '${fileName}'`);
+						if (!trust.allowed) {
+							throw new Error(`[🛑Security🛑] Access Denied: Blocked execution of '${moduleName}' in '${fileName}'`);
 						}
 
 						// Native methods (Map.get, Promise.then) crash if 'this' is a Proxy.
@@ -77,8 +75,8 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 					},
 
 					construct: (fn, args) => {
-						if (!trust.check(moduleName)) {
-							throw new Error(`[🛑Security🛑] Access Denied: User blocked construction of '${moduleName}' in '${fileName}'`);
+						if (!trust.allowed) {
+							throw new Error(`[🛑Security🛑] Access Denied: Blocked construction of '${moduleName}' in '${fileName}'`);
 						}
 
 						return Reflect.construct(fn, args);
@@ -105,8 +103,8 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 	const WebAssembly = new Proxy(globalThis.WebAssembly, {
 		get(target, prop, receiver) {
 			console.warn(`[🛑Security🛑] '${fileName}' is loading WebAssembly (${String(prop)})!`);
-			if (!trust.check("WebAssembly")) {
-				throw new Error(`[🛑Security🛑] Access Denied! User blocked 'WebAssembly' (${String(prop)}) in '${fileName}'`);
+			if (!trust.allowed) {
+				throw new Error(`[🛑Security🛑] Access Denied! Blocked 'WebAssembly' (${String(prop)}) in '${fileName}'`);
 			}
 
 			return Reflect.get(target, prop, receiver);
@@ -154,8 +152,8 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 			// @ts-expect-error This exists
 			const debugProcess: (pid: number) => void = process._debugProcess;
 			console.warn(`[🛑Security🛑] '${fileName}' is calling 'process.debugProcess'`);
-			if (!trust.check("DebugProcess")) {
-				throw new Error(`[🛑Security🛑] Access Denied! User blocked 'process.debugProcess' in '${fileName}'`);
+			if (!trust.allowed) {
+				throw new Error(`[🛑Security🛑] Access Denied! Blocked 'process.debugProcess' in '${fileName}'`);
 			}
 			debugProcess(process.pid);
 			return process.debugPort;
@@ -247,19 +245,18 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 		return sandbox.module.exports as Module;
 	};
 
-	// The file is asked for before its first run (see NativeTrust.mayRun). The modules its source names are put in that
-	// window too, so it stays one window. A guess from the text (it also finds a require the code never reaches, and
-	// misses a name put together at run time, asked after the run as before), so only names with a category and Node's
-	// own modules, and only in that window: what the code uses is checked as it runs
-	const listed = (moduleName: string) => !categoryOf(moduleName).startsWith("module:") || builtinModules.includes(moduleName);
-	for (const [, name] of moduleInfo.isCore ? [] : code.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)) {
-		const moduleName = normalize(name);
-		if (!moduleWhitelist.has(moduleName) && moduleName !== "process" && listed(moduleName)) trust.names(moduleName);
+	// The file is asked for before any of its code runs (see NativeTrust.mayRun). The window lists the modules its source
+	// names, for information: a guess from the text (it also finds a require the code never reaches, and misses a name
+	// put together at run time), and the answer is for the file as a whole, not for that list
+	if (!moduleInfo.isCore) {
+		for (const [, name] of code.matchAll(/require\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) {
+			const moduleName = normalize(name);
+			if (!moduleWhitelist.has(moduleName) && moduleName !== "process") trust.names(moduleName);
+		}
+		if (/\bWebAssembly\b/.test(code)) trust.names("WebAssembly");
+		if (/\bdebugProcess\b/.test(code)) trust.names("DebugProcess");
 	}
 
-	// Permissions can't be asked while the code runs: the vm timeout counts the time a prompt is open, and once
-	// it has passed V8 stops the code as soon as the prompt returns, so the answer is lost and the load fails.
-	// Calls that need an answer fail instead; they are asked after the run and the code is loaded again.
 	return loadWithPermissions(trust, load).catch((err) => {
 		console.error(`Failed to load module ${fileName}:`, err);
 		throw err;

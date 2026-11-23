@@ -127,16 +127,12 @@ logging in.
 - **One device plays at a time per account.** Starting playback in a test instance logged in with your account
   pauses the daily client (and the other way round). Use a second account, or avoid playback while listening.
 - **"Plugin Permission" window.** The first time a plugin's native code (`*.native.ts`) loads, Luna asks in a
-  window of its own, before any of its code runs, whether it may run in TIDAL's main process. That window also
-  lists what else the file wants by category (Network Access, Filesystem, …) if its source names modules such
-  as `fs`, `http`, `electron` or `child_process`. A module not answered there (named only while the code runs,
-  or used by a file that was already allowed to run) is asked in a second window after that run, before the
-  file's exports are used. The plugin waits for the answers, so keep
-  the instance's windows visible while installing or enabling such plugins. A rebuilt plugin asks again only for
-  categories allowed for "This version"; "All versions" (confirmed in a second step) keeps the answer for later
-  builds from the same url.
-  A module first used after the file has loaded is still asked in a modal message box, which blocks the main
-  process (CDP calls time out) until it is answered. Answers are listed, and can be revoked, in Luna Settings.
+  window of its own, before any of its code runs, whether the file may run in TIDAL's main process. It is one
+  question per file: an allowed file is not asked again for the Node modules it uses. The window lists the
+  modules the file's source names (`fs`, `http`, `electron`, …), for information only. The plugin waits for the
+  answer, so keep the instance's windows visible while installing or enabling such plugins. A rebuilt plugin
+  asks again if it was allowed for "This version"; "All versions" (confirmed in a second step) keeps the answer
+  for later builds from the same url. Answers are listed, and can be revoked, in Luna Settings.
 - **TIDAL Connect** uses fixed local ports, so only one instance (daily or test) can offer it at a time.
 - **Stopping an instance.** Quit it normally, or kill its processes by path. `taskkill /IM TIDAL.exe` kills every
   TIDAL, including the daily client:
