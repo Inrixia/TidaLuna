@@ -31,6 +31,7 @@ export class ReactiveStore {
 		return (this.reactiveLoading[key] ??= this.loadReactive(key, defaultValue).finally(() => delete this.reactiveLoading[key]));
 	}
 	private readonly reactiveLoading: Record<string, Promise<any>> = {};
+	private readonly reactiveListeners: Record<string, () => void> = {};
 	private async loadReactive<T extends StoreReconcileable>(key: string, defaultValue: T): Promise<T> {
 		// Create the oby reactive object
 		const reactiveObj = obyStore(defaultValue);
@@ -38,7 +39,7 @@ export class ReactiveStore {
 		obyStore.reconcile(reactiveObj, (await idbGet<T>(key, this.idbStore)) ?? defaultValue);
 
 		// Set up a listener to write to the idb store when the object changes
-		obyStore.on(reactiveObj, () =>
+		this.reactiveListeners[key] = obyStore.on(reactiveObj, () =>
 			idbSet(key, obyStore.unwrap(reactiveObj), this.idbStore).catch(this.trace.err.withContext(`Failed to set`, key, reactiveObj)),
 		);
 
@@ -77,6 +78,10 @@ export class ReactiveStore {
 	}
 
 	public del(key: string) {
+		// Its reactive object stops writing: a change still on its way (an uninstall's last writes) would store it again
+		this.reactiveListeners[key]?.();
+		delete this.reactiveListeners[key];
+		delete this.reactiveCache[key];
 		return idbDel(key, this.idbStore);
 	}
 
