@@ -27,7 +27,7 @@ test("only plugins served from 127.0.0.1 are dev plugins", () => {
 	assert.equal(isDevUrl("not a url"), false);
 });
 
-const register =(file: string) => `await __ipcRenderer.invoke("__Luna.registerNative", "${file}", "export const x = 1;");`;
+const register = (file: string) => `await __ipcRenderer.invoke("__Luna.registerNative", "${file}", "export const x = 1;");`;
 
 test("finds the native files a bundle registers", () => {
 	const bundle = [
