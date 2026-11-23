@@ -12,6 +12,7 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
+import { pluginCspHosts } from "./core/registryMain";
 import { reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
@@ -159,7 +160,8 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		// Report, don't enforce, TIDAL's policy (see cspReportOnly.ts)
 		const tidalPolicy = tidalMetaPolicy(body);
 		const headers = new Headers(res.headers);
-		if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy(tidalPolicy));
+		// The hosts enabled plugins declare are listed too: what is still reported is what no plugin declared
+		if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy(tidalPolicy, pluginCspHosts()));
 		body = body.replace(
 			/(<meta http-equiv="Content-Security-Policy")|(<script type="module" crossorigin src="(.*?)">)/g,
 			(match, cspMatch, scriptMatch, src) => {

@@ -14,7 +14,7 @@ import { BrowserWindow } from "electron";
 
 import { createHash } from "crypto";
 
-import { registry } from "./core/registryMain";
+import { lunaNet, registry } from "./core/registryMain";
 import { ipcHandle } from "./ipc";
 import { isIsolated } from "./isolatedContents";
 import { secureLoad } from "./NativeModule/secureLoad";
@@ -91,6 +91,14 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 	}
 
 	return { worldId: nextWorldId++, code: bundle.code };
+});
+
+// luna.fetch from a plugin world: the url is the one the preload fixed in the world's bridge, so the plugin's accepted
+// hosts hold for its world code (core/net.ts)
+ipcHandle("__LunaWorld.fetch", async (event, url: unknown, request: unknown) => {
+	checkIsolated(event.sender);
+	if (typeof url !== "string" || registry().acceptedWorld(url) === undefined) throw new Error(`[🛑Security🛑] ${String(url)} has no loaded world`);
+	return lunaNet.fetch(url, "world", request);
 });
 
 ipcHandle("__LunaWorld.invoke", async (event, url: unknown, fileName: unknown, exportName: unknown, ...args: unknown[]) => {

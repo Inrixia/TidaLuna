@@ -48,6 +48,16 @@ describe("reportOnlyPolicy", () => {
 		assert.deepEqual(parse(reportOnlyPolicy("connect-src 'self'")).get("connect-src"), ["'self'"]);
 		assert.deepEqual([...parse(reportOnlyPolicy("default-src 'self'")).keys()], ["default-src"]);
 	});
+	it("lists the hosts plugins declare where plugins fetch and show media, not in frame-src", () => {
+		const withPlugins = parse(reportOnlyPolicy(tidal, ["https://api.last.fm", "wss://api.last.fm", "https://luna"]));
+		for (const directive of ["connect-src", "img-src", "media-src"]) {
+			const sources = withPlugins.get(directive)!;
+			assert.ok(sources.includes("https://api.last.fm") && sources.includes("wss://api.last.fm"), directive);
+			assert.equal(sources.filter((s) => s === "https://luna").length, 1);
+		}
+		assert.deepEqual(withPlugins.get("frame-src"), networkBaseline);
+		assert.deepEqual(parse(reportOnlyPolicy("connect-src 'self'", ["https://a.com"])).get("connect-src"), ["'self'"]);
+	});
 	it("keeps the first of repeated directives, as browsers do", () => {
 		assert.deepEqual(parse(reportOnlyPolicy("object-src 'none'; object-src *")).get("object-src"), ["'none'"]);
 	});

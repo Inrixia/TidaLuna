@@ -10,6 +10,7 @@ import { createHash } from "crypto";
 
 import type { ConfirmRequest } from "./confirmPage";
 import { parseBundle, worldFilePrefix } from "../worldBundle";
+import { declaredHosts, hostsDiff, sameHosts } from "./hosts";
 import { isCoreUrl, isDevUrl, nativesDiff } from "./policy";
 
 // #region Types
@@ -22,6 +23,8 @@ export type PluginPackage = {
 	lunaWorld?: string;
 	/** sha256 (hex) of `<plugin>.world.json` */
 	worldHash?: string;
+	/** Network hosts the plugin connects to (core/hosts.ts). Without it the plugin runs in compatibility mode */
+	hosts?: unknown;
 	[key: string]: unknown;
 };
 /** A version of a plugin's code: the one the user accepted, or an update waiting for them */
@@ -52,6 +55,10 @@ export type PendingUpdate = {
 	natives: string[];
 	added: string[];
 	removed: string[];
+	/** The update's declared hosts, undefined if it declares none */
+	hosts?: string[];
+	hostsAdded: string[];
+	hostsRemoved: string[];
 };
 export type CorePluginInfo = {
 	url: string;
@@ -62,6 +69,8 @@ export type CorePluginInfo = {
 	hash?: string;
 	codeSha256?: string;
 	natives: string[];
+	/** Network hosts of the accepted version, undefined if it declares none (compatibility mode) */
+	hosts?: string[];
 	pending?: PendingUpdate;
 };
 /** Asks the user who made the request: true only if they confirmed. Throws if they could not be asked */
@@ -94,9 +103,29 @@ const withoutSource = (code: string, url: string) => {
 	return code.endsWith(suffix) ? code.slice(0, -suffix.length) : code;
 };
 const isNative = (version: Version) => version.natives.length !== 0;
-/** A new hash of either the page code or the world is a new version */
+/**
+ * A new hash of either the page code or the world is a new version, and so are new `hosts`: the build's hash covers only
+ * the code, and the user accepts the hosts with the version
+ */
 const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
-	version !== undefined && version.package.hash === pkg.hash && version.package.worldHash === pkg.worldHash;
+	version !== undefined &&
+	version.package.hash === pkg.hash &&
+	version.package.worldHash === pkg.worldHash &&
+	sameHosts(version.package.hosts, pkg.hosts);
+const hostsOfVersion = (version: Version | undefined) => (version === undefined ? undefined : declaredHosts(version.package.hosts)?.hosts);
+
+/** What the confirmation says about a version's network hosts */
+const describeHosts = (version: Version): string[] => {
+	const declared = declaredHosts(version.package.hosts);
+	if (declared === undefined)
+		return ["Network: doesn't list the hosts it connects to. Compatibility mode: luna.fetch lets it reach any public host, and marks its requests in the log."];
+	const lines =
+		declared.hosts.length === 0
+			? ["Network: none. luna.fetch refuses every host for it."]
+			: [`Network: ${declared.hosts.join(", ")}. luna.fetch refuses any other host for it.`];
+	if (declared.invalid.length !== 0) lines.push(`Ignored, not valid hosts: ${declared.invalid.join(", ")}`);
+	return lines;
+};
 
 /** What the confirmation says about a version */
 export const describe = (url: string, version: Version): string[] => {
@@ -113,6 +142,7 @@ export const describe = (url: string, version: Version): string[] => {
 			"Legacy native plugin: while it is enabled, any plugin or script in the page can call its native functions.",
 		);
 	if (!isNative(version)) lines.push("No native code: it runs in the page like other plugins.");
+	lines.push(...describeHosts(version));
 	lines.push("Plugin code can read and change everything in TIDAL: only allow plugins you trust.");
 	return lines;
 };
@@ -170,6 +200,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 			hash: accepted?.package.hash,
 			codeSha256: accepted?.codeSha256,
 			natives: accepted?.natives ?? [],
+			hosts: hostsOfVersion(accepted),
 			// A version waiting for its first review (a migrated native plugin) is enabled, not updated: see enable
 			pending:
 				pending === undefined || accepted === undefined
@@ -180,6 +211,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 							codeSha256: pending.codeSha256,
 							natives: pending.natives,
 							...nativesDiff(accepted?.natives ?? [], pending.natives),
+							hosts: hostsOfVersion(pending),
+							...(({ added, removed }) => ({ hostsAdded: added, hostsRemoved: removed }))(
+								hostsDiff(hostsOfVersion(accepted) ?? [], hostsOfVersion(pending) ?? []),
+							),
 						},
 		};
 	};
@@ -271,6 +306,14 @@ export const createRegistry = (deps: RegistryDeps) => {
 		];
 		if (changes.added.length !== 0) lines.push(`New native files: ${changes.added.join(", ")}`);
 		if (changes.removed.length !== 0) lines.push(`Removed native files: ${changes.removed.join(", ")}`);
+		const acceptedHosts = hostsOfVersion(accepted);
+		if (acceptedHosts === undefined && changes.hosts !== undefined) lines.push("Now lists its network hosts: other hosts are refused from now on.");
+		else if (acceptedHosts !== undefined && changes.hosts === undefined)
+			lines.push("No longer lists its network hosts: compatibility mode, any public host.");
+		else {
+			if (changes.hostsAdded.length !== 0) lines.push(`New network hosts: ${changes.hostsAdded.join(", ")}`);
+			if (changes.hostsRemoved.length !== 0) lines.push(`Removed network hosts: ${changes.hostsRemoved.join(", ")}`);
+		}
 		// Operations on this url wait for the answer (serial): a newer update a load finds meanwhile waits for its own window
 		if (!(await ask({ title: `Update ${record.name}?`, lines, confirmText: "Update" }))) return false;
 		record.accepted = pending;
@@ -313,12 +356,13 @@ export const createRegistry = (deps: RegistryDeps) => {
 		}
 		const { accepted } = record;
 		const moved: CoreRecord = { ...record, url: to, pending: undefined };
-		// The same code and the same world (pinned with it): nothing new to review
+		// The same code, the same world (pinned with it) and the same hosts: nothing new to review
 		if (
 			found !== undefined &&
 			accepted !== undefined &&
 			withoutSource(found.code, to) === withoutSource(accepted.code, from) &&
-			found.world === accepted.world
+			found.world === accepted.world &&
+			sameHosts(found.package.hosts, accepted.package.hosts)
 		)
 			moved.accepted = found;
 		else if (found !== undefined && accepted !== undefined) moved.pending = found;
@@ -393,6 +437,22 @@ export const createRegistry = (deps: RegistryDeps) => {
 		acceptedWorld: (url: string): string | undefined => {
 			const record = state.plugins[url];
 			return record?.enabled === true ? record.accepted?.world : undefined;
+		},
+		/**
+		 * For luna.fetch (net.ts): the enabled plugin's name and the hosts of its accepted version (undefined: it declares
+		 * none). Undefined if it isn't an enabled plugin with accepted code
+		 */
+		hostsOf: (url: string): { name: string; hosts?: string[] } | undefined => {
+			const record = state.plugins[url];
+			if (record?.enabled !== true || record.accepted === undefined) return undefined;
+			return { name: record.name, hosts: hostsOfVersion(record.accepted) };
+		},
+		/** Every host an enabled plugin's accepted version declares (the CSP report-only header lists them, cspReportOnly.ts) */
+		declaredHosts: (): string[] => {
+			const hosts = new Set<string>();
+			for (const record of Object.values(state.plugins))
+				if (record.enabled) for (const host of hostsOfVersion(record.accepted) ?? []) hosts.add(host);
+			return [...hosts];
 		},
 		// #endregion
 	};

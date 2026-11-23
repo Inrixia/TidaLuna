@@ -8,6 +8,7 @@ export { tidalModules } from "./exposeTidalInternals";
 export { buildActions, interceptors } from "./exposeTidalInternals.patchAction";
 
 export * as ftch from "./helpers/fetch";
+export { lunaFetch } from "./lunaFetch";
 export { findModuleByProperty, findModuleProperty, recursiveSearch } from "./helpers/findModule";
 export { unloadSet, type LunaUnload, type LunaUnloads, type NullishLunaUnloads } from "./helpers/unloadSet";
 

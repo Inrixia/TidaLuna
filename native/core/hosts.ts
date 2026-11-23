@@ -1,0 +1,128 @@
+// A plugin's `hosts`: the network hosts its package.json says it connects to. The user accepts them with the plugin's
+// version (registry.ts shows them in the install and update confirmations), and luna.fetch (net.ts) refuses any other
+// host for that plugin. A plugin without `hosts` runs in compatibility mode: luna.fetch lets it reach any public host and
+// marks those requests in the log.
+//
+// An entry is `[scheme://]host[:port]`:
+// - `api.example.com`: https and wss to that host, default ports;
+// - `*.example.com`: any subdomain of example.com (not example.com itself);
+// - `http://127.0.0.1:8080`: only that scheme and port. http and ws need the scheme written out.
+// Kept apart from Electron so it can be tested.
+
+export type HostRule = { schemes: string[]; host: string; wildcard: boolean; port: string };
+
+const schemesAllowed = new Set(["http", "https", "ws", "wss"]);
+const defaultSchemes = ["https", "wss"];
+const defaultPort: Record<string, string> = { http: "80", ws: "80", https: "443", wss: "443" };
+
+const label = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?";
+const dnsName = new RegExp(`^${label}(\\.${label})+$`);
+const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+/** The rule an entry stands for, or undefined if it isn't a valid entry */
+export const parseHostEntry = (entry: unknown): HostRule | undefined => {
+	if (typeof entry !== "string" || entry.length > 260) return undefined;
+	const match = /^(?:([a-z]+):\/\/)?(\*\.)?([^:/?#@\s]+)(?::(\d{1,5}))?$/.exec(entry.trim().toLowerCase());
+	if (match === null) return undefined;
+	const [, scheme, star, host, port] = match;
+	if (scheme !== undefined && !schemesAllowed.has(scheme)) return undefined;
+	const isIp = ipv4.test(host);
+	if (isIp && host.split(".").some((part) => Number(part) > 255)) return undefined;
+	// "localhost" is the one single-label name allowed; a wildcard needs a name of two labels or more under it
+	if (!isIp && host !== "localhost" && !dnsName.test(host)) return undefined;
+	if (star !== undefined && (isIp || host === "localhost")) return undefined;
+	if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return undefined;
+	const schemes = scheme === undefined ? defaultSchemes : [scheme];
+	return { schemes, host, wildcard: star !== undefined, port: port ?? "" };
+};
+
+export type DeclaredHosts = {
+	/** Valid entries, normalized (lower case, trimmed), without duplicates */
+	hosts: string[];
+	/** Entries that aren't valid: they allow nothing */
+	invalid: string[];
+};
+
+/** A package's `hosts`, or undefined if it declares none (compatibility mode). `[]` declares no network at all */
+export const declaredHosts = (value: unknown): DeclaredHosts | undefined => {
+	if (!Array.isArray(value)) return undefined;
+	const hosts: string[] = [];
+	const invalid: string[] = [];
+	for (const entry of value.slice(0, 200)) {
+		if (parseHostEntry(entry) === undefined) invalid.push(String(entry).slice(0, 80));
+		else {
+			const normalized = (entry as string).trim().toLowerCase();
+			if (!hosts.includes(normalized)) hosts.push(normalized);
+		}
+	}
+	return { hosts, invalid };
+};
+
+/** Two packages declare the same hosts (both none counts as the same) */
+export const sameHosts = (a: unknown, b: unknown) => {
+	const left = declaredHosts(a);
+	const right = declaredHosts(b);
+	if (left === undefined || right === undefined) return left === right;
+	return left.hosts.length === right.hosts.length && left.hosts.every((host) => right.hosts.includes(host));
+};
+
+/** Hosts an update adds and removes. Going from no `hosts` to a list, or back, adds or removes nothing here */
+export const hostsDiff = (accepted: string[], pending: string[]) => ({
+	added: pending.filter((host) => !accepted.includes(host)),
+	removed: accepted.filter((host) => !pending.includes(host)),
+});
+
+const ruleMatches = (rule: HostRule, url: URL) => {
+	const scheme = url.protocol.slice(0, -1);
+	if (!rule.schemes.includes(scheme)) return false;
+	const port = url.port === "" ? defaultPort[scheme] : url.port;
+	if (port !== (rule.port === "" ? defaultPort[scheme] : rule.port)) return false;
+	const host = url.hostname;
+	return rule.wildcard ? host.endsWith(`.${rule.host}`) : host === rule.host;
+};
+
+/** The url's scheme, host and port are in one of the entries */
+export const hostAllowed = (hosts: string[], url: URL) =>
+	hosts.some((entry) => {
+		const rule = parseHostEntry(entry);
+		return rule !== undefined && ruleMatches(rule, url);
+	});
+
+/**
+ * A host luna.fetch never reaches for a plugin in compatibility mode: loopback, private and link-local addresses, and
+ * names for them. Unlike a fetch from the page, luna.fetch runs in the main process without CORS, so it could read the
+ * answers of services on this computer or network. A plugin that needs one names it in `hosts`.
+ * By literal only: a public name that resolves to a private address isn't caught.
+ */
+export const isLocalHost = (hostname: string) => {
+	const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+	if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "") return true;
+	const v4 = ipv4.exec(host);
+	if (v4 !== null) {
+		const [a, b] = [Number(v4[1]), Number(v4[2])];
+		return (
+			a === 0 ||
+			a === 10 ||
+			a === 127 ||
+			(a === 169 && b === 254) ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168) ||
+			(a === 100 && b >= 64 && b <= 127)
+		);
+	}
+	// IPv6 literals: loopback, unspecified, unique local, link-local, and IPv4-mapped ones
+	if (host.includes(":")) return host === "::1" || host === "::" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:");
+	return false;
+};
+
+/** CSP source expressions for the entries (cspReportOnly.ts adds them to the network directives) */
+export const cspSources = (hosts: string[]): string[] => {
+	const sources = new Set<string>();
+	for (const entry of hosts) {
+		const rule = parseHostEntry(entry);
+		if (rule === undefined) continue;
+		const host = `${rule.wildcard ? "*." : ""}${rule.host}${rule.port === "" ? "" : `:${rule.port}`}`;
+		for (const scheme of rule.schemes) sources.add(`${scheme}://${host}`);
+	}
+	return [...sources];
+};

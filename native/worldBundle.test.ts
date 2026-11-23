@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import vm from "node:vm";
 
 import { buildWorld, pageNativeNames } from "../build/plugins/lunaWorldPlugin";
 import { isBundle, parseBundle } from "./worldBundle";
@@ -53,6 +54,47 @@ test("buildWorld turns native imports into calls over the world bridge", async (
 		// Luna's page modules don't exist in a world
 		await writeFile(path.join(src, "bad.world.ts"), 'import { redux } from "@luna/lib";\nconsole.log(redux);\n');
 		await assert.rejects(buildWorld(path.join(src, "bad.world.ts"), path.join(src, "index.ts"), "Pkg"), /not available in a plugin world/);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("a world's lunaFetch goes over the world bridge and gives a Response", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "luna-world-"));
+	try {
+		await writeFile(path.join(dir, "index.ts"), "export {};\n");
+		await writeFile(
+			path.join(dir, "index.world.ts"),
+			'import { lunaFetch } from "@luna/world";\nglobalThis.result = lunaFetch("https://api.example.com/x", { method: "POST", body: "hi" }).then(async (res) => [res.status, res.url, await res.text()]);\n',
+		);
+		const world = await buildWorld(path.join(dir, "index.world.ts"), path.join(dir, "index.ts"), "Pkg");
+		const requests: unknown[] = [];
+		const context = vm.createContext({
+			Request,
+			Response,
+			Uint8Array,
+			TextEncoder,
+			Object,
+			__LunaNative: {
+				url: "https://store/Pkg",
+				fetch: async (request: { body: Uint8Array }) => {
+					requests.push({ ...request, body: new TextDecoder().decode(request.body) });
+					return {
+						status: 200,
+						statusText: "OK",
+						url: "https://api.example.com/y",
+						redirected: true,
+						headers: [],
+						body: new TextEncoder().encode("ok"),
+					};
+				},
+			},
+		});
+		vm.runInContext(world.code, context);
+		assert.deepEqual(JSON.parse(JSON.stringify(await context.result)), [200, "https://api.example.com/y", "ok"]);
+		assert.deepEqual(JSON.parse(JSON.stringify(requests)), [
+			{ url: "https://api.example.com/x", method: "POST", headers: { "content-type": "text/plain;charset=UTF-8" }, body: "hi" },
+		]);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

@@ -53,6 +53,7 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 - Redux: `redux.intercept(type, unloads, cb)` runs `cb` on action creation; return `true` to cancel. `redux.actions[type](payload)` dispatches. `redux.interceptActionResp` waits for success/fail action. Action + store types in `plugins/lib/src/redux/types`.
 - Log via `Tracer`: `trace.log/warn/err`; `trace.msg.*` also shows message in TIDAL. `.withContext(...)` adds context, `.throw` rethrows. If plugin exports `errSignal`, `trace.err` errors show on its card in Luna Settings.
 - Persist plugin settings with `ReactiveStore.getPluginStorage(name, defaults)`.
+- Network: list the hosts a plugin connects to in its package.json `"hosts"` (`api.example.com`, `*.example.com`, `http://127.0.0.1:8080`; see `native/core/hosts.ts`) and fetch with `lunaFetch` (`@luna/core`, or `@luna/world` in a plugin world). The main process refuses other hosts and logs requests (`native/core/net.ts`); without `hosts` a plugin runs in compatibility mode.
 - `plugins/lib/src/{classes,helpers,redux}` and `plugins/ui/src/{components,components/settings,helpers}` have barrel `index.ts`: export new files from them.
 - Path aliases (`@luna/core`, `@luna/lib`, `@luna/ui` etc) in root `tsconfig.json`.
 

@@ -14,6 +14,8 @@ import { nativeSourcesOf } from "../NativeModule/permissions/verifySource";
 import { forgetAnswers } from "../NativeModule/trust";
 import { askerFor } from "./confirmWindow";
 import { boundedCache } from "./policy";
+import { cspSources } from "./hosts";
+import { createNet } from "./net";
 import { createRegistry, type PluginPackage } from "./registry";
 
 const stateFile = () => path.join(app.getPath("userData"), "luna-core", "plugins.json");
@@ -89,3 +91,19 @@ ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => registry().acceptU
 ipcHandle("__LunaCore.disable", (_, url: unknown) => registry().disable(url));
 ipcHandle("__LunaCore.uninstall", (_, url: unknown) => registry().uninstall(url));
 ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => registry().moveUrl(from, to));
+
+// luna.fetch (net.ts). Node's fetch, not Electron's net: no TIDAL session, so no cookies of the user's account are sent
+export const lunaNet = createNet({ hostsOf: (url) => registry().hostsOf(url), fetch: (url, init) => fetch(url, init as RequestInit) });
+// The page names the plugin (render/src/lunaFetch.ts finds it from the stack): attribution, not a boundary, see net.ts
+ipcHandle("__LunaCore.fetch", (_, pluginUrl: unknown, request: unknown) => lunaNet.fetch(pluginUrl, "page", request));
+ipcHandle("__LunaCore.networkLog", () => lunaNet.log());
+/** CSP sources for the hosts enabled plugins declare (injector.ts adds them to the report-only header). None if the registry can't be read */
+export const pluginCspHosts = (): string[] => {
+	try {
+		return cspSources(registry().declaredHosts());
+	} catch (err) {
+		console.error("[Luna.core] Can't read the plugins' hosts for the CSP report-only header:", err);
+		return [];
+	}
+};
+ipcHandle("__LunaCore.clearNetworkLog", () => lunaNet.clearLog());

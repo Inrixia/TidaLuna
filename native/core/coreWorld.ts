@@ -18,10 +18,11 @@ import { unloadableEmitter, type AnyFn } from "@inrixia/helpers";
 
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 
+import type { NetLogEntry, NetRequest, NetResponse } from "./net";
 import { isCoreUrl } from "./policy";
 import { pluginUrl, type CorePluginInfo, type PluginPackage } from "./registry";
 
-export type { CorePluginInfo };
+export type { CorePluginInfo, NetLogEntry, NetRequest, NetResponse };
 
 const securityError = (message: string) => new Error(`[🛑Security🛑] ${message}`);
 
@@ -128,6 +129,11 @@ const loadWorld = async (url: string) => {
 				if (!load.active) return Promise.reject(new Error(`[Luna.worlds] ${url} is not loaded`));
 				return ipcRenderer.invoke("__LunaWorld.invoke", url, fileName, exportName, ...args);
 			},
+			// luna.fetch for the world's code: main checks the host against this plugin's accepted hosts (core/net.ts)
+			fetch: (request: unknown) => {
+				if (!load.active) return Promise.reject(new Error(`[Luna.worlds] ${url} is not loaded`));
+				return ipcRenderer.invoke("__LunaWorld.fetch", url, request);
+			},
 		});
 		try {
 			await webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code, url: `${url}.world.js` }], false);
@@ -173,6 +179,10 @@ export const exposeCore = () => {
 		loadWorld: (url: unknown): Promise<void> => loadWorld(pluginUrl(url)),
 		unloadWorld: (url: unknown): Promise<void> => unloadWorld(pluginUrl(url)),
 		moveUrl: (from: unknown, to: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.moveUrl", from, to),
+		// luna.fetch for page code (render/src/lunaFetch.ts), which names the calling plugin
+		fetch: (pluginUrl: unknown, request: unknown): Promise<NetResponse> => ipcRenderer.invoke("__LunaCore.fetch", pluginUrl, request),
+		networkLog: (): Promise<NetLogEntry[]> => ipcRenderer.invoke("__LunaCore.networkLog"),
+		clearNetworkLog: (): Promise<void> => ipcRenderer.invoke("__LunaCore.clearNetworkLog"),
 	});
 };
 // #endregion

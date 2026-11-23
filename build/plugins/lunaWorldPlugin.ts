@@ -31,6 +31,25 @@ globalThis.__lunaWorldUnload = async () => {
 export const onUnload = (unload) => void unloads.add(unload);
 /** This plugin's url */
 export const url = __LunaNative.url;
+/**
+ * fetch through Luna's main process, limited to the hosts in the plugin's package.json \`hosts\` (TidaLuna
+ * native/core/net.ts). Takes what fetch takes, except streamed bodies, and gives a Response. No cookies are sent
+ */
+export const lunaFetch = async (input, init) => {
+	const request = new Request(input, init);
+	const bytes = request.method === "GET" || request.method === "HEAD" ? undefined : new Uint8Array(await request.arrayBuffer());
+	const res = await __LunaNative.fetch({
+		url: request.url,
+		method: request.method,
+		headers: Object.fromEntries(request.headers),
+		body: bytes === undefined || bytes.byteLength === 0 ? undefined : bytes,
+	});
+	const nullBody = [101, 103, 204, 205, 304].includes(res.status);
+	const response = new Response(nullBody ? null : res.body, { status: res.status < 200 ? 200 : res.status, statusText: res.statusText, headers: res.headers });
+	Object.defineProperty(response, "url", { value: res.url });
+	Object.defineProperty(response, "redirected", { value: res.redirected });
+	return response;
+};
 `;
 
 /** Builds the code in a plugin's world: its natives become calls over the world's own bridge */

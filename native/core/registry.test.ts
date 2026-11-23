@@ -399,4 +399,69 @@ describe("core registry", () => {
 		assert.strictEqual(await registry.moveUrl("https://example.com/none", "https://example.com/other"), false);
 		assert.strictEqual(registry.info(URL)?.hash, "v1");
 	});
+
+	it("shows a plugin's hosts when installing, and gives them to luna.fetch only once enabled", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["api.last.fm", "*", "*.example.com"] });
+		const registry = createRegistry(deps);
+		const yes = asker(true);
+		await registry.install(URL, yes);
+		const lines = yes.asked[0].lines;
+		assert.ok(lines.some((line) => line.startsWith("Network: api.last.fm, *.example.com.")));
+		assert.ok(lines.some((line) => line === "Ignored, not valid hosts: *"));
+		assert.deepStrictEqual(registry.info(URL)?.hosts, ["api.last.fm", "*.example.com"]);
+		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", hosts: ["api.last.fm", "*.example.com"] });
+		assert.deepStrictEqual(registry.declaredHosts(), ["api.last.fm", "*.example.com"]);
+		await registry.disable(URL);
+		assert.strictEqual(registry.hostsOf(URL), undefined);
+		assert.deepStrictEqual(registry.declaredHosts(), []);
+	});
+
+	it("marks a plugin without hosts as compatibility mode", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		const registry = createRegistry(deps);
+		const yes = asker(true);
+		await registry.install(URL, yes);
+		assert.ok(yes.asked[0].lines.some((line) => line.includes("Compatibility mode")));
+		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", hosts: undefined });
+		assert.strictEqual(registry.info(URL)?.hosts, undefined);
+	});
+
+	it("treats new hosts as an update the user accepts, even with the same code", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+
+		serve(URL, "v1", {}, { hosts: ["a.com", "b.com"] });
+		const loaded = await registry.load(URL);
+		assert.deepStrictEqual(loaded.pending?.hostsAdded, ["b.com"]);
+		// The accepted hosts hold until the user accepts the new ones
+		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["a.com"]);
+		const yes = asker(true);
+		assert.strictEqual(await registry.acceptUpdate(URL, yes), true);
+		assert.ok(yes.asked[0].lines.includes("New network hosts: b.com"));
+		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["a.com", "b.com"]);
+
+		// Dropping the list (compatibility mode) is an update too, and says so
+		serve(URL, "v1");
+		await registry.load(URL);
+		const drop = asker(false);
+		assert.strictEqual(await registry.acceptUpdate(URL, drop), false);
+		assert.ok(drop.asked[0].lines.some((line) => line.startsWith("No longer lists its network hosts")));
+		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["a.com", "b.com"]);
+	});
+
+	it("doesn't move a plugin silently to a url that serves other hosts", async () => {
+		const NEW_URL = "https://example.org/plugin";
+		const { deps, serve, served } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		served.set(NEW_URL, { ...served.get(URL)!, pkg: { ...served.get(URL)!.pkg, hosts: ["a.com", "evil.com"] } });
+		assert.strictEqual(await registry.moveUrl(URL, NEW_URL), true);
+		assert.deepStrictEqual(registry.hostsOf(NEW_URL)?.hosts, ["a.com"]);
+		assert.deepStrictEqual(registry.info(NEW_URL)?.pending?.hostsAdded, ["evil.com"]);
+	});
 });

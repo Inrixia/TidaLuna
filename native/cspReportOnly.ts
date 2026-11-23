@@ -50,8 +50,16 @@ export const tidalMetaPolicy = (html: string): string | undefined => {
 	return content === undefined ? undefined : decodeAttribute(content);
 };
 
-/** The report-only policy for a TIDAL policy (from tidalMetaPolicy) */
-export const reportOnlyPolicy = (tidalPolicy: string): string => {
+// Where a plugin's declared hosts (core/hosts.ts) are listed: what it fetches, and the images and media it shows
+const pluginDirectives = new Set(["connect-src", "img-src", "media-src"]);
+
+/**
+ * The report-only policy for a TIDAL policy (from tidalMetaPolicy)
+ *
+ * @param pluginSources CSP sources for the hosts enabled plugins declare (core/hosts.ts cspSources): only what no plugin
+ * declared is reported. Shared by every plugin: the page's realm doesn't tell plugins apart, luna.fetch does (core/net.ts)
+ */
+export const reportOnlyPolicy = (tidalPolicy: string, pluginSources: string[] = []): string => {
 	const directives = new Map<string, string[]>();
 	for (const part of tidalPolicy.split(";")) {
 		const [rawName, ...values] = part.trim().split(/\s+/);
@@ -65,7 +73,11 @@ export const reportOnlyPolicy = (tidalPolicy: string): string => {
 		directives.set("script-src", [...scriptSources, ...lunaScriptSources.filter((s) => !scriptSources.includes(s))]);
 	// With default-src set the network directives already fall back to it; only fill what is open
 	if (!directives.has("default-src")) {
-		for (const directive of networkDirectives) if (!directives.has(directive)) directives.set(directive, networkBaseline);
+		for (const directive of networkDirectives) {
+			if (directives.has(directive)) continue;
+			const sources = pluginDirectives.has(directive) ? [...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))] : networkBaseline;
+			directives.set(directive, sources);
+		}
 	}
 	return [...directives].map(([name, values]) => [name, ...values].join(" ")).join("; ");
 };

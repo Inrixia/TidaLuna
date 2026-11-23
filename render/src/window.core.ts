@@ -68,5 +68,10 @@ declare global {
 		/** Runs the plugin's isolated world (see native/worlds.ts). Throws without contextIsolation (tidal-hifi) */
 		loadWorld(url: string): Promise<void>;
 		unloadWorld(url: string): Promise<void>;
+		/** luna.fetch for `pluginUrl` (see native/core/net.ts). Use lunaFetch instead */
+		fetch(pluginUrl: string, request: import("../../native/core/net").NetRequest): Promise<import("../../native/core/net").NetResponse>;
+		/** luna.fetch requests since TIDAL started, the newest last */
+		networkLog(): Promise<import("../../native/core/net").NetLogEntry[]>;
+		clearNetworkLog(): Promise<void>;
 	};
 }
