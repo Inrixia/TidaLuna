@@ -122,25 +122,42 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		allowed = new Set(list.entries.map((e) => `${e.id}\n${e.sha256}`));
 	};
 
-	let readCache = false;
+	/**
+	 * "unread": not read yet, or reading failed (a locked file): tried again on the next call. "none": no cached copy.
+	 * "broken": a cached copy that fails its check. Only with "none" or "ok" can a fetched list be taken: without the
+	 * accepted list, an older bigger one would pass as the first.
+	 */
+	let cache: "unread" | "none" | "ok" | "broken" = "unread";
 	const loadCache = () => {
-		if (readCache) return;
-		readCache = true;
+		if (cache !== "unread") return;
+		let text: string | undefined;
 		try {
-			const text = deps.readCache();
-			if (text === undefined) return;
+			text = deps.readCache();
+		} catch (err) {
+			deps.log?.(`[Luna.core] The cached old native format list can't be read now: ${(err as Error)?.message ?? err}`);
+			return;
+		}
+		if (text === undefined) return void (cache = "none");
+		try {
 			const cached = JSON.parse(text);
 			const bytes = Buffer.from(String(cached?.list), "base64");
 			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes);
+			cache = "ok";
 		} catch (err) {
-			deps.log?.(`[Luna.core] The cached old native format list is not usable: ${(err as Error)?.message ?? err}`);
+			cache = "broken";
+			deps.log?.(
+				`[Luna.core] The cached old native format list fails its check: no old-format natives run until it is removed (${(err as Error)?.message ?? err})`,
+			);
 		}
 	};
 
 	/** Fetches the registry's list once; throws if it can't be used */
 	const refresh = async () => {
 		loadCache();
+		if (cache === "unread") throw new Error("the cached list can't be read yet: not replaced");
+		if (cache === "broken") throw new Error("the cached list fails its check: not replaced");
 		const { bytes, sig } = await deps.fetchList();
+		loadCache();
 		const next = parseLegacyList(bytes, sig, deps.publicKey);
 		const replaces = replacesList(current?.list, next);
 		if (!replaces.ok) throw new Error(`refused: ${replaces.reason}`);
@@ -152,9 +169,11 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	};
 
 	let first: Promise<void> | undefined;
-	/** The first refresh (started once); never rejects */
-	const start = () =>
-		(first ??= refresh().catch((err) => deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`)));
+	/** The first refresh (started once, again while the cache couldn't be read); never rejects */
+	const start = () => {
+		if (cache === "unread") first = undefined;
+		return (first ??= refresh().catch((err) => deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`)));
+	};
 	let firstWait: Promise<void> | undefined;
 
 	return {

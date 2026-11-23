@@ -225,14 +225,19 @@ export const createRegistry = (deps: RegistryDeps) => {
 		deps.log?.(`[Luna.core] ${url} left the old native format: it accepted other code than its old-format version`);
 	};
 	/** Code a url accepts (an update, an install, a move): code other than the one that ran the old format here leaves it */
-	const leavesLegacy = (url: string, before: Version | undefined, version: Version) => {
-		if (isDevUrl(url)) return;
+	const leaves = (url: string, before: Version | undefined, version: Version) => {
+		if (isDevUrl(url)) return false;
 		const ran = legacyRan[url];
 		const sha = servedOf(version);
 		// Not asking the list: it may be missing or older at this moment
-		if ((ran !== undefined && ran !== sha) || (before !== undefined && legacyNativesOf(before).length !== 0 && servedOf(before) !== sha))
-			leaveLegacy(url);
+		return (ran !== undefined && ran !== sha) || (before !== undefined && legacyNativesOf(before).length !== 0 && servedOf(before) !== sha);
 	};
+	const leavesLegacy = (url: string, before: Version | undefined, version: Version) => {
+		if (leaves(url, before, version)) leaveLegacy(url);
+	};
+	/** Whether this version's old-format natives would run once accepted (what the confirmation says) */
+	const legacyWouldRun = (url: string, before: Version | undefined, version: Version) =>
+		legacyRuns(url, version) && !leaves(url, before, version);
 	/** The only way a version becomes accepted: leaving listed old-format code for unlisted code is for good */
 	const accept = (record: CoreRecord, version: Version) => {
 		leavesLegacy(record.url, record.accepted, version);
@@ -333,7 +338,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		// Installing an installed plugin enables it
 		if (state.plugins[url] !== undefined) return enable(url, ask);
 		const version = await fetchVersion(url);
-		const lines = describe(url, version, isDevUrl(url));
+		const lines = describe(url, version, legacyWouldRun(url, undefined, version));
 		if (!(await ask({ title: `Install ${version.package.name}?`, lines, confirmText: "Install" }))) return false;
 		// Queued by url, but a moveUrl to this url (queued by its source) may have landed while the user was asked
 		if (state.plugins[url] !== undefined) throw new Error(`[Luna.core] ${url} was installed meanwhile: try again`);
@@ -356,7 +361,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 				? [`World sha256: ${shortHash(accepted.package.worldHash ?? "none")} -> ${shortHash(pending.package.worldHash ?? "none")}`]
 				: []),
 			"Until you update, the version you have keeps running.",
-			...describe(url, pending, isDevUrl(url)),
+			...describe(url, pending, legacyWouldRun(url, accepted, pending)),
 		];
 		if (!isDevUrl(url) && legacyRuns(url, accepted) && legacyNativesOf(accepted).length !== 0)
 			lines.push("This plugin uses the old native format. After this update it can't any more, even if you go back to this version.");
@@ -419,6 +424,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 		else if (found !== undefined && accepted !== undefined) moved.pending = found;
 		// A plugin that left the old format here stays off it at its new url, and other code there leaves it
 		if (legacyOff.has(from)) leaveLegacy(to);
+		// Code other than what ran the old format at `to` before replaces it there
+		if (moved.accepted !== undefined) leavesLegacy(to, undefined, moved.accepted);
+		if (legacyRan[from] !== undefined && legacyRan[to] !== undefined && legacyRan[from] !== legacyRan[to]) leaveLegacy(to);
 		if (legacyRan[from] !== undefined && legacyRan[to] === undefined) legacyRan[to] = legacyRan[from];
 		delete state.plugins[from];
 		state.plugins[to] = moved;

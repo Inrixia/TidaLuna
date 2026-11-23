@@ -114,6 +114,41 @@ describe("old native format list", () => {
 		assert.strictEqual(tampered.current(), undefined);
 	});
 
+	it("takes no fetched list while the cache can't be read or fails its check: an older one can't come back", async () => {
+		const good = signed(doc(5, [A]));
+		const older = signed(doc(4, [A, B]));
+		let locked = true;
+		let cache: string | undefined = JSON.stringify({ list: good.bytes.toString("base64"), sig: good.sig });
+		const writes: string[] = [];
+		const store = createLegacyStore({
+			readCache: () => {
+				if (locked) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+				return cache;
+			},
+			writeCache: (text) => void writes.push(text),
+			fetchList: async () => older,
+			publicKey: pub,
+		});
+		await assert.rejects(store.refresh(), /can't be read yet/);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// Readable again: the cached serial 5 refuses the older list
+		locked = false;
+		await assert.rejects(store.refresh(), /rollback/);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(writes.length, 0);
+
+		cache = "{broken";
+		const broken = createLegacyStore({
+			readCache: () => cache,
+			writeCache: (text) => void writes.push(text),
+			fetchList: async () => older,
+			publicKey: pub,
+		});
+		await assert.rejects(broken.refresh(), /fails its check/);
+		assert.strictEqual(broken.allows("b.mjs", B.sha256), false);
+		assert.strictEqual(writes.length, 0);
+	});
+
 	it("waits once for the first fetch when nothing is cached, and refuses meanwhile", async () => {
 		let release: () => void = () => {};
 		const fetched = new Promise<void>((resolve) => (release = resolve));

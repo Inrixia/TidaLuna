@@ -438,6 +438,45 @@ describe("core registry", () => {
 		assert.strictEqual(registry.nativeOwner("d.native.ts", "native d"), DEV_URL);
 	});
 
+	it("says what an install or update of old-format code will do: run without isolation, or not run", async () => {
+		const { deps, serve, list } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		list(URL, "v1");
+		const registry = createRegistry(deps);
+		const ask = asker(true);
+		await registry.install(URL, ask);
+		assert.match(ask.asked[0].lines.join(" "), /any plugin or script in the page can call its native functions/);
+		assert.doesNotMatch(ask.asked[0].lines.join(" "), /won't run/);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+		// An update to unlisted code says it won't run
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.load(URL);
+		const update = asker(true);
+		await registry.acceptUpdate(URL, update);
+		assert.match(update.asked[0].lines.join(" "), /won't run/);
+	});
+
+	it("takes a url off the old format once other code moves onto it where old-format code ran", async () => {
+		const B = "https://example.org/plugin";
+		const { deps, serve, served, list } = fakeDeps();
+		serve(B, "v1", { "a.native.ts": "native a" });
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		list(B, "v1");
+		list(URL, "v2");
+		const registry = createRegistry(deps);
+		await registry.install(B, asker(true));
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), B);
+		await registry.uninstall(B);
+		// Other listed code moves onto B, then B goes back to the code that ran there first
+		await registry.install(URL, asker(true));
+		served.set(B, served.get(URL)!);
+		assert.strictEqual(await registry.moveUrl(URL, B), true);
+		await registry.uninstall(B);
+		serve(B, "v1", { "a.native.ts": "native a" });
+		await registry.install(B, asker(true));
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
 	it("runs the old format for no code off the list: a new plugin, one of the same name elsewhere, a second migrate", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
