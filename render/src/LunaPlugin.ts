@@ -491,10 +491,6 @@ export class LunaPlugin {
 		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
 		return previous;
 	}
-	/** The installed plugins with an update waiting for the user */
-	public static get pendingUpdates(): LunaPlugin[] {
-		return Object.values(LunaPlugin.plugins).filter((plugin) => plugin.installed && plugin.pendingUpdate._ !== undefined);
-	}
 	/** The native files of an update and which it adds or removes, for display (see helpers/pluginUpdates) */
 	public static readonly nativeFileChanges = nativeFileChanges;
 
