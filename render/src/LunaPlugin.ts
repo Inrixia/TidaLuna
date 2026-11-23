@@ -167,7 +167,9 @@ export class LunaPlugin {
 		}
 		// Get persisted store to check if this URL matches
 		const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(name);
-		if (persistedStore.url === undefined || persistedStore.url === storeInit.url) {
+		// Luna's own plugin takes back its stored copy from a plugin only named like it (stored before, or imported)
+		const coreReclaims = isCoreUrl(storeInit.url) && (typeof persistedStore.url !== "string" || !isCoreUrl(persistedStore.url));
+		if (persistedStore.url === undefined || persistedStore.url === storeInit.url || coreReclaims) {
 			// First time loading or this is the persisted version - use persisted store
 			store = persistedStore;
 			Object.assign(store, storeInit);
