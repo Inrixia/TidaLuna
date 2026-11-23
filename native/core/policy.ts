@@ -58,6 +58,19 @@ const coreConfirmed = new Set(["update", "startNativeDebugging"]);
 export const coreNativeRule = (exportName: string): CoreNativeRule =>
 	coreDenied.has(exportName) ? "deny" : coreConfirmed.has(exportName) ? "confirm" : "allow";
 
+/** A release tag `update` can download (the same check as native/update.ts): no "/" or ".." to point it at another repo */
+export const isReleaseVersion = (version: unknown): version is string =>
+	typeof version === "string" && /^[\w.-]+$/.test(version) && !version.includes("..");
+
+/**
+ * Why a confirmed core native's arguments would make it fail, checked before the user is asked: the window must not show
+ * text that page code chose for a call that can't run. Undefined if they are fine
+ */
+export const coreNativeArgsError = (exportName: string, args: unknown[]): string | undefined => {
+	if (exportName === "update" && !isReleaseVersion(args[0])) return `update: invalid version "${String(args[0]).slice(0, 40)}"`;
+	return undefined;
+};
+
 /**
  * Compares two release versions like "1.25.0" or "1.25.0-beta": negative if `a` is older, 0 if the same, positive if
  * newer. A pre-release is older than its release.

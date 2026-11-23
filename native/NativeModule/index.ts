@@ -8,7 +8,7 @@ import { ipcHandle } from "../ipc";
 
 import { createHash } from "crypto";
 import { askerFor } from "../core/confirmWindow";
-import { coreNativeQuestion, coreNativeRule } from "../core/policy";
+import { coreNativeArgsError, coreNativeQuestion, coreNativeRule } from "../core/policy";
 import { registry } from "../core/registryMain";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
@@ -91,13 +91,19 @@ const loadNative = async (event: Electron.IpcMainInvokeEvent, channel: string, m
 			throw new Error(`[🛑Security🛑] ${channel} is not a native channel of an enabled plugin`);
 		// Luna's own natives are open to all page code: some may not be called from there, some only after the user confirms
 		if (isCore) {
-			const rule = coreNativeRule(String(exportName));
-			if (rule === "deny") throw new Error(`[🛑Security🛑] ${String(exportName)} can't be called from the page`);
+			// One name for the rule, the question and the call: another type could pass the rule as one name and run as another
+			if (typeof exportName !== "string") throw new Error(`[🛑Security🛑] Export names must be strings`);
+			const rule = coreNativeRule(exportName);
+			if (rule === "deny") throw new Error(`[🛑Security🛑] ${exportName} can't be called from the page`);
 			if (rule === "confirm") {
+				// Nothing to confirm for a call that can't run: the window would show the page's text for nothing
+				if (typeof exports[exportName] !== "function") throw new Error(`[Luna.native] (${fileName}) has no export ${exportName}`);
+				const invalid = coreNativeArgsError(exportName, args);
+				if (invalid !== undefined) throw new Error(`[Luna.native] ${invalid}`);
 				// update.ts exports pkg: the installed version shows next to the one asked for
 				const current = exportName === "update" && typeof exports.pkg === "function" ? await installedVersion(exports.pkg) : undefined;
-				const [title, lines, confirmText] = coreNativeQuestion(String(exportName), args, current);
-				if (!(await askerFor(event.sender)({ title, lines, confirmText }))) throw new Error(`[Luna] ${String(exportName)} cancelled by the user`);
+				const [title, lines, confirmText] = coreNativeQuestion(exportName, args, current);
+				if (!(await askerFor(event.sender)({ title, lines, confirmText }))) throw new Error(`[Luna] ${exportName} cancelled by the user`);
 			}
 		}
 		try {
