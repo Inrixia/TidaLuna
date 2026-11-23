@@ -1,13 +1,15 @@
 // Luna's plugin registry: which plugins are installed and enabled, and which version of their code the user accepted.
 // It runs in the main process (registryMain.ts), so the checks that use it hold whoever sends the IPC: native files
 // register only for the accepted code of an enabled plugin (NativeModule/index.ts), and their channels work only while it
-// is enabled. Installing, enabling native code and accepting an update happen here, after the user confirms in Luna's
-// confirmation window (confirmWindow.ts).
+// is enabled, and a plugin world (worlds.ts) loads only the accepted `.world.json` of an enabled plugin. Installing,
+// enabling native code and accepting an update happen here, after the user confirms in Luna's confirmation window
+// (confirmWindow.ts).
 //
 // Kept apart from Electron (its IO comes in as RegistryDeps) so it can be tested.
 import { createHash } from "crypto";
 
 import type { ConfirmRequest } from "./confirmPage";
+import { parseBundle, worldFilePrefix } from "../worldBundle";
 import { isCoreUrl, isDevUrl, nativesDiff } from "./policy";
 
 // #region Types
@@ -16,6 +18,10 @@ export type PluginPackage = {
 	hash: string;
 	version?: string;
 	code?: string;
+	/** Entry of the plugin's isolated world, built to `<plugin>.world.json` (see build/plugins/lunaWorldPlugin.ts) */
+	lunaWorld?: string;
+	/** sha256 (hex) of `<plugin>.world.json` */
+	worldHash?: string;
 	[key: string]: unknown;
 };
 /** A version of a plugin's code: the one the user accepted, or an update waiting for them */
@@ -24,7 +30,10 @@ export type Version = {
 	code: string;
 	/** sha256 (hex) of `code` as UTF-8: the served `<url>.mjs` followed by `\n//# sourceURL=<url>.mjs`, exactly what the page runs */
 	codeSha256: string;
+	/** Native files: the ones the page code registers, then the world's, named `world:<file>` */
 	natives: string[];
+	/** The plugin's `<plugin>.world.json` as served, if it has a world. Its sha256 is `package.worldHash` */
+	world?: string;
 };
 export type CoreRecord = {
 	url: string;
@@ -64,6 +73,8 @@ export type RegistryDeps = {
 	write(state: CoreState): void | Promise<void>;
 	fetchPackage(url: string): Promise<PluginPackage>;
 	fetchCode(url: string): Promise<string>;
+	/** The text of `${url}.world.json` */
+	fetchWorld(url: string): Promise<string>;
 	/** fileName -> code of the native files a bundle registers */
 	nativeSources(code: string): Record<string, string>;
 	/** Forgets the native permission answers given for a plugin (a reinstall asks again) */
@@ -76,18 +87,27 @@ const sha256 = (text: string) => createHash("sha256").update(text, "utf8").diges
 /** First 12 hex digits, enough to tell versions apart and compare with a published hash */
 const shortHash = (hash: string) => hash.slice(0, 12);
 
+const isWorldNative = (fileName: string) => fileName.startsWith(worldFilePrefix);
 const isNative = (version: Version) => version.natives.length !== 0;
-const sameVersion = (version: Version | undefined, pkg: PluginPackage) => version !== undefined && version.package.hash === pkg.hash;
+/** A new hash of either the page code or the world is a new version */
+const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
+	version !== undefined && version.package.hash === pkg.hash && version.package.worldHash === pkg.worldHash;
 
 /** What the confirmation says about a version */
 export const describe = (url: string, version: Version): string[] => {
 	const lines = [`${version.package.name} ${version.package.version ?? ""} from ${url}${isDevUrl(url) ? " (this computer)" : ""}`];
-	if (isNative(version))
+	const legacy = version.natives.filter((fileName) => !isWorldNative(fileName));
+	const world = version.natives.filter(isWorldNative).map((fileName) => fileName.slice(worldFilePrefix.length));
+	if (world.length !== 0)
 		lines.push(
-			`Native code (runs in TIDAL's main process): ${version.natives.join(", ")}. TIDAL asks for each native file.`,
-			"While it is enabled, any plugin or script in the page can call its native functions.",
+			`Native code (runs in TIDAL's main process): ${world.join(", ")}. Only the plugin's own isolated world can call it, other plugins can't reach it. TIDAL asks for each native file.`,
 		);
-	else lines.push("No native code: it runs in the page like other plugins.");
+	if (legacy.length !== 0)
+		lines.push(
+			`Native code (runs in TIDAL's main process): ${legacy.join(", ")}. TIDAL asks for each native file.`,
+			"Legacy native plugin: while it is enabled, any plugin or script in the page can call its native functions.",
+		);
+	if (!isNative(version)) lines.push("No native code: it runs in the page like other plugins.");
 	lines.push("Plugin code can read and change everything in TIDAL: only allow plugins you trust.");
 	return lines;
 };
@@ -120,7 +140,13 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const fetchVersion = async (url: string, pkg?: PluginPackage): Promise<Version> => {
 		pkg ??= await deps.fetchPackage(url);
 		const code = await deps.fetchCode(url);
-		return { package: pkg, code, codeSha256: sha256(code), natives: Object.keys(deps.nativeSources(code)) };
+		const natives = Object.keys(deps.nativeSources(code));
+		if (typeof pkg.lunaWorld !== "string") return { package: pkg, code, codeSha256: sha256(code), natives };
+		// The world is pinned with the code: worlds.ts runs exactly this text, whatever the url serves later
+		const world = await deps.fetchWorld(url);
+		if (pkg.worldHash !== sha256(world)) throw new Error(`[Luna.core] ${url}.world.json doesn't match the worldHash of ${url}.json`);
+		const worldNatives = Object.keys(parseBundle(world).natives).map((fileName) => worldFilePrefix + fileName);
+		return { package: pkg, code, codeSha256: sha256(code), natives: [...natives, ...worldNatives], world };
 	};
 
 	const info = (url: string): CorePluginInfo | undefined => {
@@ -306,6 +332,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 		/** The enabled plugin whose accepted code registers this native file with this code */
 		nativeOwner: (fileName: string, code: string): string | undefined =>
 			Object.values(state.plugins).find((record) => ownsNative(record, fileName, code))?.url,
+		/** The `.world.json` text the user accepted for an enabled plugin with a world */
+		acceptedWorld: (url: string): string | undefined => {
+			const record = state.plugins[url];
+			return record?.enabled === true ? record.accepted?.world : undefined;
+		},
 		// #endregion
 	};
 };

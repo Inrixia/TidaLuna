@@ -7,6 +7,7 @@ import type { ConfirmRequest } from "./confirmPage";
 import { createRegistry, type CoreState, type PluginPackage } from "./registry";
 
 const URL = "https://example.com/plugin";
+const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 const DEV_URL = "http://127.0.0.1:3000/plugin";
 
 /** A fake server: url -> package and code. `natives` lists the native files the code registers */
@@ -14,6 +15,15 @@ const fakeDeps = (state: CoreState | null = null) => {
 	const served = new Map<string, { pkg: PluginPackage; code: string; natives: Record<string, string> }>();
 	const serve = (url: string, hash: string, natives: Record<string, string> = {}, extra: Partial<PluginPackage> = {}) =>
 		served.set(url, { pkg: { name: `plugin ${hash}`, hash, version: hash, ...extra }, code: `code ${hash}`, natives });
+	/** url -> the `.world.json` text it serves */
+	const worlds = new Map<string, string>();
+	/** Serves a plugin with a world: its world natives, and the worldHash its json names (the real one by default) */
+	const serveWorld = (url: string, hash: string, worldNatives: Record<string, string>, worldHash?: string) => {
+		const world = JSON.stringify({ code: `world ${hash}`, natives: worldNatives });
+		worlds.set(url, world);
+		serve(url, hash, {}, { lunaWorld: "./src/world.ts", worldHash: worldHash ?? sha256(world) });
+		return world;
+	};
 	const forgotten: string[] = [];
 	const writes: CoreState[] = [];
 	const nativesOf = new Map<string, Record<string, string>>();
@@ -32,13 +42,18 @@ const fakeDeps = (state: CoreState | null = null) => {
 			nativesOf.set(entry.code, entry.natives);
 			return entry.code;
 		},
+		fetchWorld: async (url: string) => {
+			const world = worlds.get(url);
+			if (world === undefined) throw new Error(`offline: ${url}.world.json`);
+			return world;
+		},
 		nativeSources: (code: string) => {
 			reads.count++;
 			return nativesOf.get(code) ?? {};
 		},
 		forgetAnswers: (url: string) => void forgotten.push(url),
 	};
-	return { deps, serve, served, forgotten, writes, reads };
+	return { deps, serve, serveWorld, served, forgotten, writes, reads };
 };
 
 /** An asker that answers `answer` and records what it was asked */
@@ -258,5 +273,53 @@ describe("core registry", () => {
 		assert.strictEqual(ask.asked.length, 0);
 		await assert.rejects(registry.install("file:///C:/x", ask), /Not a plugin url/);
 		assert.throws(() => registry.info(42), /Not a plugin url/);
+	});
+
+	it("pins a plugin world with its code, and lists its natives apart", async () => {
+		const { deps, serve, serveWorld } = fakeDeps();
+		const world1 = serveWorld(URL, "v1", { "w.native.ts": "world native" });
+		const registry = createRegistry(deps);
+		const install = asker(true);
+		await registry.install(URL, install);
+		assert.deepStrictEqual(registry.info(URL)?.natives, ["world:w.native.ts"]);
+		assert.strictEqual(registry.acceptedWorld(URL), world1);
+		const lines = install.asked[0].lines.join(" ");
+		assert.match(lines, /w\.native\.ts\. Only the plugin's own isolated world can call it/);
+		assert.doesNotMatch(lines, /Legacy native plugin/);
+		// Page code can't register a world's natives as its own
+		assert.strictEqual(registry.nativeOwner("world:w.native.ts", "world native"), undefined);
+		assert.strictEqual(registry.nativeOwner("w.native.ts", "world native"), undefined);
+
+		// A new world alone is an update: the accepted one keeps running until the user accepts it
+		const world2 = serveWorld(URL, "v1", { "w.native.ts": "world native", "x.native.ts": "another" });
+		assert.deepStrictEqual((await registry.load(URL)).pending?.added, ["world:x.native.ts"]);
+		assert.strictEqual(registry.acceptedWorld(URL), world1);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(registry.acceptedWorld(URL), world2);
+
+		await registry.disable(URL);
+		assert.strictEqual(registry.acceptedWorld(URL), undefined);
+		serve(URL, "plain");
+		assert.strictEqual(registry.acceptedWorld(URL), undefined);
+	});
+
+	it("refuses a world that doesn't match the worldHash its package names", async () => {
+		const { deps, serveWorld } = fakeDeps();
+		serveWorld(URL, "v1", {}, "0".repeat(64));
+		const registry = createRegistry(deps);
+		await assert.rejects(registry.install(URL, asker(true)), /doesn't match the worldHash/);
+		assert.strictEqual(registry.info(URL), undefined);
+	});
+
+	it("calls page-registered natives legacy", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		const ask = asker(false);
+		await registry.install(URL, ask);
+		assert.match(
+			ask.asked[0].lines.join(" "),
+			/Legacy native plugin: while it is enabled, any plugin or script in the page can call its native functions/,
+		);
 	});
 });

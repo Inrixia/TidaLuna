@@ -4,18 +4,19 @@
 // trust in that realm can be driven by any of it. Luna's trust decisions (which plugins are installed and enabled, which
 // version of their code the user accepted, whose native code may register) are made in the main process instead
 // (registry.ts, registryMain.ts), which asks the user in a window of its own (confirmWindow.ts) and checks every native
-// registration and native call (NativeModule/index.ts), whoever sends the IPC.
+// registration and native call (NativeModule/index.ts) and every plugin world load (worlds.ts), whoever sends the IPC.
 //
 // This file runs in the preload's isolated world (Electron runs a contextIsolation preload in its own world, which page
 // code can't reach). It is the only code with the raw ipcRenderer. It gives the page:
 // - `__LunaCore`: requests the main process answers;
-// - a filtered `__ipcRenderer`: no `__LunaCore.*` channel, and only the few others the page needs.
+// - a filtered `__ipcRenderer`: no `__LunaCore.*` or `__LunaWorld.*` channel, and only the few others the page needs.
+// It also runs plugin worlds (native/worlds.ts): a plugin's world gets the only bridge to its world natives.
 //
-// Without contextIsolation (tidal-hifi) this file shares the page's realm: page code gets the raw ipcRenderer and only
-// main's checks hold.
+// Without contextIsolation (tidal-hifi) this file shares the page's realm: page code gets the raw ipcRenderer, only
+// main's checks hold, and there are no plugin worlds.
 import { unloadableEmitter, type AnyFn } from "@inrixia/helpers";
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 import { isCoreUrl } from "./policy";
 import { pluginUrl, type CorePluginInfo, type PluginPackage } from "./registry";
@@ -53,7 +54,7 @@ const pageSend = (channel: unknown, ...args: unknown[]) => {
 };
 const ipcRendererUnloadable = unloadableEmitter(ipcRenderer, null, "ipcRenderer");
 const listenable = (channel: unknown) => {
-	if (typeof channel !== "string" || channel.startsWith("__LunaCore."))
+	if (typeof channel !== "string" || channel.startsWith("__LunaCore.") || channel.startsWith("__LunaWorld."))
 		throw securityError(`Channel ${String(channel)} is not available to the page`);
 	return channel;
 };
@@ -71,6 +72,65 @@ const loadCore = async (url: string) => {
 	const pkg = JSON.parse(await fetchText(`${url}.json`)) as PluginPackage;
 	delete pkg.code;
 	return { package: pkg, code: `${await fetchText(`${url}.mjs`)}\n//# sourceURL=${url}.mjs` };
+};
+// #endregion
+
+// #region Plugin worlds
+// One isolated world per plugin url (see native/worlds.ts). Main loads only the world of an enabled plugin, at the
+// version the user accepted, and names its world id
+type WorldState = { worldId?: number; active: boolean; queue: Promise<unknown> };
+const worlds = new Map<string, WorldState>();
+const worldOf = (url: string) => {
+	let world = worlds.get(url);
+	if (world === undefined) worlds.set(url, (world = { active: false, queue: Promise.resolve() }));
+	return world;
+};
+// One load or unload of a world at a time
+const queuedWorld = <T>(world: WorldState, task: () => Promise<T>): Promise<T> => {
+	const run = world.queue.then(task, task);
+	world.queue = run.catch(() => {});
+	return run;
+};
+const unloadWorldNow = async (world: WorldState) => {
+	if (!world.active || world.worldId === undefined) return;
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		// Its unloads may still call its natives (e.g. to undo what they changed). Like page unloads (render/src/helpers/unloadSet.ts)
+		// they get 5s, so a hung one can't keep the plugin from unloading
+		await Promise.race([
+			webFrame.executeJavaScriptInIsolatedWorld(world.worldId, [{ code: "globalThis.__lunaWorldUnload?.()" }], true),
+			new Promise((_, reject) => (timeout = setTimeout(() => reject(new Error("[Luna.worlds] Unload took longer than 5s to run...")), 5000))),
+		]);
+	} finally {
+		clearTimeout(timeout);
+		world.active = false;
+	}
+};
+const loadWorld = async (url: string) => {
+	if (!process.contextIsolated) throw new Error(`[Luna.worlds] ${url} needs contextIsolation for its plugin world`);
+	const world = worldOf(url);
+	return queuedWorld(world, async () => {
+		// The earlier load is stopped either way (its bridge is off): a failed unload of it must not keep the new one from loading
+		await unloadWorldNow(world).catch((err) => console.error("[Luna.worlds]", url, err));
+		const { worldId, code } = (await ipcRenderer.invoke("__LunaWorld.load", url)) as { worldId: number; code: string };
+		if (world.worldId === undefined) {
+			world.worldId = worldId;
+			webFrame.setIsolatedWorldInfo(worldId, { name: `Luna plugin ${url}` });
+			contextBridge.exposeInIsolatedWorld(worldId, "__LunaNative", {
+				url,
+				invoke: (fileName: string, exportName: string, ...args: unknown[]) => {
+					if (!world.active) return Promise.reject(new Error(`[Luna.worlds] ${url} is not loaded`));
+					return ipcRenderer.invoke("__LunaWorld.invoke", url, fileName, exportName, ...args);
+				},
+			});
+		}
+		world.active = true;
+		await webFrame.executeJavaScriptInIsolatedWorld(worldId, [{ code, url: `${url}.world.js` }], true);
+	});
+};
+const unloadWorld = async (url: string) => {
+	const world = worlds.get(url);
+	if (world !== undefined) await queuedWorld(world, () => unloadWorldNow(world));
 };
 // #endregion
 
@@ -99,6 +159,9 @@ export const exposeCore = () => {
 		acceptUpdate: (url: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.acceptUpdate", url),
 		disable: (url: unknown): Promise<void> => ipcRenderer.invoke("__LunaCore.disable", url),
 		uninstall: (url: unknown): Promise<void> => ipcRenderer.invoke("__LunaCore.uninstall", url),
+		// Runs the plugin's world, if main finds it enabled with one
+		loadWorld: (url: unknown): Promise<void> => loadWorld(pluginUrl(url)),
+		unloadWorld: (url: unknown): Promise<void> => unloadWorld(pluginUrl(url)),
 	});
 };
 // #endregion

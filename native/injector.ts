@@ -501,6 +501,7 @@ require(startPath);
 // #region LunaNative
 import "./NativeModule";
 import "./core/registryMain";
+import "./worlds";
 // #endregion
 
 // Literally just to log if preload fails

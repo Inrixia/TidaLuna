@@ -63,5 +63,8 @@ declare global {
 		disable(url: string): Promise<void>;
 		uninstall(url: string): Promise<void>;
 		acceptUpdate(url: string): Promise<boolean>;
+		/** Runs the plugin's isolated world (see native/worlds.ts). Throws without contextIsolation (tidal-hifi) */
+		loadWorld(url: string): Promise<void>;
+		unloadWorld(url: string): Promise<void>;
 	};
 }

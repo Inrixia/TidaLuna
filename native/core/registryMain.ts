@@ -68,6 +68,7 @@ export const registry = () =>
 			return pkg;
 		},
 		fetchCode: async (url) => `${await fetchText(`${url}.mjs`)}\n//# sourceURL=${url}.mjs`,
+		fetchWorld: (url) => fetchText(`${url}.world.json`),
 		nativeSources: (code) => {
 			let sources = sourcesCache.get(code);
 			if (sources === undefined) sourcesCache.set(code, (sources = Object.fromEntries(nativeSourcesOf(code))));

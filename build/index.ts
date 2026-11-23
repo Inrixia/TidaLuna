@@ -6,6 +6,7 @@ import path from "path";
 import { dynamicExternalsPlugin } from "./plugins/dynamicExternals";
 import { fileUrlPlugin } from "./plugins/fileUrl";
 import { lunaNativePlugin } from "./plugins/lunaNativePlugin";
+import { lunaWorldPlugin } from "./plugins/lunaWorldPlugin";
 import { writeBundlePlugin } from "./plugins/writeBundlePlugin";
 
 export const defaultBuildOptions: BuildOptions = {
@@ -53,6 +54,7 @@ export const pluginBuildOptions = async (pluginPath: string, opts?: BuildOptions
 			fileUrlPlugin,
 			lunaNativePlugin(entryPoint, pkgName, onNativeCode),
 			writeBundlePlugin(pkgPath),
+			lunaWorldPlugin(pkgPath, entryPoint, pkgName),
 		],
 	};
 };

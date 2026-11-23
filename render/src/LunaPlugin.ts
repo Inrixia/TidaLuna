@@ -37,6 +37,10 @@ export type PluginPackage = {
 	version?: string;
 	dependencies?: string[];
 	devDependencies?: string[];
+	/** Entry of the plugin's isolated world, built to `<plugin>.world.json` (see build/plugins/lunaWorldPlugin.ts) */
+	lunaWorld?: string;
+	/** sha256 of `<plugin>.world.json`, so a change to the world alone is a new version */
+	worldHash?: string;
 	code?: string;
 	/**
 	 * sha256 (hex) of the code Luna runs, set by Luna core (native/core/registry.ts).
@@ -431,6 +435,8 @@ export class LunaPlugin {
 	// #endregion
 
 	// #region load/unload
+	/** The plugin's world (see native/core/coreWorld.ts) is loaded */
+	private worldLoaded = false;
 	/**
 	 * Are you sure you didnt mean disable() or reload()?
 	 * This will unload the plugin without disabling it!
@@ -446,6 +452,11 @@ export class LunaPlugin {
 			}
 			await unloadSet(this.exports?.unloads);
 		} finally {
+			// Always, even if a dependant failed to unload: a plugin that isn't loaded must not keep its world's natives callable
+			if (this.worldLoaded) {
+				this.worldLoaded = false;
+				await __LunaCore.unloadWorld(this.url).catch(this.trace.err.withContext("Failed to unload its world"));
+			}
 			this.exports = undefined;
 			this.loading._ = false;
 			delete modules[this.name];
@@ -617,7 +628,7 @@ export class LunaPlugin {
 		try {
 			this.fetching._ = true;
 			const { package: newPackage, code, pending } = await __LunaCore.load(this.url);
-			const codeChanged = this.package?.hash !== newPackage.hash || this.code !== code;
+			const codeChanged = this.package?.hash !== newPackage.hash || this.package?.worldHash !== newPackage.worldHash || this.code !== code;
 			this.package = { ...newPackage, code };
 			this.setPendingUpdate(pending);
 			return codeChanged;
@@ -658,6 +669,12 @@ export class LunaPlugin {
 				URL.revokeObjectURL(blobURL);
 			}
 			if (this.exports === undefined) return this.trace.err.throw(`Failed to load. Module exports undefined!`);
+
+			// Its world holds the code that calls its natives: Luna core runs the version the user accepted
+			if (typeof this.package?.lunaWorld === "string") {
+				this.worldLoaded = true;
+				await __LunaCore.loadWorld(this.url);
+			}
 
 			// Ensure loadError is cleared
 			this.loadError._ = undefined;

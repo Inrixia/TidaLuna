@@ -13,6 +13,7 @@ import { registry } from "../core/registryMain";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
 import { secureLoad } from "./secureLoad";
+import { isWorldNative, worldFilePrefix } from "./worldNatives";
 
 declare global {
 	var luna: {
@@ -34,6 +35,11 @@ export type NativeModuleInfo = {
 	url?: string;
 	/** Luna's own core native code, trusted without prompts (see coreNatives.ts) */
 	isCore: boolean;
+	/** A native file of a plugin world, loaded by the main process from the plugin's accepted world (see native/worlds.ts) */
+	world?: {
+		/** sha256 of the file's code alone; `hash` also covers the world's code */
+		nativeHash: string;
+	};
 };
 
 /** channel -> Luna's own native code loaded (or loading) for it */
@@ -48,6 +54,9 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: unkn
 	if (typeof fileName !== "string" || typeof code !== "string") throw new Error("[Luna.native] fileName and code must be strings");
 	const hash = createHash("sha256").update(code, "utf8").digest("hex");
 	const channel = `__LunaNative.${fileName}`;
+	// A world plugin's natives run only for its world: page code registering them would get a channel of its own
+	if (fileName.startsWith(worldFilePrefix) || isWorldNative(hash))
+		throw new Error(`[🛑Security🛑] '${fileName}' is native code of a plugin world, it can only be loaded by that world`);
 	if (await isCoreNative(hash)) {
 		// Luna's own native code is public: page code registering it again must not run its module again
 		const loading = coreLoads.get(channel);

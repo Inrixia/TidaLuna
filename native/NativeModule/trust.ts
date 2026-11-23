@@ -113,6 +113,7 @@ export class NativeTrust {
 		const record: NativeRecord | undefined = getStore().natives[recordKey(fileName, hash, this.verifiedUrl)];
 		if (record?.answer !== "allowUpdates" || record.hashes.includes(hash)) return;
 		record.hashes.push(hash);
+		if (this.info.world !== undefined) (record.nativeHashes ??= []).push(this.info.world.nativeHash);
 		record.modules = [...this.modules];
 		saveStore();
 	}
@@ -125,8 +126,10 @@ export class NativeTrust {
 	}
 
 	private async verify(): Promise<void> {
-		const { url, fileName, hash } = this.info;
-		if (url !== undefined && (await verifySource(url, fileName, hash))) this.verifiedUrl = url;
+		const { url, fileName, hash, world } = this.info;
+		// A world's code comes from the plugin's accepted world, fetched from its url by the main process (see native/worlds.ts)
+		if (url !== undefined && world !== undefined) this.verifiedUrl = url;
+		else if (url !== undefined && (await verifySource(url, fileName, hash))) this.verifiedUrl = url;
 	}
 
 	private async ask(): Promise<void> {
@@ -149,7 +152,7 @@ export class NativeTrust {
 	}
 
 	private save(answer: PermissionAnswer) {
-		const { fileName, hash, url: claimedUrl } = this.info;
+		const { fileName, hash, url: claimedUrl, world } = this.info;
 		const url = this.verifiedUrl;
 		// Replaces an answer for an earlier build of the url: that build is asked again if it ever loads
 		getStore().natives[recordKey(fileName, hash, url, claimedUrl)] = {
@@ -159,6 +162,7 @@ export class NativeTrust {
 			answer,
 			hashes: [hash],
 			modules: [...this.modules],
+			...(world !== undefined ? { nativeHashes: [world.nativeHash] } : {}),
 		};
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
