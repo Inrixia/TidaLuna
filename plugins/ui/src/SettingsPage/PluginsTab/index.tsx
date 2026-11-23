@@ -19,12 +19,13 @@ export const PluginsTab = React.memo(() => {
 	return (
 		<Stack spacing={2}>
 			<ReloadAllPlugins />
-			<Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+			<Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ width: "100%", alignItems: { sm: "center" } }}>
 				<TextField
 					fullWidth
-					size="small"
 					type="search"
-					label="Search installed plugins"
+					placeholder="Search installed plugins"
+					slotProps={{ htmlInput: { "aria-label": "Search installed plugins" } }}
+					sx={{ flex: { sm: "1 1 0" }, minWidth: 0 }}
 					value={query}
 					onChange={(event) => setQuery(event.target.value)}
 				/>
