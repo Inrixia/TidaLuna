@@ -7,7 +7,16 @@ import { store as obyStore } from "oby";
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
 import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
-import { asSentence, decodeServedCode, rawSha256, revocationAction, sameServedCode, type RevokedEntry } from "./helpers/registry";
+import {
+	asSentence,
+	decodeServedCode,
+	legacyBomSha256,
+	packageSha256s,
+	rawSha256,
+	revocationAction,
+	sameServedCode,
+	type RevokedEntry,
+} from "./helpers/registry";
 import { LunaRegistry } from "./LunaRegistry";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
@@ -53,6 +62,11 @@ export type PluginPackage = {
 	rawSha256?: string;
 	/** `code` was fetched by fetchCode as it is now (BOM kept, strict UTF-8), so rawSha256 is the sha256 of the served bytes. Older stored code is fetched again */
 	exactCode?: true;
+	/**
+	 * Only for code stored before exactCode (kept while an update waits, as the url no longer serves it): the sha256 with a leading BOM put back,
+	 * the file's other possible registry key (see helpers/registry legacyBomSha256). The registry is checked for both
+	 */
+	bomRawSha256?: string;
 };
 
 // If adding to this make sure that the values are initalized in LunaPlugin.fromStorage
@@ -158,7 +172,7 @@ export class LunaPlugin {
 			const next = revocationAction(
 				{
 					url: plugin.url,
-					rawSha256: plugin.package?.rawSha256,
+					rawSha256: packageSha256s(plugin.package),
 					loaded: plugin.exports !== undefined,
 					stoppedByRevocation: plugin.revoked._ !== undefined,
 					enabled: plugin.enabled && plugin.installed !== false,
@@ -309,6 +323,7 @@ export class LunaPlugin {
 				delete (value as any).package?.codeSha256;
 				delete (value as any).package?.rawSha256;
 				delete (value as any).package?.exactCode;
+				delete (value as any).package?.bomRawSha256;
 			}
 		}
 
@@ -357,8 +372,12 @@ export class LunaPlugin {
 		const reloadLoop = async () => {
 			// Fail quietly
 			await this.loadExports().catch(() => {});
-			// Dont continue to loop if disabled or liveReload is false
-			if (!this.enabled || !this._liveReload._) return;
+			// Dont continue to loop if disabled or liveReload is false, or while the registry revokes the code: there is nothing to run.
+			// A load that succeeds (the revocation lifted, a manual reload with new code) starts it again (see loadExports)
+			if (!this.enabled || !this._liveReload._ || this.revoked._ !== undefined) {
+				this._reloadTimeout = undefined;
+				return;
+			}
 			this._reloadTimeout = setTimeout(reloadLoop.bind(this), 1000);
 		};
 		// Immediately set reloadTimeout to avoid entering this multiple times
@@ -551,11 +570,9 @@ export class LunaPlugin {
 		if (revoked !== undefined) return this.refuseUpdate(update, revoked);
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
 		if (this.enabled) {
-			const previous = this.package;
 			await this.loadExports(true, update);
-			// Revoked while or just after it loaded (loadExports already said why): the version the user had runs again
+			// Revoked while or just after it loaded: loadExports or stopRevoked said why and put the version the user had back
 			if (this.revokedUpdate(update) === undefined) return;
-			await this.rollBackRevokedUpdate(update, previous);
 			throw new Error(`Not updating ${this.name}: the Luna plugin registry revoked ${update.version ?? "this version"}`);
 		}
 		const release = await this.loadSemaphore.obtain();
@@ -567,20 +584,6 @@ export class LunaPlugin {
 		} finally {
 			release();
 		}
-	}
-	/** Put back the version an accepted update replaced, if the update is still stored (revoked after it loaded), and load it */
-	private async rollBackRevokedUpdate(update: PluginPackage, previous: PluginPackage | undefined): Promise<void> {
-		const release = await this.loadSemaphore.obtain();
-		try {
-			if (previous === undefined || this.package?.hash !== update.hash) return;
-			await this.unload();
-			this.package = previous;
-			this.refusedHash = update.hash;
-			this.refusedUpdate = update;
-		} finally {
-			release();
-		}
-		await this.reload().catch(this.trace.err.withContext("Failed to load the previous version again"));
 	}
 	/** Drop a revoked update and say why. Throws */
 	private refuseUpdate(update: PluginPackage, revoked: RevokedEntry): never {
@@ -595,6 +598,8 @@ export class LunaPlugin {
 		const previous = this.package;
 		this.package = update;
 		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
+		// Kept so a revocation of this update, whenever it arrives this session, puts the version the user had back (see restoreReplaced)
+		this.replacedByUpdate = previous?.code !== undefined && update.rawSha256 !== undefined ? { rawSha256: update.rawSha256, previous } : undefined;
 		return previous;
 	}
 	/** The registry's revocation of an update's code, if it is revoked (Luna's own plugins are never) */
@@ -636,32 +641,51 @@ export class LunaPlugin {
 		this.revoked._ = entry;
 		this.trace.msg.err(`${this.name} ${this.package?.version ?? ""} was not loaded: the Luna plugin registry revoked it. ${describeRevoked(entry)}`);
 	}
+	/** The update the user accepted last this session (its raw sha256) and the package it replaced. Not stored: after a restart the update just stops */
+	private replacedByUpdate?: { rawSha256: string; previous: PluginPackage };
 	/**
-	 * After loadExports found the code it was loading revoked (and unloaded): mark it, and if that code was an update the user accepted,
-	 * store the version they had again and load it
+	 * Call holding loadSemaphore, with the revoked code unloaded. If that code is the update the user accepted last, store the version it replaced
+	 * again. Returns whether it did: the caller loads it once the semaphore is released
 	 */
-	private stopAsRevoked(entry: RevokedEntry, replaced: { previous: PluginPackage | undefined } | undefined, update: PluginPackage | undefined) {
-		this.markRevoked(entry);
-		if (replaced?.previous === undefined || update === undefined || this.package?.hash !== update.hash) return;
+	private restoreReplaced(): boolean {
+		const replaced = this.replacedByUpdate;
+		const current = this.package;
+		if (replaced === undefined || current?.rawSha256 === undefined || current.rawSha256 !== replaced.rawSha256) return false;
+		this.replacedByUpdate = undefined;
 		this.package = replaced.previous;
-		// The reload below fetches it again: already announced, and offered if the revocation is lifted
-		this.refusedHash = update.hash;
-		this.refusedUpdate = update;
-		// Run it again once this load has released the semaphore
-		setTimeout(() => this.reload().catch(this.trace.err.withContext("Failed to load the previous version again")));
+		// Loading it fetches the url again, which still serves the revoked update: already announced, and offered if the revocation is lifted
+		this.refusedHash = current.hash;
+		this.refusedUpdate = current;
+		return true;
 	}
-	/** Unload this plugin because a newly accepted revoked.json revokes its code. It stays enabled: a version that isn't revoked loads again */
+	private loadRestored() {
+		this.trace.log("Loading the version the revoked update replaced");
+		return this.reload().catch(this.trace.err.withContext("Failed to load the previous version again"));
+	}
+	/** After loadExports found the code it was loading revoked (and unloaded): mark it, and put back the version a revoked accepted update replaced */
+	private stopAsRevoked(entry: RevokedEntry) {
+		this.markRevoked(entry);
+		// Run it again once this load has released the semaphore
+		if (this.restoreReplaced()) setTimeout(() => void this.loadRestored());
+	}
+	/**
+	 * Unload this plugin because a newly accepted revoked.json revokes its code. It stays enabled: a version that isn't revoked loads again.
+	 * If the code is an update the user accepted this session, the version it replaced is stored again and loaded
+	 */
 	private async stopRevoked(): Promise<void> {
 		const release = await this.loadSemaphore.obtain();
+		let restored = false;
 		try {
 			// Checked again: the code may have changed while waiting for the semaphore
-			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: this.package?.rawSha256 });
+			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: packageSha256s(this.package) });
 			if (decision.load || this.exports === undefined) return;
 			await this.unload();
 			this.markRevoked(decision.revoked);
+			restored = this.restoreReplaced();
 		} finally {
 			release();
 		}
+		if (restored) await this.loadRestored();
 	}
 	// #endregion
 
@@ -670,7 +694,7 @@ export class LunaPlugin {
 		this.loading._ = true;
 		// Uninstall can leave the old package, code included, in storage: install what the url serves now instead of offering it as an update
 		if (!this.installed && this.store.package?.code !== undefined)
-			this.store.package = { ...this.store.package, code: undefined, codeSha256: undefined, rawSha256: undefined };
+			this.store.package = { ...this.store.package, code: undefined, codeSha256: undefined, rawSha256: undefined, bomRawSha256: undefined };
 
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
 		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);
@@ -760,6 +784,8 @@ export class LunaPlugin {
 			newPackage.code = reused?.code;
 			newPackage.codeSha256 = reused?.code !== undefined ? reused.codeSha256 : undefined;
 			newPackage.rawSha256 = reused?.code !== undefined ? reused.rawSha256 : undefined;
+			// Exact code has one key; the json can't set it
+			newPackage.bomRawSha256 = undefined;
 
 			// Ensure that code is fetched if its changed or undefined
 			if (newPackage.code === undefined) newPackage.code = `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
@@ -859,12 +885,20 @@ export class LunaPlugin {
 			// Only the call build/plugins/lunaNativePlugin.ts emits, not the same text inside a native file's code string
 			const code = codeToImport(this.code, this.url);
 			// Keep the hash of exactly what runs beside the code (the json `hash` only says the code changed), and the registry's key
-			const [sha256, raw] = await Promise.all([sha256Hex(code), rawSha256(this.code)]);
-			if (this.package!.codeSha256 !== sha256 || this.package!.rawSha256 !== raw) this.package = { ...this.package!, codeSha256: sha256, rawSha256: raw };
+			// Code stored before exact fetching (kept while an update waits) may have lost a leading BOM: its other possible key too
+			const [sha256, raw, bomRaw] = await Promise.all([
+				sha256Hex(code),
+				rawSha256(this.code),
+				this.package!.exactCode ? undefined : legacyBomSha256(this.code),
+			]);
+			const pkg = this.package!;
+			if (pkg.codeSha256 !== sha256 || pkg.rawSha256 !== raw || pkg.bomRawSha256 !== bomRaw)
+				this.package = { ...pkg, codeSha256: sha256, rawSha256: raw, bomRawSha256: bomRaw };
+			const keys = packageSha256s(this.package);
 
 			// Code the registry revoked doesn't run (the list in use, see LunaRegistry for startup order)
-			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: raw });
-			if (!decision.load) return this.stopAsRevoked(decision.revoked, replaced, update);
+			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: keys });
+			if (!decision.load) return this.stopAsRevoked(decision.revoked);
 			this.revoked._ = undefined;
 
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
@@ -898,13 +932,15 @@ export class LunaPlugin {
 
 			// A revoked.json accepted during the import: applyRevocations skipped this plugin (no exports yet), so it is stopped here,
 			// once its unloads are known
-			const late = LunaRegistry.loadDecision({ url: this.url, rawSha256: raw });
+			const late = LunaRegistry.loadDecision({ url: this.url, rawSha256: keys });
 			if (!late.load) {
 				await this.unload();
-				return this.stopAsRevoked(late.revoked, replaced, update);
+				return this.stopAsRevoked(late.revoked);
 			}
 
 			this.trace.log("Loaded");
+			// Live reload stops while the code is revoked (see startReloadLoop): running code resumes it
+			if (this.enabled && this._liveReload._) this.startReloadLoop();
 			// Make sure we load any enabled dependants, this is mostly to facilitate live reloading dependency trees
 			for (const dependant of this.dependants) {
 				// If the dependant also depends on another enabled plugin that is not loaded yet, leave it to that plugin.
@@ -930,6 +966,7 @@ export class LunaPlugin {
 			// An accepted update that fails to load waits again, the version the user had is the one stored (and runs on the next load)
 			if (replaced !== undefined && update !== undefined && this.package?.hash === update.hash) {
 				if (replaced.previous !== undefined) this.package = replaced.previous;
+				this.replacedByUpdate = undefined;
 				// Unless the url served a newer update meanwhile
 				if (this.pendingUpdate._ === undefined) this.pendingUpdate._ = update;
 			}

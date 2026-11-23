@@ -220,22 +220,46 @@ export const sameServedCode = (storedCode: string, fetchedCode: string): boolean
  */
 export const rawSha256 = (storedCode: string): Promise<string> => sha256Hex(rawCodeOf(storedCode));
 
-/** The verified entry for this code, only if the entry names this plugin (so a verified build can't lend its badge to another name) */
-export const verifiedEntryFor = (verified: VerifiedFile | undefined, sha256: string | undefined, name: string): VerifiedEntry | undefined => {
-	if (verified === undefined || sha256 === undefined || !Object.hasOwn(verified.entries, sha256)) return undefined;
-	const entry = verified.entries[sha256];
-	return entry.name === name ? entry : undefined;
+/**
+ * The sha256 of code stored before fetchCode kept BOMs (PluginPackage.exactCode unset) with a leading BOM put back: `Response.text()` dropped one
+ * if the file had it, so the file's sha256 may be either this or rawSha256. Undefined when no BOM could have been dropped (the text starts with one)
+ * or the text has U+FFFD (invalid bytes were replaced: the file's sha256 can't be known, and refetching it is the only way, see LunaPlugin.fetchPackage)
+ */
+export const legacyBomSha256 = (storedCode: string): Promise<string> | undefined => {
+	const raw = rawCodeOf(storedCode);
+	if (raw.startsWith("﻿") || raw.includes("�")) return undefined;
+	return sha256Hex(`﻿${raw}`);
 };
 
-/** The revocation of this code, if any */
-export const revokedEntryFor = (revoked: RevokedFile | undefined, sha256: string | undefined): RevokedEntry | undefined => {
-	if (revoked === undefined || sha256 === undefined || !Object.hasOwn(revoked.entries, sha256)) return undefined;
-	return revoked.entries[sha256];
+/** The registry key of a plugin's code, or the keys it may have (code stored before exact fetching: see legacyBomSha256) */
+export type CodeSha256 = string | undefined | readonly (string | undefined)[];
+const sha256sOf = (sha256: CodeSha256): string[] =>
+	(typeof sha256 === "string" || sha256 === undefined ? [sha256] : sha256).filter((sha): sha is string => sha !== undefined);
+/** The registry keys of a stored package's code: its rawSha256, and the one with a BOM for code stored before exact fetching */
+export const packageSha256s = (pkg: { rawSha256?: string; bomRawSha256?: string } | undefined): CodeSha256 =>
+	pkg?.bomRawSha256 === undefined ? pkg?.rawSha256 : [pkg.rawSha256, pkg.bomRawSha256];
+
+/** The verified entry for this code, only if the entry names this plugin (so a verified build can't lend its badge to another name) */
+export const verifiedEntryFor = (verified: VerifiedFile | undefined, sha256: CodeSha256, name: string): VerifiedEntry | undefined => {
+	if (verified === undefined) return undefined;
+	for (const sha of sha256sOf(sha256)) {
+		if (!Object.hasOwn(verified.entries, sha)) continue;
+		const entry = verified.entries[sha];
+		if (entry.name === name) return entry;
+	}
+	return undefined;
+};
+
+/** The revocation of this code, if any (of any of its possible keys) */
+export const revokedEntryFor = (revoked: RevokedFile | undefined, sha256: CodeSha256): RevokedEntry | undefined => {
+	if (revoked === undefined) return undefined;
+	for (const sha of sha256sOf(sha256)) if (Object.hasOwn(revoked.entries, sha)) return revoked.entries[sha];
+	return undefined;
 };
 
 export type LoadDecision = { load: true } | { load: false; revoked: RevokedEntry };
 /** Whether a plugin's code may run: not if its raw sha256 is revoked. Dev plugins are checked too: revocation is about the exact code, not where it comes from */
-export const registryLoadDecision = (plugin: { url: string; rawSha256: string | undefined }, revoked: RevokedFile | undefined): LoadDecision => {
+export const registryLoadDecision = (plugin: { url: string; rawSha256: CodeSha256 }, revoked: RevokedFile | undefined): LoadDecision => {
 	if (isCoreUrl(plugin.url)) return { load: true };
 	const entry = revokedEntryFor(revoked, plugin.rawSha256);
 	return entry === undefined ? { load: true } : { load: false, revoked: entry };
@@ -247,7 +271,7 @@ export type RevocationAction = { action: "stop"; revoked: RevokedEntry } | { act
  * its code no longer is, and it is enabled), or nothing. A plugin still loading checks again after its import (LunaPlugin.loadExports)
  */
 export const revocationAction = (
-	plugin: { url: string; rawSha256: string | undefined; loaded: boolean; stoppedByRevocation: boolean; enabled: boolean },
+	plugin: { url: string; rawSha256: CodeSha256; loaded: boolean; stoppedByRevocation: boolean; enabled: boolean },
 	revoked: RevokedFile | undefined,
 ): RevocationAction => {
 	const decision = registryLoadDecision(plugin, revoked);
@@ -260,7 +284,7 @@ export const revocationAction = (
  * All plugins share one JS realm, so one unverified plugin can patch verified ones: the badge means little while this is not 0.
  * Counts dev plugins (127.0.0.1): their code is not verified either. Leaves out Luna's own plugins and revoked plugins (they don't run).
  */
-export const unverifiedPlugins = <P extends { url: string; name: string; installed: boolean; enabled: boolean; rawSha256: string | undefined }>(
+export const unverifiedPlugins = <P extends { url: string; name: string; installed: boolean; enabled: boolean; rawSha256: CodeSha256 }>(
 	plugins: P[],
 	verified: VerifiedFile | undefined,
 	revoked: RevokedFile | undefined,

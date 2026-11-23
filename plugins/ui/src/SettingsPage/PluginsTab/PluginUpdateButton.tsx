@@ -18,7 +18,7 @@ const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slic
 /** What the plugin registry says about the new version's exact code (its raw sha256, the registry's key) */
 const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
 	// Follows the lists while the dialog is open: a revocation that arrives now shows here (and acceptUpdate refuses it)
-	useRegistry();
+	const { verified, status } = useRegistry();
 	// The verified entry names the build: an update that renames the plugin is looked up by its new name
 	const entry = registryEntryOf(plugin, update.rawSha256, update.name);
 	const title = `sha256 of the ${update.version ?? "new"} .mjs (the registry's key): ${update.rawSha256 ?? "?"}`;
@@ -44,7 +44,10 @@ const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: 
 		);
 	return (
 		<Typography variant="body2" sx={{ color: "warning.main" }} gutterBottom title={title}>
-			Not verified: the Luna plugin registry has no entry for this version's code (sha256 <code>{shortHash(update.rawSha256)}</code>).
+			{verified === undefined
+				? `Not checked: Luna couldn't get the plugin registry's list of verified plugins${status["verified.json"].error ? ` (${status["verified.json"].error})` : ""}, so it can't tell whether this version was verified.`
+				: "Not verified: the Luna plugin registry has no entry for this version's code"}{" "}
+			(sha256 <code>{shortHash(update.rawSha256)}</code>).
 		</Typography>
 	);
 };

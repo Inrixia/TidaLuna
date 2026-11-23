@@ -19,8 +19,10 @@ export { isCoreUrl } from "./helpers/pluginUpdates";
 export {
 	asSentence,
 	defaultRegistryBase,
+	packageSha256s,
 	registryPublicKey,
 	unverifiedPlugins,
+	type CodeSha256,
 	type RegistryFileName,
 	type RevokedEntry,
 	type RevokedFile,

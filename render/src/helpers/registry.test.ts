@@ -10,6 +10,8 @@ import {
 	acceptRegistryFile,
 	asSentence,
 	decodeServedCode,
+	legacyBomSha256,
+	packageSha256s,
 	parseRegistryFile,
 	rawCodeOf,
 	rawSha256,
@@ -296,4 +298,34 @@ test("code stored before exact fetching matches its refetch only when it differs
 	assert.equal(sameServedCode(stored, `﻿export const a = 1;\n//# sourceURL=${url}.mjs`), true);
 	assert.equal(sameServedCode(stored, `export const a = 1;\n//# sourceURL=${url}2.mjs`), true);
 	assert.equal(sameServedCode(stored, `export const a = 2;\n//# sourceURL=${url}.mjs`), false);
+});
+
+test("code stored before exact fetching is looked up by both keys it may have (a BOM dropped or not)", async () => {
+	const text = "export const x = 1;";
+	const stored = `${text}\n//# sourceURL=https://example.com/X.mjs`;
+	const withBom = createHash("sha256").update(Buffer.from(`\uFEFF${text}`, "utf8")).digest("hex");
+	assert.equal(await legacyBomSha256(stored), withBom);
+	// It already has its BOM, or invalid bytes were replaced: no other key
+	assert.equal(legacyBomSha256(`\uFEFF${text}`), undefined);
+	assert.equal(legacyBomSha256(`${text}\uFFFD`), undefined);
+
+	const plain = await rawSha256(stored);
+	const keys = packageSha256s({ rawSha256: plain, bomRawSha256: withBom });
+	assert.deepEqual(keys, [plain, withBom]);
+	assert.equal(packageSha256s({ rawSha256: plain }), plain);
+	assert.equal(packageSha256s(undefined), undefined);
+
+	const file = <T,>(kind: "verified" | "revoked", entries: Record<string, T>) => ({ schema: 1 as const, kind, serial: 1, entries });
+	const revoked = <RevokedFile>file("revoked", { [withBom]: { reason: "Bad" } });
+	assert.equal(revokedEntryFor(revoked, keys)?.reason, "Bad");
+	assert.equal(revokedEntryFor(revoked, plain), undefined);
+	assert.equal(registryLoadDecision({ url: "https://example.com/X", rawSha256: keys }, revoked).load, false);
+	const verified = <VerifiedFile>file("verified", { [withBom]: { id: "x", name: "X" } });
+	assert.equal(verifiedEntryFor(verified, keys, "X")?.id, "x");
+	assert.equal(verifiedEntryFor(verified, keys, "Y"), undefined);
+	assert.equal(verifiedEntryFor(verified, [undefined, undefined], "X"), undefined);
+	assert.deepEqual(
+		unverifiedPlugins([{ url: "https://example.com/X", name: "X", installed: true, enabled: true, rawSha256: keys }], verified, undefined),
+		[],
+	);
 });

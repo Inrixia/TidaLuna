@@ -141,3 +141,30 @@ test("serials are kept per registry url: a local test registry doesn't block the
 	assert.equal(stored.get(`${other}revoked.json.serial`), 1);
 	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
 });
+
+test("a stored copy older than the serial accepted before (saving it failed): revoked.json is still used, verified.json is not", async () => {
+	restart();
+	serve({ "revoked.json": "revoked-serial1.json", "revoked.json.sig": "revoked-serial1.json.sig" });
+	await LunaRegistry.refresh();
+	const olderCopy = stored.get(`${base}revoked.json`);
+	serve(good);
+	await LunaRegistry.refresh();
+	// The serials were stored, the newer copies were not
+	stored.set(`${base}revoked.json`, olderCopy);
+	stored.set(`${base}verified.json.serial`, 4);
+	restart(stored);
+	await LunaRegistry.loadCached();
+	// An older list of revocations still revokes what it lists, until the fetch replaces it
+	assert.equal(LunaRegistry.revoked._?.serial, 1);
+	assert.equal(LunaRegistry.status._["revoked.json"].source, "cached");
+	assert.match(LunaRegistry.status._["revoked.json"].error ?? "", /#1 is older than #2/);
+	// A verified build may have been dropped since: nothing is badged
+	assert.equal(LunaRegistry.verified._, undefined);
+	assert.equal(LunaRegistry.status._["verified.json"].source, "none");
+	assert.match(LunaRegistry.status._["verified.json"].error ?? "", /#3 is older than #4/);
+	// The serial is not lowered, and the next fetch is used
+	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
+	await LunaRegistry.refresh();
+	assert.equal(LunaRegistry.revoked._?.serial, 2);
+	assert.equal(LunaRegistry.status._["revoked.json"].error, undefined);
+});

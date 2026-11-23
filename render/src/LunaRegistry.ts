@@ -11,6 +11,7 @@ import {
 	revokedEntryFor,
 	verifiedEntryFor,
 	type AcceptResult,
+	type CodeSha256,
 	type LoadDecision,
 	type RegistryFileName,
 	type RevokedEntry,
@@ -59,13 +60,13 @@ export class LunaRegistry {
 		"revoked.json": { source: "none" },
 	});
 
-	public static verifiedEntry(sha256: string | undefined, name: string): VerifiedEntry | undefined {
+	public static verifiedEntry(sha256: CodeSha256, name: string): VerifiedEntry | undefined {
 		return verifiedEntryFor(this.verified._, sha256, name);
 	}
-	public static revokedEntry(sha256: string | undefined): RevokedEntry | undefined {
+	public static revokedEntry(sha256: CodeSha256): RevokedEntry | undefined {
 		return revokedEntryFor(this.revoked._, sha256);
 	}
-	public static loadDecision(plugin: { url: string; rawSha256: string | undefined }): LoadDecision {
+	public static loadDecision(plugin: { url: string; rawSha256: CodeSha256 }): LoadDecision {
 		return registryLoadDecision(plugin, this.revoked._);
 	}
 
@@ -117,22 +118,32 @@ export class LunaRegistry {
 			try {
 				const copy = await this.storage.get<StoredCopy>(`${base}${fileName}`);
 				if (copy === undefined) continue;
-				const result = await acceptRegistryFile(
-					fileName,
-					{ bytes: base64ToBytes(copy.bytes), signature: copy.signature },
-					await this.highestSerial(`${base}${fileName}`),
-				);
+				// The serial is compared below, not by acceptRegistryFile: an older stored copy is still used for revoked.json
+				const result = await acceptRegistryFile(fileName, { bytes: base64ToBytes(copy.bytes), signature: copy.signature });
 				if (!result.ok) {
 					this.trace.warn(`Stored copy not used: ${result.reason}`);
 					continue;
 				}
+				// Older than the highest serial accepted: storing a newer copy failed after its serial was stored (fetchFile)
+				const highest = await this.highestSerial(`${base}${fileName}`);
+				const older =
+					highest !== undefined && result.file.serial < highest
+						? `the stored copy #${result.file.serial} is older than #${highest}, accepted before (saving that one failed)`
+						: undefined;
+				if (older !== undefined && fileName === "verified.json") {
+					// A build verified in it may have been dropped since: nothing is badged until the list is fetched
+					this.trace.warn(`Stored copy not used: ${fileName}: ${older}`);
+					this.setStatus(fileName, { ...this.status._[fileName], error: this.status._[fileName].error ?? `${fileName}: ${older}` });
+					continue;
+				}
+				// An older revoked.json still revokes what it lists, none would revoke nothing: it is used until the fetch replaces it
 				if (this.use(fileName, result.file, base))
 					// A fetch that already failed keeps its error showing
 					this.setStatus(fileName, {
 						source: "cached",
 						serial: result.file.serial,
 						generated: result.file.generated,
-						error: this.status._[fileName].error,
+						error: this.status._[fileName].error ?? (older !== undefined ? `${fileName}: ${older}` : undefined),
 					});
 			} catch (err) {
 				this.trace.err.withContext("loadCached", fileName)(err);

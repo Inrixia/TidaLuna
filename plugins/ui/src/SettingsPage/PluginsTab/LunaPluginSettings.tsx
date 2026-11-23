@@ -1,7 +1,7 @@
 import React from "react";
 import type { ErrorInfo, ReactNode } from "react";
 
-import { LunaPlugin, unloadSet, type PluginPackage } from "@luna/core";
+import { LunaPlugin, packageSha256s, unloadSet, type PluginPackage } from "@luna/core";
 import { store as obyStore } from "oby";
 
 import Stack from "@mui/material/Stack";
@@ -134,7 +134,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 						>
 							{collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
 						</IconButton>
-						<RegistryBadge plugin={plugin} rawSha256={pkg.rawSha256} />
+						<RegistryBadge plugin={plugin} rawSha256={packageSha256s(pkg)} name={pkg?.name ?? plugin.name} />
 						<PluginUpdateButton plugin={plugin} />
 						{!collapsed && (
 							<>

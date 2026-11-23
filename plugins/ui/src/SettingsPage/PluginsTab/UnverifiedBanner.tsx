@@ -1,6 +1,6 @@
 import React from "react";
 
-import { isCoreUrl, LunaPlugin, LunaRegistry, unverifiedPlugins, type RegistryFileStatus } from "@luna/core";
+import { isCoreUrl, LunaPlugin, LunaRegistry, packageSha256s, unverifiedPlugins, type CodeSha256, type RegistryFileStatus } from "@luna/core";
 import { effect } from "oby";
 
 import Alert from "@mui/material/Alert";
@@ -23,7 +23,7 @@ const Lists = ({ text }: { text: string }) => <div style={{ opacity: 0.7, fontSi
 export const UnverifiedBanner = React.memo(() => {
 	const { verified, revoked, status } = useRegistry();
 	const [plugins, setPlugins] = React.useState<
-		{ url: string; name: string; installed: boolean; enabled: boolean; rawSha256: string | undefined }[]
+		{ url: string; name: string; installed: boolean; enabled: boolean; rawSha256: CodeSha256 }[]
 	>([]);
 	// The fields read here are oby-tracked: re-run when plugins are added, enabled, disabled, or their code changes
 	React.useEffect(
@@ -33,10 +33,11 @@ export const UnverifiedBanner = React.memo(() => {
 					setPlugins(
 						Object.values(LunaPlugin.plugins).map((plugin) => ({
 							url: plugin.store.url,
-							name: plugin.name,
+							// The name the code carries: a renaming update changes it, the plugin keeps the name it was installed under
+							name: plugin.store.package?.name ?? plugin.name,
 							installed: plugin.store.installed,
 							enabled: plugin.store.enabled,
-							rawSha256: plugin.store.package?.rawSha256,
+							rawSha256: packageSha256s(plugin.store.package),
 						})),
 					),
 				{ sync: true },
@@ -58,14 +59,10 @@ export const UnverifiedBanner = React.memo(() => {
 		const thirdParty = plugins.some(
 			(plugin) => plugin.installed && plugin.enabled && !isCoreUrl(plugin.url) && LunaRegistry.revokedEntry(plugin.rawSha256) === undefined,
 		);
-		const allVerified = thirdParty && verified !== undefined;
+		// (Without a verified.json every such plugin counts as unverified, so here thirdParty means they are all verified)
 		return (
-			<Alert severity={stale ? "warning" : allVerified ? "success" : "info"} variant="filled">
-				{allVerified
-					? "All enabled plugins are verified by the Luna plugin registry."
-					: thirdParty
-						? "No enabled plugin is unverified, but the registry's list of verified plugins is not available."
-						: "No plugins other than Luna's own are enabled."}
+			<Alert severity={stale ? "warning" : thirdParty ? "success" : "info"} variant="filled">
+				{thirdParty ? "All enabled plugins are verified by the Luna plugin registry." : "No plugins other than Luna's own are enabled."}
 				{stale}
 				<Lists text={lists} />
 			</Alert>
