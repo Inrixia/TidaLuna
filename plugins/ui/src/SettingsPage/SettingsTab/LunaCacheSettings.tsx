@@ -4,6 +4,7 @@ import { requestCache, Tracer } from "@luna/core";
 import { AudioCache, type AudioCacheStats } from "@luna/lib";
 
 import Typography from "@mui/material/Typography";
+import { useConfirm } from "material-ui-confirm";
 
 import { LunaButtonSetting, LunaNumberSetting, LunaSettings } from "../../components";
 
@@ -30,20 +31,36 @@ export const LunaCacheSettings = React.memo(() => {
 	const [draftGb, setDraftGb] = React.useState<number>();
 	const pendingGb = React.useRef<number>(undefined);
 	const applyTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
-	const applyLimit = React.useCallback(() => {
+	const confirm = useConfirm();
+	/** `canConfirm` false (leaving the page) drops a limit that would delete tracks instead of asking */
+	const applyLimit = React.useCallback(async (canConfirm = true) => {
 		clearTimeout(applyTimer.current);
 		const gb = pendingGb.current;
 		if (gb === undefined) return;
 		pendingGb.current = undefined;
-		AudioCache.setLimit(Math.max(0, gb) * GB)
-			.then(() => AudioCache.stats())
-			.then(setAudio)
-			.catch(trace.msg.err.withContext("Failed to set the audio cache limit"))
-			// Shows the applied limit again, or the old one if setting it failed
-			.finally(() => pendingGb.current === undefined && setDraftGb(undefined));
+		try {
+			const bytes = Math.max(0, gb) * GB;
+			const { usage } = await AudioCache.stats();
+			if ((bytes || 128 * GB) < usage) {
+				if (!canConfirm) return;
+				const { confirmed } = await confirm({
+					title: "Delete cached tracks?",
+					description: `The cache uses ${formatBytes(usage)}. A ${gb || 128} GB limit deletes the least recently played tracks until it fits.`,
+					confirmationText: "Delete tracks",
+				});
+				if (!confirmed) return;
+			}
+			await AudioCache.setLimit(bytes);
+			setAudio(await AudioCache.stats());
+		} catch (err) {
+			trace.msg.err.withContext("Failed to set the audio cache limit")(err);
+		} finally {
+			// Shows the applied limit again, or the old one if it was cancelled or failed
+			if (pendingGb.current === undefined) setDraftGb(undefined);
+		}
 	}, []);
 	// Leaving the page applies what was typed
-	React.useEffect(() => applyLimit, []);
+	React.useEffect(() => () => void applyLimit(false), []);
 
 	const limitDesc =
 		audio &&
@@ -61,7 +78,7 @@ export const LunaCacheSettings = React.memo(() => {
 					clearTimeout(applyTimer.current);
 					applyTimer.current = setTimeout(applyLimit, 2000);
 				}}
-				onBlur={applyLimit}
+				onBlur={() => applyLimit()}
 				onKeyDown={(e) => e.key === "Enter" && applyLimit()}
 			/>
 			<LunaButtonSetting title="Open audio cache folder" desc={audio?.path} onClick={() => AudioCache.openFolder()} children="Open" />
