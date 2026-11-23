@@ -21,11 +21,11 @@ export const useRegistry = () => {
 
 export type RegistryEntry = { revoked: RevokedEntry; verified?: undefined } | { verified: VerifiedEntry; revoked?: undefined } | undefined;
 /** What the registry says about this code of this plugin: revoked, verified (for this plugin's name) or nothing. Luna's own plugins: nothing */
-export const registryEntryOf = (plugin: LunaPlugin, rawSha256: string | undefined): RegistryEntry => {
+export const registryEntryOf = (plugin: LunaPlugin, rawSha256: string | undefined, name: string = plugin.name): RegistryEntry => {
 	const decision = LunaRegistry.loadDecision({ url: plugin.url, rawSha256 });
 	if (!decision.load) return { revoked: decision.revoked };
 	if (isCoreUrl(plugin.url)) return undefined;
-	const verified = LunaRegistry.verifiedEntry(rawSha256, plugin.name);
+	const verified = LunaRegistry.verifiedEntry(rawSha256, name);
 	return verified === undefined ? undefined : { verified };
 };
 
@@ -47,9 +47,10 @@ const ReportChip = ({ report, title, ...props }: ChipProps & { report?: string; 
 );
 
 /** "Verified" or "Revoked" for a plugin's code, with the registry's report. Nothing for code the registry doesn't list */
-export const RegistryBadge = React.memo(({ plugin, rawSha256 }: { plugin: LunaPlugin; rawSha256?: string }) => {
+/** `name`: the name the code carries, if not the plugin's current one (an update that renames it) */
+export const RegistryBadge = React.memo(({ plugin, rawSha256, name }: { plugin: LunaPlugin; rawSha256?: string; name?: string }) => {
 	useRegistry();
-	const entry = registryEntryOf(plugin, rawSha256);
+	const entry = registryEntryOf(plugin, rawSha256, name);
 	if (entry?.revoked !== undefined)
 		return (
 			<ReportChip

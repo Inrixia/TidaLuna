@@ -19,19 +19,21 @@ const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slic
 const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
 	// Follows the lists while the dialog is open: a revocation that arrives now shows here (and acceptUpdate refuses it)
 	useRegistry();
-	const entry = registryEntryOf(plugin, update.rawSha256);
+	// The verified entry names the build: an update that renames the plugin is looked up by its new name
+	const entry = registryEntryOf(plugin, update.rawSha256, update.name);
 	const title = `sha256 of the ${update.version ?? "new"} .mjs (the registry's key): ${update.rawSha256 ?? "?"}`;
 	if (entry?.revoked !== undefined)
 		return (
 			<Typography variant="body2" component="div" sx={{ color: "error.main" }} gutterBottom title={title}>
-				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} /> The Luna plugin registry revoked this version:{" "}
+				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} name={update.name} /> The Luna plugin registry revoked this version:{" "}
 				{asSentence(entry.revoked.reason)} It can't be installed.
 			</Typography>
 		);
 	if (entry?.verified !== undefined)
 		return (
 			<Typography variant="body2" component="div" gutterBottom title={title}>
-				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} /> The Luna plugin registry built this version from its source and reviewed it
+				<RegistryBadge plugin={plugin} rawSha256={update.rawSha256} name={update.name} /> The Luna plugin registry built this version from its source
+				and reviewed it
 				{entry.verified.report !== undefined && (
 					<>
 						: <LunaLink href={entry.verified.report}>{entry.verified.report}</LunaLink>
@@ -93,8 +95,8 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			confirmationText: "Update",
 			cancellationText: "Not now",
 		});
-		// A revoked update is never offered; one revoked while the dialog was open says so there, and acceptUpdate would refuse it
-		if (!confirmed || plugin.revokedUpdate(update) !== undefined) return;
+		// One revoked while the dialog was open is refused by acceptUpdate, with a message
+		if (!confirmed) return;
 		setUpdating(true);
 		try {
 			// The update the user was shown, even if a newer one arrived meanwhile
