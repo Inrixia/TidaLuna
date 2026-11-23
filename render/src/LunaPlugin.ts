@@ -431,10 +431,11 @@ export class LunaPlugin {
 	public addDependant(plugin: LunaPlugin) {
 		if (!(plugin instanceof LunaPlugin)) throw new Error("Cannot add dependancy to non plugin!");
 		this.dependants.add(plugin);
-		plugin.importing?.add(this);
+		// The shim calls this right after it took this plugin's exports: their unload count then (see loadExports)
+		plugin.importing?.set(this, this.unloadCount);
 	}
-	/** While this plugin's module is imported: the plugins it imports (see loadExports) */
-	private importing?: Set<LunaPlugin>;
+	/** While this plugin's module is imported: the plugins it imports, with their unload count when it took their exports */
+	private importing?: Map<LunaPlugin, number>;
 	/** Counts this plugin's unloads, so a dependant can tell its dependency was unloaded while it was imported */
 	private unloadCount = 0;
 	/**
@@ -957,10 +958,9 @@ export class LunaPlugin {
 			this.revoked._ = undefined;
 
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
-			// The plugins this code imports and how often each was unloaded so far: one unloaded during the import (revoked, disabled
-			// or reloading) found no exports here to unload, see below
-			const unloadCounts = new Map(Object.values(LunaPlugin.plugins).map((plugin) => [plugin.url, plugin.unloadCount]));
-			const imported = (this.importing = new Set());
+			// The plugins this code imports: one unloaded after this import took its exports (revoked, disabled or reloading) found no
+			// exports here to unload, see below
+			const imported = (this.importing = new Map());
 			try {
 				this.exports = await import(blobURL);
 			} finally {
@@ -999,7 +999,7 @@ export class LunaPlugin {
 			}
 			// A dependency unloaded during the import: running now would keep the exports it unloaded. It loads this plugin once it loads again
 			// (a dependency reloaded meanwhile already queued that load)
-			const dependency = [...imported].find((plugin) => plugin.unloadCount !== unloadCounts.get(plugin.url) || plugin.exports === undefined);
+			const dependency = [...imported].find(([plugin, count]) => plugin.unloadCount !== count || plugin.exports === undefined)?.[0];
 			if (dependency !== undefined) {
 				await this.unload();
 				this.loadError._ =
