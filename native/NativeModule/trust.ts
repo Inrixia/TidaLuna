@@ -152,7 +152,14 @@ export class NativeTrust {
 		const { fileName, hash, url: claimedUrl } = this.info;
 		const url = this.verifiedUrl;
 		// Replaces an answer for an earlier build of the url: that build is asked again if it ever loads
-		getStore().natives[recordKey(fileName, hash, url, claimedUrl)] ={ url, claimedUrl, fileName, answer, hashes: [hash], modules: [...this.modules] };
+		getStore().natives[recordKey(fileName, hash, url, claimedUrl)] = {
+			url,
+			claimedUrl,
+			fileName,
+			answer,
+			hashes: [hash],
+			modules: [...this.modules],
+		};
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
 		resetLive();
