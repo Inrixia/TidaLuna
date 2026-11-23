@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { cspSources, declaredHosts, hostAllowed, hostsDiff, isLocalHost, parseHostEntry, sameHosts } from "./hosts";
+import { cspSources, declaredHosts, hostAllowed, hostsDiff, isLocalEntry, isLocalHost, localEntryAllows, parseHostEntry, sameHosts } from "./hosts";
 
 const allowed = (hosts: string[], url: string) => hostAllowed(hosts, new URL(url));
 
@@ -97,5 +97,20 @@ describe("plugin hosts", () => {
 		assert.deepEqual(parseHostEntry("wss://*.x.com:444"), { schemes: ["wss"], host: "x.com", wildcard: true, port: "444" });
 		assert.equal(parseHostEntry("*.localhost"), undefined);
 		assert.equal(parseHostEntry("*.1.2.3.4"), undefined);
+	});
+
+	it("refuses names ending in a number: the URL parser reads them as IPv4", () => {
+		for (const entry of ["*.0.0.1", "*.1.1", "http://*.1.1", "a.0x7f", "1.2.3", "x.123"]) assert.equal(parseHostEntry(entry), undefined, entry);
+		assert.equal(hostAllowed(["*.1.1"], new URL("https://192.168.1.1/")), false);
+		assert.ok(parseHostEntry("a1.example.com"));
+		assert.ok(parseHostEntry("cdn.123abc.com"));
+		assert.ok(parseHostEntry("10.0.0.5"));
+	});
+
+	it("tells local entries apart: only they let luna.fetch reach a local address", () => {
+		for (const entry of ["localhost", "http://127.0.0.1:8080", "nas.lan", "*.home.arpa", "http://192.168.1.10:8123"]) assert.equal(isLocalEntry(entry), true, entry);
+		for (const entry of ["api.example.com", "*.example.com", "not an entry"]) assert.equal(isLocalEntry(entry), false, entry);
+		assert.equal(localEntryAllows(["api.example.com", "http://127.0.0.1:8080"], new URL("http://127.0.0.1:8080/x")), true);
+		assert.equal(localEntryAllows(["api.example.com", "http://127.0.0.1:8080"], new URL("https://api.example.com/")), false);
 	});
 });

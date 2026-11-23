@@ -554,4 +554,26 @@ describe("core registry", () => {
 		assert.deepStrictEqual(registry.hostsOf(NEW_URL)?.hosts, ["a.com"]);
 		assert.deepStrictEqual(registry.info(NEW_URL)?.pending?.hostsAdded, ["evil.com"]);
 	});
+
+	it("disables migrated plugins that list local hosts until the user reviews them", async () => {
+		const OTHER = "https://example.com/other";
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["http://192.168.1.10:8123"] });
+		serve(OTHER, "w1", {}, { hosts: ["api.example.com"] });
+		const registry = createRegistry(deps);
+		await registry.migrate([
+			{ url: URL, name: "lan", enabled: true },
+			{ url: OTHER, name: "public", enabled: true },
+		]);
+		await assert.rejects(registry.load(URL), /lists local network hosts/);
+		assert.strictEqual(registry.isEnabled(URL), false);
+		assert.strictEqual(registry.hostsOf(URL), undefined);
+		// Public hosts give nothing compatibility mode doesn't: accepted as before
+		assert.strictEqual((await registry.load(OTHER)).package.hash, "w1");
+
+		const yes = asker(true);
+		assert.strictEqual(await registry.enable(URL, yes), true);
+		assert.ok(yes.asked[0].lines.some((line) => line.includes("http://192.168.1.10:8123")));
+		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["http://192.168.1.10:8123"]);
+	});
 });

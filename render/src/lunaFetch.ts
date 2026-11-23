@@ -10,7 +10,9 @@ import { LunaPlugin } from "./LunaPlugin";
 
 /**
  * fetch through Luna's main process, for the calling plugin: limited to the hosts in its package.json `hosts`, any public
- * host in compatibility mode (no `hosts`). Shown in Luna Settings > Network. No cookies are sent and CORS doesn't apply
+ * host in compatibility mode (no `hosts`). Shown in Luna Settings > Network. No cookies are sent and CORS doesn't apply.
+ * The whole body arrives at once (at most 32 MB); the request fails after 30 s without data. `init.signal` isn't passed on:
+ * aborting doesn't stop the request in the main process
  */
 export const lunaFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
 	// Before any await: the stack still holds the caller's frame

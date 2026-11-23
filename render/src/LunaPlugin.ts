@@ -588,8 +588,9 @@ export class LunaPlugin {
 	 */
 	public readonly pendingUpdate: Signal<PendingUpdate | undefined> = new Signal(undefined);
 	private setPendingUpdate(update: PendingUpdate | undefined) {
-		// The same update found again keeps its object
-		if (update?.hash === this.pendingUpdate._?.hash) return;
+		// The same update found again keeps its object. New hosts with the same code are another update
+		const current = this.pendingUpdate._;
+		if (update?.hash === current?.hash && JSON.stringify(update?.hosts) === JSON.stringify(current?.hosts)) return;
 		this.pendingUpdate._ = update;
 		if (update !== undefined) LunaPlugin.announceUpdate(this.name);
 	}

@@ -201,4 +201,77 @@ describe("luna.fetch", () => {
 			["https://public.example/"],
 		);
 	});
+
+	it("refuses a declared public name that resolves to a local address, not a declared local entry", async () => {
+		const lan = { name: "Lan", hosts: ["http://api.myplugin.dev", "http://127.0.0.1:8080", "nas.lan"] };
+		const resolved: Record<string, string[]> = { "api.myplugin.dev": ["192.168.1.1"], "nas.lan": ["192.168.1.2"] };
+		const { net, calls } = fakeNet(
+			{ "https://store/lan": lan },
+			{ "http://127.0.0.1:8080/": () => new Response("local"), "https://nas.lan/": () => new Response("nas") },
+			{ resolve: async (hostname) => resolved[hostname] ?? [] },
+		);
+		await assert.rejects(net.fetch("https://store/lan", "page", { url: "http://api.myplugin.dev/" }), /local address/);
+		assert.equal((await net.fetch("https://store/lan", "page", { url: "http://127.0.0.1:8080/" })).status, 200);
+		assert.equal((await net.fetch("https://store/lan", "page", { url: "https://nas.lan/" })).status, 200);
+		assert.deepEqual(
+			calls.map((call) => call.url),
+			["http://127.0.0.1:8080/", "https://nas.lan/"],
+		);
+	});
+
+	it("follows only redirect statuses, and drops the headers of an encoded body", async () => {
+		const { net, calls } = fakeNet(plugins, {
+			"https://a.org/": () => new Response(null, { status: 304, headers: { location: "https://b.org/" } }),
+			"https://a.org/gz": () => new Response("decoded", { headers: { "content-encoding": "gzip", "content-length": "3", "x-a": "b" } }),
+		});
+		const res = await net.fetch("https://store/compat", "page", { url: "https://a.org/" });
+		assert.equal(res.status, 304);
+		assert.equal(res.redirected, false);
+		assert.equal(calls.length, 1);
+		const gz = await net.fetch("https://store/compat", "page", { url: "https://a.org/gz" });
+		assert.deepEqual(
+			gz.headers.map(([name]) => name).filter((name) => name !== "content-type"),
+			["x-a"],
+		);
+	});
+
+	it("times out when no data arrives for timeoutMs, not after a fixed total", async () => {
+		const slow = (chunks: number, gapMs: number) => () =>
+			new Response(
+				new ReadableStream({
+					async start(controller) {
+						for (let i = 0; i < chunks; i++) {
+							await new Promise((res) => setTimeout(res, gapMs));
+							controller.enqueue(new Uint8Array([i]));
+						}
+						controller.close();
+					},
+				}),
+			);
+		const { net } = fakeNet(
+			plugins,
+			{ "https://a.org/steady": slow(6, 30), "https://a.org/stalled": slow(1, 300) },
+			{
+				timeoutMs: 100,
+				// Like fetch: the body stream fails once the signal aborts
+				fetch: async (url, init) => {
+					const res = (url.endsWith("steady") ? slow(6, 30) : slow(1, 300))();
+					const reader = res.body!.getReader();
+					return new Response(
+						new ReadableStream({
+							async pull(controller) {
+								const aborted = new Promise<never>((_, rej) => init.signal.addEventListener("abort", () => rej(init.signal.reason)));
+								const { done, value } = await Promise.race([reader.read(), aborted]);
+								if (done) controller.close();
+								else controller.enqueue(value);
+							},
+						}),
+					);
+				},
+			},
+		);
+		// 6 chunks 30 ms apart: 180 ms in all, never 100 ms without data
+		assert.equal((await net.fetch("https://store/compat", "page", { url: "https://a.org/steady" })).body.byteLength, 6);
+		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://a.org/stalled" }), /No answer/);
+	});
 });

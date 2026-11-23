@@ -10,7 +10,7 @@ import { createHash } from "crypto";
 
 import type { ConfirmRequest } from "./confirmPage";
 import { parseBundle, worldFilePrefix } from "../worldBundle";
-import { declaredHosts, hostsDiff, sameHosts } from "./hosts";
+import { declaredHosts, hostsDiff, isLocalEntry, sameHosts } from "./hosts";
 import { isCoreUrl, isDevUrl, nativesDiff } from "./policy";
 
 // #region Types
@@ -125,6 +125,8 @@ const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
 	version.package.worldHash === pkg.worldHash &&
 	sameHosts(version.package.hosts, pkg.hosts);
 const hostsOfVersion = (version: Version | undefined) => (version === undefined ? undefined : declaredHosts(version.package.hosts)?.hosts);
+/** The version lists a local host (`localhost`, `nas.lan`): luna.fetch may reach it, which compatibility mode refuses */
+const hasLocalHosts = (version: Version) => (hostsOfVersion(version) ?? []).some(isLocalEntry);
 
 /** What the confirmation says about a version's network hosts */
 const describeHosts = (version: Version): string[] => {
@@ -283,12 +285,14 @@ export const createRegistry = (deps: RegistryDeps) => {
 			const pkg = await deps.fetchPackage(url);
 			if (!sameVersion(record.accepted, pkg)) {
 				const version = sameVersion(record.pending, pkg) ? record.pending! : await fetchVersion(url, pkg);
-				if (record.accepted === undefined && record.unreviewed && isNative(version)) {
-					// Migrated native plugin: it runs only once the user enables it
+				if (record.accepted === undefined && record.unreviewed && (isNative(version) || hasLocalHosts(version))) {
+					// Migrated plugin with native code, or local hosts for luna.fetch (more than compatibility mode gives): it
+					// runs only once the user enables it
 					record.enabled = false;
 					record.pending = version;
 					await save();
-					throw new Error(`[Luna.core] ${record.name} has native code: enable it again in Luna Settings to review it`);
+					const what = isNative(version) ? "has native code" : "lists local network hosts";
+					throw new Error(`[Luna.core] ${record.name} ${what}: enable it again in Luna Settings to review it`);
 				}
 				if (record.accepted === undefined || isDevUrl(url)) {
 					accept(record, version);

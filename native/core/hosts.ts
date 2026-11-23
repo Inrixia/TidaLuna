@@ -30,6 +30,8 @@ export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	if (isIp && host.split(".").some((part) => Number(part) > 255)) return undefined;
 	// "localhost" is the one single-label name allowed; a wildcard needs a name of two labels or more under it
 	if (!isIp && host !== "localhost" && !dnsName.test(host)) return undefined;
+	// A name ending in a number is an IPv4 address to the URL parser: `*.1.1` would match 192.168.1.1
+	if (!isIp && /^(\d+|0x[\da-f]*)$/.test(host.slice(host.lastIndexOf(".") + 1))) return undefined;
 	if (star !== undefined && (isIp || host === "localhost")) return undefined;
 	if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return undefined;
 	const schemes = scheme === undefined ? defaultSchemes : [scheme];
@@ -86,6 +88,22 @@ export const hostAllowed = (hosts: string[], url: URL) =>
 	hosts.some((entry) => {
 		const rule = parseHostEntry(entry);
 		return rule !== undefined && ruleMatches(rule, url);
+	});
+
+/** The entry names a local address or name (`localhost`, `127.0.0.1`, `*.home.arpa`, `nas.lan`): the user sees that it's local */
+export const isLocalEntry = (entry: string) => {
+	const rule = parseHostEntry(entry);
+	return rule !== undefined && isLocalHost(rule.host);
+};
+
+/**
+ * A local entry of the list matches the url. Only such an entry lets luna.fetch reach a local address: a public name in
+ * the list that resolves to one is refused like in compatibility mode
+ */
+export const localEntryAllows = (hosts: string[], url: URL) =>
+	hosts.some((entry) => {
+		const rule = parseHostEntry(entry);
+		return rule !== undefined && isLocalHost(rule.host) && ruleMatches(rule, url);
 	});
 
 // Names only a local network answers for (RFC 6761/6762/8375 and common router defaults)

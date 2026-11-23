@@ -8,7 +8,7 @@
 //   another plugin or call the page's own fetch (the CSP report-only header, cspReportOnly.ts, logs those).
 //
 // Kept apart from Electron (its fetch and the registry come in as NetDeps) so it can be tested.
-import { hostAllowed, isLocalHost } from "./hosts";
+import { hostAllowed, isLocalHost, localEntryAllows } from "./hosts";
 
 export type NetRequest = {
 	url: string;
@@ -63,6 +63,8 @@ const logLimitPerPlugin = 100;
 /** Bucket of requests naming no enabled plugin (any page code can send them) */
 const unknownPlugin = "";
 const maxRedirects = 5;
+// The statuses fetch follows; a 304 or 300 with a Location is an answer, not a redirect
+const redirectStatuses = new Set([301, 302, 303, 307, 308]);
 const maxUrlLength = 8192;
 const methods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 // Not sent on to another origin after a redirect, as browsers do
@@ -88,8 +90,12 @@ export const createNet = (deps: NetDeps) => {
 	const refusal = async (plugin: NonNullable<PluginHosts>, url: URL): Promise<string | undefined> => {
 		if (!["http:", "https:"].includes(url.protocol)) return `${url.protocol} urls can't be fetched`;
 		if (url.username !== "" || url.password !== "") return "urls with credentials can't be fetched";
-		if (plugin.hosts !== undefined) return hostAllowed(plugin.hosts, url) ? undefined : `${url.host} is not in the hosts of ${plugin.name}`;
-		const local = `${url.hostname} is a local address: ${plugin.name} must list it in its hosts`;
+		if (plugin.hosts !== undefined) {
+			if (!hostAllowed(plugin.hosts, url)) return `${url.host} is not in the hosts of ${plugin.name}`;
+			// A local entry the user saw ("localhost", "nas.lan") may reach a local address; a public one may not
+			if (localEntryAllows(plugin.hosts, url)) return undefined;
+		}
+		const local = `${url.hostname} is a local address: ${plugin.name} must list it in its hosts as a local entry`;
 		if (isLocalHost(url.hostname)) return local;
 		if (deps.resolve !== undefined && !isIpLiteral(url.hostname)) {
 			const addresses = await deps.resolve(url.hostname).catch(() => []);
@@ -98,7 +104,7 @@ export const createNet = (deps: NetDeps) => {
 		return undefined;
 	};
 
-	const readBody = async (res: Response, maxBytes: number) => {
+	const readBody = async (res: Response, maxBytes: number, alive: () => void) => {
 		if (res.body === null) return new Uint8Array();
 		const chunks: Uint8Array[] = [];
 		let size = 0;
@@ -106,6 +112,7 @@ export const createNet = (deps: NetDeps) => {
 		for (;;) {
 			const { done, value } = await reader.read();
 			if (done) break;
+			alive();
 			size += value.byteLength;
 			if (size > maxBytes) {
 				await reader.cancel().catch(() => {});
@@ -162,14 +169,24 @@ export const createNet = (deps: NetDeps) => {
 
 		entry.allowed = true;
 		record(entry, true);
-		const signal = AbortSignal.timeout(deps.timeoutMs ?? 30000);
+		// Times out when nothing arrives for timeoutMs (no answer, or a download that stalls), not after a fixed total
+		const controller = new AbortController();
+		const timeoutMs = deps.timeoutMs ?? 30000;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const alive = () => {
+			clearTimeout(timer);
+			timer = setTimeout(() => controller.abort(new Error(`No answer for ${timeoutMs / 1000} s`)), timeoutMs);
+		};
+		alive();
+		const { signal } = controller;
 		try {
 			let currentMethod = method;
 			let currentBody = body;
 			for (let hop = 0; ; hop++) {
 				const res = await deps.fetch(url.href, { method: currentMethod, headers: { ...headers }, body: currentBody, redirect: "manual", signal });
+				alive();
 				const location = res.headers.get("location");
-				if (res.status >= 300 && res.status < 400 && location !== null) {
+				if (redirectStatuses.has(res.status) && location !== null) {
 					await res.body?.cancel().catch(() => {});
 					if (hop >= maxRedirects) throw new Error(`More than ${maxRedirects} redirects`);
 					const from = url;
@@ -191,18 +208,22 @@ export const createNet = (deps: NetDeps) => {
 					continue;
 				}
 				entry.status = res.status;
+				// fetch decodes gzip/br/deflate bodies but keeps the headers of the encoded one
+				const decoded = res.headers.has("content-encoding");
 				return {
 					status: res.status,
 					statusText: res.statusText,
 					url: url.href,
 					redirected: hop !== 0,
-					headers: [...res.headers],
-					body: await readBody(res, deps.maxBytes ?? 32 * 1024 * 1024),
+					headers: [...res.headers].filter(([name]) => !(decoded && (name === "content-encoding" || name === "content-length"))),
+					body: await readBody(res, deps.maxBytes ?? 32 * 1024 * 1024, alive),
 				};
 			}
 		} catch (err) {
 			entry.error = String((err as Error)?.message ?? err).slice(0, 300);
 			throw err;
+		} finally {
+			clearTimeout(timer);
 		}
 	};
 
