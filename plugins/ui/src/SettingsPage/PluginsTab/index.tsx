@@ -11,9 +11,9 @@ import { installedPlugins, matchingPluginNames, watchInstalledPlugins } from "./
 export const PluginsTab = React.memo(() => {
 	const [query, setQuery] = React.useState("");
 	const [descending, setDescending] = React.useState(false);
-	const readInstalled = () => installedPlugins(Object.values(LunaPlugin.plugins), LunaPlugin.corePlugins, descending);
+	const readInstalled = () => installedPlugins(Object.values(LunaPlugin.plugins), descending);
 	const [eligible, setEligible] = React.useState(readInstalled);
-	React.useEffect(() => watchInstalledPlugins(LunaPlugin.plugins, LunaPlugin.corePlugins, descending, setEligible), [descending]);
+	React.useEffect(() => watchInstalledPlugins(LunaPlugin.plugins, descending, setEligible), [descending]);
 	if (!eligible.length) return "You have no plugins installed!";
 	const visible = matchingPluginNames(eligible, query);
 	return (
