@@ -46,13 +46,12 @@ export type CoreRecord = {
 };
 /**
  * A plugin installed before Luna core whose natives the page registers (the old format, without isolation). Only
- * migrate writes entries; the first version accepted after it pins `codeSha256`, and any other accepted code, an
- * uninstall or a move to other code removes the entry for good.
+ * migrate writes entries, pinned to the code the page had stored; accepting any other code, or an uninstall, removes
+ * the entry for good.
  */
 export type LegacyEntry = {
-	/** package.hash the page had stored: a first version with another hash isn't the one installed before */
-	hash?: string;
-	codeSha256?: string;
+	/** sha256 of the code the page had stored, without its sourceURL line (see codeIdentity) */
+	sourceSha256: string;
 };
 export type CoreState = { version: 1; plugins: Record<string, CoreRecord>; legacy?: Record<string, LegacyEntry> };
 export type PendingUpdate = {
@@ -82,6 +81,9 @@ export type Ask = (request: ConfirmRequest) => Promise<boolean>;
 export type RegistryDeps = {
 	/** The stored state, or null if none was stored yet */
 	read(): CoreState | null;
+	/** The page handed over its plugins once already (kept apart from the state: a lost state file doesn't allow another) */
+	wasMigrated?(): boolean;
+	markMigrated?(): void | Promise<void>;
 	write(state: CoreState): void | Promise<void>;
 	fetchPackage(url: string): Promise<PluginPackage>;
 	fetchCode(url: string): Promise<string>;
@@ -105,6 +107,8 @@ const withoutSource = (code: string, url: string) => {
 	const suffix = `\n//# sourceURL=${url}.mjs`;
 	return code.endsWith(suffix) ? code.slice(0, -suffix.length) : code;
 };
+/** The code whatever url served it: the sourceURL line fetchCode (and the page before Luna core) adds names the url */
+const codeIdentity = (code: string) => sha256(code.replace(/\n\/\/# sourceURL=[^\n]*$/, ""));
 const isNative = (version: Version) => version.natives.length !== 0;
 /** A new hash of either the page code or the world is a new version */
 const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
@@ -149,8 +153,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const stored = deps.read();
 	const state: CoreState =
 		stored?.version === 1 && typeof stored.plugins === "object" && stored.plugins !== null ? stored : { version: 1, plugins: {} };
-	/** No state was stored yet: the page may hand over what it had stored, once (see migrate) */
-	let fresh = state !== stored;
+	/** No state was stored yet and the page never handed over its plugins: it may, once (see migrate) */
+	let fresh = state !== stored && deps.wasMigrated?.() !== true;
 	const legacy = (state.legacy ??= {});
 	let saving: Promise<unknown> = Promise.resolve();
 	const save = () => (saving = saving.then(() => deps.write(state)).catch((err) => deps.log?.(`[Luna.core] Failed to save: ${err}`)));
@@ -183,28 +187,23 @@ export const createRegistry = (deps: RegistryDeps) => {
 
 	// #region Old native format (see LegacyEntry): the list only shrinks
 	/** Old-format natives of this accepted version run: a dev url, or the version pinned for a plugin installed before Luna core */
+	const identities = new WeakMap<Version, string>();
+	const identityOf = (version: Version) => {
+		let found = identities.get(version);
+		if (found === undefined) identities.set(version, (found = codeIdentity(version.code)));
+		return found;
+	};
 	const legacyRuns = (url: string, version: Version | undefined) =>
-		isDevUrl(url) || (version !== undefined && legacy[url]?.codeSha256 !== undefined && legacy[url].codeSha256 === version.codeSha256);
+		isDevUrl(url) || (version !== undefined && legacy[url] !== undefined && legacy[url].sourceSha256 === identityOf(version));
 	const dropLegacy = (url: string, why: string) => {
 		if (legacy[url] === undefined) return;
 		delete legacy[url];
 		deps.log?.(`[Luna.core] ${url} is off the old native format list: ${why}`);
 	};
-	/** The only way a version becomes accepted: pins the first one of a listed plugin, drops the entry for any other */
+	/** The only way a version becomes accepted: any code but the one the page had stored drops the plugin's entry */
 	const accept = (record: CoreRecord, version: Version) => {
 		record.accepted = version;
-		const entry = legacy[record.url];
-		if (entry === undefined) return;
-		if (entry.codeSha256 === undefined && (entry.hash === undefined || entry.hash === version.package.hash)) entry.codeSha256 = version.codeSha256;
-		else if (entry.codeSha256 !== version.codeSha256) dropLegacy(record.url, "its code changed");
-	};
-	/** For a first review (enable): would accepting this version keep the old format running? */
-	const legacyWouldRun = (record: CoreRecord, version: Version) => {
-		const entry = legacy[record.url];
-		return (
-			isDevUrl(record.url) ||
-			(entry !== undefined && entry.codeSha256 === undefined && (entry.hash === undefined || entry.hash === version.package.hash))
-		);
+		if (legacy[record.url] !== undefined && !legacyRuns(record.url, version)) dropLegacy(record.url, "its code changed");
 	};
 	// #endregion
 
@@ -284,7 +283,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		const version = (record.accepted ?? record.pending)!;
 		// Enabling plain page code gives the page nothing it doesn't have: only native plugins (and first reviews) ask
 		if (isNative(version) || record.accepted === undefined) {
-			const lines = describe(url, version, record.accepted === undefined ? legacyWouldRun(record, version) : legacyRuns(url, version));
+			const lines = describe(url, version, legacyRuns(url, version));
 			if (!(await ask({ title: `Enable ${record.name}?`, lines, confirmText: "Enable" }))) return false;
 		}
 		if (record.accepted === undefined) {
@@ -383,13 +382,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 		)
 			moved.accepted = found;
 		else if (found !== undefined && accepted !== undefined) moved.pending = found;
-		// The entry moves with the record, never grows: pinned to the same code at its new url (its sourceURL names the url)
+		// The entry moves with the record, pinned to the same code: other code at the new url drops it once accepted
 		const entry = legacy[from];
-		const runs = legacyRuns(from, accepted);
 		delete legacy[from];
-		if (entry !== undefined && moved.accepted !== undefined && runs) legacy[to] = { ...entry, codeSha256: moved.accepted.codeSha256 };
-		// Not reviewed yet: the first version accepted at the new url is pinned (or drops it) as at the old one
-		else if (entry !== undefined && accepted === undefined) legacy[to] = entry;
+		if (entry !== undefined) legacy[to] = entry;
 		delete state.plugins[from];
 		state.plugins[to] = moved;
 		await save();
@@ -403,13 +399,16 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (!fresh || !Array.isArray(entries)) return;
 		fresh = false;
 		for (const entry of entries) {
-			const { url, name, enabled, hash } = entry ?? {};
+			const { url, name, enabled, code } = entry ?? {};
 			if (typeof url !== "string" || !/^https?:\/\//.test(url) || isCoreUrl(url) || typeof name !== "string") continue;
+			// Installed through the core already: not a plugin from before it
+			if (state.plugins[url] !== undefined) continue;
 			state.plugins[url] = { url, name, enabled: enabled === true, unreviewed: true };
-			// Installed before Luna core: its natives may keep the old format until its code changes (see LegacyEntry)
-			legacy[url] = typeof hash === "string" ? { hash } : {};
+			// Installed before Luna core: its natives keep the old format while it runs the code the page had (see LegacyEntry)
+			if (typeof code === "string") legacy[url] = { sourceSha256: codeIdentity(code) };
 		}
 		await save();
+		await deps.markMigrated?.();
 	};
 
 	const holdsNative = (record: CoreRecord | undefined, fileName: string, code: string): record is CoreRecord & { accepted: Version } =>

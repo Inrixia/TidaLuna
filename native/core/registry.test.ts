@@ -61,7 +61,7 @@ const fakeDeps = (state: CoreState | null = null) => {
  * fresh registry and `url` served at `hash`
  */
 const installLegacy = async (registry: ReturnType<typeof createRegistry>, url: string, hash: string) => {
-	await registry.migrate([{ url, name: "legacy", enabled: true, hash }]);
+	await registry.migrate([{ url, name: "legacy", enabled: true, code: `code ${hash}` }]);
 	await registry.load(url).catch(() => {});
 	assert.strictEqual(await registry.enable(url, asker(true)), true);
 };
@@ -214,7 +214,7 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		assert.strictEqual(registry.needsMigration(), true);
 		await registry.migrate([
-			{ url: URL, name: "native", enabled: true },
+			{ url: URL, name: "native", enabled: true, code: "code v1" },
 			{ url: DEV_URL, name: "plain", enabled: true },
 			{ url: "https://luna/core", name: "core", enabled: true },
 		]);
@@ -241,6 +241,65 @@ describe("core registry", () => {
 		assert.strictEqual(registry.needsMigration(), false);
 		await registry.migrate([{ url: URL, name: "x", enabled: true }]);
 		assert.strictEqual(registry.info(URL), undefined);
+	});
+
+	it("doesn't migrate again once the page handed its plugins over, though the state file is gone", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		let migrated = false;
+		const marked = { ...deps, wasMigrated: () => migrated, markMigrated: () => void (migrated = true) };
+		await createRegistry(marked).migrate([{ url: "https://example.org/old", name: "old", enabled: true }]);
+		assert.strictEqual(migrated, true);
+		// The state file lost (read gives null again): no second hand-over
+		const registry = createRegistry(marked);
+		assert.strictEqual(registry.needsMigration(), false);
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true, code: "code v1" }]);
+		assert.strictEqual(registry.info(URL), undefined);
+	});
+
+	it("migrates no plugin the core installed already, nor lists it for the old native format", async () => {
+		const { deps, serve, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true, code: "code v1" }]);
+		assert.deepStrictEqual(writes.at(-1)?.legacy, {});
+		assert.strictEqual(registry.info(URL)?.legacyNatives, "refused");
+	});
+
+	it("pins the old native format to the stored code whatever url its sourceURL line names", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true, code: "code v1\n//# sourceURL=https://old.example/plugin.mjs" }]);
+		await registry.load(URL).catch(() => {});
+		assert.strictEqual(await registry.enable(URL, asker(true)), true);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+	});
+
+	it("moves an old-format plugin not reviewed yet with its pin: only the stored code runs at the new url", async () => {
+		const NEW_URL = "https://example.org/plugin";
+		const OTHER_URL = "https://example.net/plugin";
+		const { deps, serve, served, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await registry.migrate([
+			{ url: URL, name: "legacy", enabled: true, code: "code v1" },
+			{ url: OTHER_URL + "/old", name: "other", enabled: true, code: "code v1" },
+		]);
+		served.set(NEW_URL, served.get(URL)!);
+		assert.strictEqual(await registry.moveUrl(URL, NEW_URL), true);
+		await registry.load(NEW_URL).catch(() => {});
+		assert.strictEqual(await registry.enable(NEW_URL, asker(true)), true);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), NEW_URL);
+
+		// Other code at the new url: the entry moves, but it doesn't run and drops once accepted
+		serve(OTHER_URL, "v2", { "b.native.ts": "native b" });
+		assert.strictEqual(await registry.moveUrl(OTHER_URL + "/old", OTHER_URL), true);
+		await registry.load(OTHER_URL).catch(() => {});
+		assert.strictEqual(await registry.enable(OTHER_URL, asker(true)), true);
+		assert.strictEqual(registry.nativeOwner("b.native.ts", "native b"), undefined);
+		assert.deepStrictEqual(Object.keys(writes.at(-1)?.legacy ?? {}), [NEW_URL]);
 	});
 
 	it("reads an accepted bundle's native files once, however often they are checked", async () => {
@@ -330,7 +389,7 @@ describe("core registry", () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		const registry = createRegistry(deps);
-		await registry.migrate([{ url: URL, name: "legacy", enabled: true, hash: "v1" }]);
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true, code: "code v1" }]);
 		await registry.load(URL).catch(() => {});
 		const ask = asker(true);
 		await registry.enable(URL, ask);
@@ -369,7 +428,7 @@ describe("core registry", () => {
 
 		await registry.install(OTHER, asker(true));
 		// migrate runs once: a later call (page code) adds nothing
-		await registry.migrate([{ url: OTHER, name: "other", enabled: true, hash: "o1" }]);
+		await registry.migrate([{ url: OTHER, name: "other", enabled: true, code: "code o1" }]);
 		assert.deepStrictEqual(listed(), [URL]);
 		assert.strictEqual(registry.nativeOwner("o.native.ts", "native o"), undefined);
 
@@ -407,7 +466,7 @@ describe("core registry", () => {
 		// The url already serves a newer version than the one installed before
 		serve(URL, "v2", { "a.native.ts": "native a2" });
 		const registry = createRegistry(deps);
-		await registry.migrate([{ url: URL, name: "legacy", enabled: true, hash: "v1" }]);
+		await registry.migrate([{ url: URL, name: "legacy", enabled: true, code: "code v1" }]);
 		await registry.load(URL).catch(() => {});
 		const ask = asker(true);
 		assert.strictEqual(await registry.enable(URL, ask), true);

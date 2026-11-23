@@ -14,7 +14,7 @@ import { BrowserWindow } from "electron";
 
 import { createHash } from "crypto";
 
-import { onPluginStopped, registry } from "./core/registryMain";
+import { onPluginChanged, registry } from "./core/registryMain";
 import { ipcHandle } from "./ipc";
 import { isIsolated } from "./isolatedContents";
 import { secureLoad } from "./NativeModule/secureLoad";
@@ -40,6 +40,8 @@ const nextGeneration = (url: string) => {
 	return generation;
 };
 
+/** The accepted world text whose natives a url's last finished load put in `luna.modules` */
+const filledFrom = new Map<string, string>();
 /** Takes a url's world natives out of `luna.modules` (other natives import them by name). `keep`: names its new load still has */
 const releaseModules = (url: string, keep: ReadonlySet<string> = new Set()) => {
 	for (const [fileName, owner] of moduleOwners) {
@@ -47,10 +49,16 @@ const releaseModules = (url: string, keep: ReadonlySet<string> = new Set()) => {
 		moduleOwners.delete(fileName);
 		delete globalThis.luna.modules[fileName];
 	}
+	if (keep.size === 0) filledFrom.delete(url);
 };
-// Disabled or uninstalled: nothing of its world stays reachable, and a load of it still running fills nothing
-onPluginStopped((url) => {
-	nextGeneration(url);
+// Disabled, uninstalled, updated or moved away: nothing of a world that isn't the accepted one stays reachable, and a
+// load of it still running fills nothing
+onPluginChanged((url) => {
+	const accepted = registry().acceptedWorld(url);
+	if (accepted === undefined) nextGeneration(url);
+	const filled = filledFrom.get(url);
+	// Nothing filled yet: a load still running checks the accepted world itself before filling
+	if (filled === undefined || filled === accepted) return;
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
 	releaseModules(url);
 });
@@ -107,6 +115,11 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 		}
 		// Natives an earlier version had and this one dropped
 		releaseModules(url, new Set(Object.keys(bundle.natives)));
+		filledFrom.set(url, accepted);
+	} catch (err) {
+		// The latest load failed: natives of an earlier one don't stay importable (their channels already closed above)
+		if (generations.get(url) === generation) releaseModules(url);
+		throw err;
 	} finally {
 		const left = (loadsInFlight.get(url) ?? 1) - 1;
 		if (left > 0) loadsInFlight.set(url, left);

@@ -234,8 +234,8 @@ export class LunaPlugin {
 								url: value.url,
 								name: typeof value.package?.name === "string" ? value.package.name : key,
 								enabled: value.enabled === true,
-								// The version installed before Luna core: only it keeps the old native format (registry.ts LegacyEntry)
-								hash: typeof value.package?.hash === "string" ? value.package.hash : undefined,
+								// The code installed before Luna core: only it keeps the old native format (registry.ts LegacyEntry)
+								code: typeof value.package?.code === "string" ? value.package.code : undefined,
 							},
 						]
 					: [],
