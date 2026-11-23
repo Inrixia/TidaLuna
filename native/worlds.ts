@@ -30,6 +30,8 @@ let nextWorldId = 1001;
 const owned = new Map<string, { exports: Record<string, unknown>; world: string }>();
 
 const ownedKey = (url: string, fileName: string) => `${url}\n${fileName}`;
+// Loads of each url still running: a url's names are freed only once none of them is
+const loadsInFlight = new Map<string, number>();
 
 /**
  * Without contextIsolation the page shares the preload's realm and could send these channels itself, with any url:
@@ -53,8 +55,8 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 			throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} is already registered by Luna or another plugin`);
 	}
 	// Reserved now, before any wait: a page native or another world taking the same name meanwhile is refused
-	const reserved = Object.keys(bundle.natives).filter((fileName) => !moduleOwners.has(fileName));
-	for (const fileName of reserved) moduleOwners.set(fileName, url);
+	for (const fileName of Object.keys(bundle.natives)) moduleOwners.set(fileName, url);
+	loadsInFlight.set(url, (loadsInFlight.get(url) ?? 0) + 1);
 
 	// Natives of an earlier load of this url can't be called any more, whatever happens below
 	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
@@ -70,14 +72,23 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 				{ fileName: worldFilePrefix + fileName, code, hash: sha256(`${code}\0${worldHash}`), url, isCore: false, world: { nativeHash } },
 				parent,
 			);
+			if ((moduleOwners.get(fileName) ?? url) !== url)
+				throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} was taken by another plugin while loading`);
+			moduleOwners.set(fileName, url);
 			owned.set(ownedKey(url, fileName), { exports, world: accepted });
 			// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
 			globalThis.luna.modules[fileName] = exports;
 		}
 	} catch (err) {
-		// Free the names this load reserved but never filled (refused or failed natives)
-		for (const fileName of reserved) if (globalThis.luna.modules[fileName] === undefined) moduleOwners.delete(fileName);
+		// Free this url's names that were never filled (refused or failed natives), unless another load of it still waits
+		if (loadsInFlight.get(url) === 1)
+			for (const fileName of Object.keys(bundle.natives))
+				if (moduleOwners.get(fileName) === url && globalThis.luna.modules[fileName] === undefined) moduleOwners.delete(fileName);
 		throw err;
+	} finally {
+		const left = (loadsInFlight.get(url) ?? 1) - 1;
+		if (left > 0) loadsInFlight.set(url, left);
+		else loadsInFlight.delete(url);
 	}
 
 	return { worldId: nextWorldId++, code: bundle.code };
