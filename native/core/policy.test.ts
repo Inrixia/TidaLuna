@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 
-import { boundedCache, coreNativeQuestion, coreNativeRule, isCoreUrl, isDevUrl, nativesDiff } from "./policy";
+import { boundedCache, compareVersions, coreNativeQuestion, coreNativeRule, isCoreUrl, isDevUrl, nativesDiff } from "./policy";
 
 describe("core policy", () => {
 	it("tells Luna's own urls apart", () => {
@@ -54,5 +54,20 @@ describe("core native rules", () => {
 		assert.equal(title, "Update Luna?");
 		assert.match(lines.join(" "), /1\.2\.3/);
 		assert.equal(confirmText, "Update");
+	});
+
+	it("shows the installed version and warns about a downgrade", () => {
+		const [, newer] = coreNativeQuestion("update", ["1.26.0"], "1.25.0-beta");
+		assert.match(newer.join(" "), /1\.25\.0-beta -> 1\.26\.0/);
+		assert.doesNotMatch(newer.join(" "), /older/);
+		const [, older] = coreNativeQuestion("update", ["1.24.3"], "1.25.0-beta");
+		assert.match(older.join(" "), /older than the installed version/);
+	});
+
+	it("orders release versions", () => {
+		assert.ok(compareVersions("1.25.0", "1.25.0-beta") > 0);
+		assert.ok(compareVersions("1.9.0", "1.10.0") < 0);
+		assert.ok(compareVersions("1.25.0-beta.2", "1.25.0-beta.10") < 0);
+		assert.equal(compareVersions("v1.2.3", "1.2.3"), 0);
 	});
 });

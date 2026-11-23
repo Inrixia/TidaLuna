@@ -36,6 +36,11 @@ export type NativeModuleInfo = {
 	isCore: boolean;
 };
 
+const installedVersion = async (pkg: () => Promise<{ version?: unknown }>): Promise<string | undefined> => {
+	const version = await pkg().then(({ version }) => version, () => undefined);
+	return typeof version === "string" ? version : undefined;
+};
+
 /** channel -> Luna's own native code loaded (or loading) for it */
 const coreLoads = new Map<string, { hash: string; done: Promise<string> }>();
 
@@ -89,7 +94,9 @@ const loadNative = async (event: Electron.IpcMainInvokeEvent, channel: string, m
 			const rule = coreNativeRule(String(exportName));
 			if (rule === "deny") throw new Error(`[🛑Security🛑] ${String(exportName)} can't be called from the page`);
 			if (rule === "confirm") {
-				const [title, lines, confirmText] = coreNativeQuestion(String(exportName), args);
+				// update.ts exports pkg: the installed version shows next to the one asked for
+				const current = exportName === "update" && typeof exports.pkg === "function" ? await installedVersion(exports.pkg) : undefined;
+				const [title, lines, confirmText] = coreNativeQuestion(String(exportName), args, current);
 				if (!(await askerFor(event.sender)({ title, lines, confirmText }))) throw new Error(`[Luna] ${String(exportName)} cancelled by the user`);
 			}
 		}

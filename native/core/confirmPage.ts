@@ -5,7 +5,10 @@ export type ConfirmRequest = { title: string; lines: string[]; confirmText: stri
 
 export const TITLE = "Luna";
 export const SUBMIT = "luna-core-confirm:";
-/** The confirm button stays disabled this long after the window shows: a click meant for TIDAL can't land on it */
+/**
+ * The confirm button stays disabled this long after the window shows or gets the focus back: a click meant for TIDAL or
+ * another window can't land on it
+ */
 export const ARM_DELAY_MS = 700;
 const MAX_LINES = 12;
 const MAX_TEXT = 600;
@@ -29,8 +32,8 @@ export type TidalState = {
 
 /**
  * Decides whether a confirmation may open (confirmWindow.ts). Page code can ask for confirmations through the core
- * (installs, enables, updates), so it must not be able to fill the queue, pop windows while the user is elsewhere, or
- * show a new one after every cancel.
+ * (installs, enables, updates, and the core natives in policy.ts), so it must not be able to fill the queue, pop windows while the user is
+ * elsewhere, or show a new one after every cancel.
  */
 export const confirmGate = () => {
 	let pending = 0;
@@ -125,8 +128,9 @@ document.getElementById("cancel").addEventListener("click", () => submit("no"));
 confirmButton.addEventListener("click", () => submit("yes"));
 document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
 document.getElementById("cancel").focus();
-// Armed by main once the window shows (see ARM_DELAY_MS)
+// Armed by main once the window shows or gets the focus back, disarmed when it loses it (see ARM_DELAY_MS)
 window.arm = () => (confirmButton.disabled = false);
+window.disarm = () => (confirmButton.disabled = true);
 </script>
 </body>
 </html>`;
