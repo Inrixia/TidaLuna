@@ -438,6 +438,12 @@ export class LunaPlugin {
 	private importing?: Map<LunaPlugin, number>;
 	/** Counts this plugin's unloads, so a dependant can tell its dependency was unloaded while it was imported */
 	private unloadCount = 0;
+	/** The enabled plugin, not loaded, that an import failed to find in luna.core.modules (the build/index.ts shim's error), if any */
+	private static missingDependencyOf(err: unknown): LunaPlugin | undefined {
+		const name = /^Cannot find module (.+) in luna\.core\.modules$/.exec((<any>err)?.message ?? "")?.[1];
+		const plugin = name === undefined ? undefined : LunaPlugin.getByName(name);
+		return plugin?.enabled && plugin.installed !== false && plugin.exports === undefined ? plugin : undefined;
+	}
 	/**
 	 * Another enabled plugin that `dependant` depends on and that has not finished loading, if any.
 	 * That plugin will load `dependant` itself once its own exports are available.
@@ -999,7 +1005,10 @@ export class LunaPlugin {
 			}
 			// A dependency unloaded during the import: running now would keep the exports it unloaded. It loads this plugin once it loads again
 			// (a dependency reloaded meanwhile already queued that load)
-			const dependency = [...imported].find(([plugin, count]) => plugin.unloadCount !== count || plugin.exports === undefined)?.[0];
+			// (also one still unloading: its exports were still there, but its dependants loop may have run before this plugin registered)
+			const dependency = [...imported].find(
+				([plugin, count]) => plugin.unloadCount !== count || plugin.unloading !== undefined || plugin.exports === undefined,
+			)?.[0];
 			if (dependency !== undefined) {
 				await this.unload();
 				this.loadError._ =
@@ -1027,12 +1036,23 @@ export class LunaPlugin {
 				dependant.load().catch(this.trace.err.withContext(`Failed to load dependant ${dependant.name} of plugin ${this.name}`));
 			}
 		} catch (err) {
-			// Set loadError for anyone listening
-			this.loadError._ = (<any>err)?.message ?? err?.toString();
-			// Notify users
-			this.trace.msg.err.withContext(`Failed to load`)(err);
 			// Ensure we arnt partially loaded
-			await this.unload();
+			const missing = LunaPlugin.missingDependencyOf(err);
+			if (missing !== undefined) {
+				// A dependency that stopped (revoked or disabled) before this import reached it: wait for it as a dependant, it loads this
+				// plugin once it loads again (its loop removed this plugin from its dependants before loading it)
+				await this.unload();
+				missing.addDependant(this);
+				this.loadError._ =
+					missing.revoked._ !== undefined ? `Not running: it depends on ${missing.name}, which the Luna plugin registry revoked` : undefined;
+				this.trace.log(`Waiting for ${missing.name}, which is not loaded`);
+			} else {
+				// Set loadError for anyone listening
+				this.loadError._ = (<any>err)?.message ?? err?.toString();
+				// Notify users
+				this.trace.msg.err.withContext(`Failed to load`)(err);
+				await this.unload();
+			}
 			// An accepted update that fails to load waits again, the version the user had is the one stored (and runs on the next load)
 			if (replaced !== undefined && update !== undefined && this.package?.hash === update.hash) {
 				if (replaced.previous !== undefined) this.package = replaced.previous;
