@@ -79,6 +79,12 @@ export class SettingsTransfer
 		{
 			try
 			{
+				// Exported disabled and already installed: installing would enable it (and ask) only to disable it again
+				if (!enabled && (await __LunaCore.info(url)) !== undefined)
+				{
+					await __LunaCore.disable(url);
+					continue;
+				}
 				// One window at a time: the user's answer lets the next one open (see confirmGate)
 				if (!(await __LunaCore.install(url)))
 				{

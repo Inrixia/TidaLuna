@@ -374,6 +374,18 @@ describe("core registry", () => {
 		assert.ok(registry.info(NEW_URL)?.pending !== undefined);
 	});
 
+	it("drops a waiting update the url no longer serves", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serve(URL, "v2");
+		assert.strictEqual((await registry.load(URL)).pending?.hash, "v2");
+		serve(URL, "v1");
+		assert.strictEqual((await registry.load(URL)).pending, undefined);
+		assert.strictEqual(registry.info(URL)?.pending, undefined);
+	});
+
 	it("doesn't move to or from a dev url, nor over an installed plugin", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1");
