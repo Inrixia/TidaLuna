@@ -10,7 +10,7 @@ import { useRegistry } from "./RegistryBadge";
 /** The registry lists in use, for the banner: which serial, and why a fresh one wasn't used */
 const describeStatus = (fileName: string, status: RegistryFileStatus) => {
 	if (status.source === "none") return `${fileName}: not available${status.error ? ` (${status.error})` : ""}`;
-	const copy = status.source === "fetched" ? "fetched now" : "last good copy";
+	const copy = status.source === "fetched" ? "fetched this session" : "last good copy";
 	return `${fileName}: #${status.serial}, ${copy}${status.error ? ` (newer copy not used: ${status.error})` : ""}`;
 };
 
@@ -45,10 +45,19 @@ export const UnverifiedBanner = React.memo(() => {
 	);
 	const unverified = unverifiedPlugins(plugins, verified, revoked);
 	const lists = `Plugin registry: ${describeStatus("verified.json", status["verified.json"])}; ${describeStatus("revoked.json", status["revoked.json"])}.`;
+	// A blocked or failing fetch must not pass quietly: revocations published since the copy in use don't apply
+	const stale = status["revoked.json"].error !== undefined && (
+		<div style={{ fontWeight: "bold", marginTop: 4 }}>
+			{status["revoked.json"].source === "none"
+				? "Could not get the list of revoked plugins, so no revocations apply."
+				: `Could not get the latest list of revoked plugins, using #${status["revoked.json"].serial}${status["revoked.json"].generated ? ` from ${status["revoked.json"].generated.slice(0, 10)}` : ""}. Plugins revoked since then still run.`}
+		</div>
+	);
 	if (unverified.length === 0)
 		return (
-			<Alert severity="success" variant="filled">
+			<Alert severity={stale ? "warning" : "success"} variant="filled">
 				All enabled plugins are verified by the Luna plugin registry.
+				{stale}
 				<Lists text={lists} />
 			</Alert>
 		);
@@ -59,6 +68,7 @@ export const UnverifiedBanner = React.memo(() => {
 			</b>
 			: {unverified.map((plugin) => plugin.name).join(", ")}. All plugins run in the same page with full access to TIDAL and to each other, so an
 			unverified plugin can also change what verified plugins do.
+			{stale}
 			<Lists text={lists} />
 		</Alert>
 	);

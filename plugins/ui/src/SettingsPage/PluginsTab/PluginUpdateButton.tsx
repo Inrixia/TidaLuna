@@ -9,13 +9,15 @@ import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
-import { RegistryBadge, registryEntryOf } from "./RegistryBadge";
+import { RegistryBadge, registryEntryOf, useRegistry } from "./RegistryBadge";
 
 /** First 12 hex digits, enough to tell versions apart and compare with a published hash */
 const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slice(0, 12));
 
 /** What the plugin registry says about the new version's exact code (its raw sha256, the registry's key) */
 const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
+	// Follows the lists while the dialog is open: a revocation that arrives now shows here (and acceptUpdate refuses it)
+	useRegistry();
 	const entry = registryEntryOf(plugin, update.rawSha256);
 	const title = `sha256 of the ${update.version ?? "new"} .mjs (the registry's key): ${update.rawSha256 ?? "?"}`;
 	if (entry?.revoked !== undefined)
@@ -101,7 +103,7 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			// The update the user was shown, even if a newer one arrived meanwhile
 			await plugin.acceptUpdate(update);
 		} catch {
-			// The plugin shows its load error on its card
+			// Already shown: a load error on the plugin's card, a refused (revoked) version in a message
 		} finally {
 			setUpdating(false);
 		}
