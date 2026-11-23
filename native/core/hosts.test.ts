@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { cspSources, declaredHosts, hostAllowed, hostsDiff, isLocalEntry, isLocalHost, localEntryAllows, parseHostEntry, sameHosts } from "./hosts";
+import {
+	cspSources,
+	declaredHosts,
+	hostAllowed,
+	hostsDiff,
+	isLocalEntry,
+	isLocalHost,
+	localEntryAllows,
+	parseHostEntry,
+	sameHosts,
+} from "./hosts";
 
 const allowed = (hosts: string[], url: string) => hostAllowed(hosts, new URL(url));
 
@@ -108,9 +118,30 @@ describe("plugin hosts", () => {
 	});
 
 	it("tells local entries apart: only they let luna.fetch reach a local address", () => {
-		for (const entry of ["localhost", "http://127.0.0.1:8080", "nas.lan", "*.home.arpa", "http://192.168.1.10:8123"]) assert.equal(isLocalEntry(entry), true, entry);
+		for (const entry of ["localhost", "http://127.0.0.1:8080", "nas.lan", "*.home.arpa", "http://192.168.1.10:8123"])
+			assert.equal(isLocalEntry(entry), true, entry);
 		for (const entry of ["api.example.com", "*.example.com", "not an entry"]) assert.equal(isLocalEntry(entry), false, entry);
 		assert.equal(localEntryAllows(["api.example.com", "http://127.0.0.1:8080"], new URL("http://127.0.0.1:8080/x")), true);
 		assert.equal(localEntryAllows(["api.example.com", "http://127.0.0.1:8080"], new URL("https://api.example.com/")), false);
+	});
+
+	it("refuses leading zeros, which the URL parser reads another way", () => {
+		for (const entry of ["010.0.0.1", "10.0.0.01", "a.com:08080"]) assert.equal(parseHostEntry(entry), undefined, entry);
+		assert.ok(parseHostEntry("10.0.0.1"));
+		assert.ok(parseHostEntry("a.com:8080"));
+	});
+
+	it("finds IPv4 addresses inside IPv6 ones, as the URL parser writes them", () => {
+		for (const url of [
+			"http://[::127.0.0.1]/",
+			"http://[64:ff9b::192.168.1.1]/",
+			"http://[2002:c0a8:101::1]/",
+			"http://198.18.0.1/",
+			"http://0/",
+			"http://[::ffff:7f00:1]/",
+		])
+			assert.equal(isLocalHost(new URL(url).hostname), true, url);
+		for (const url of ["http://[64:ff9b::8.8.8.8]/", "http://[2002:808:808::]/", "http://[2001:db8::1]/", "http://198.20.0.1/"])
+			assert.equal(isLocalHost(new URL(url).hostname), false, url);
 	});
 });

@@ -27,13 +27,14 @@ export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	const [, scheme, star, host, port] = match;
 	if (scheme !== undefined && !schemesAllowed.has(scheme)) return undefined;
 	const isIp = ipv4.test(host);
-	if (isIp && host.split(".").some((part) => Number(part) > 255)) return undefined;
+	// The URL parser reads `010` as octal: such an entry would never match what it looks like
+	if (isIp && host.split(".").some((part) => Number(part) > 255 || (part.length > 1 && part.startsWith("0")))) return undefined;
 	// "localhost" is the one single-label name allowed; a wildcard needs a name of two labels or more under it
 	if (!isIp && host !== "localhost" && !dnsName.test(host)) return undefined;
 	// A name ending in a number is an IPv4 address to the URL parser: `*.1.1` would match 192.168.1.1
 	if (!isIp && /^(\d+|0x[\da-f]*)$/.test(host.slice(host.lastIndexOf(".") + 1))) return undefined;
 	if (star !== undefined && (isIp || host === "localhost")) return undefined;
-	if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return undefined;
+	if (port !== undefined && (Number(port) < 1 || Number(port) > 65535 || port.startsWith("0"))) return undefined;
 	const schemes = scheme === undefined ? defaultSchemes : [scheme];
 	return { schemes, host, wildcard: star !== undefined, port: port ?? "" };
 };
@@ -116,7 +117,7 @@ const privateSuffixes = ["localhost", "local", "lan", "home", "home.arpa", "inte
  * Addresses, single-label names (`http://router/`) and the usual private suffixes. A public name that resolves to a
  * private address is checked by net.ts once resolved.
  */
-export const isLocalHost = (hostname: string) => {
+export const isLocalHost = (hostname: string): boolean => {
 	const host = hostname
 		.replace(/^\[|\]$/g, "")
 		.replace(/\.$/, "")
@@ -133,11 +134,19 @@ export const isLocalHost = (hostname: string) => {
 			(a === 169 && b === 254) ||
 			(a === 172 && b >= 16 && b <= 31) ||
 			(a === 192 && b === 168) ||
+			(a === 198 && (b === 18 || b === 19)) ||
 			(a === 100 && b >= 64 && b <= 127)
 		);
 	}
 	// IPv6 literals: loopback, unspecified, unique local, link-local, and IPv4-mapped ones
-	if (host.includes(":")) return host === "::1" || host === "::" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:");
+	if (host.includes(":")) {
+		if (host === "::1" || host === "::" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:")) return true;
+		// An IPv4 address inside: IPv4-compatible (::7f00:1), NAT64 (64:ff9b::7f00:1) and 6to4 (2002:7f00:1::)
+		const embedded = /^(?:::|64:ff9b::)([\da-f]{1,4}):([\da-f]{1,4})$/.exec(host) ?? /^2002:([\da-f]{1,4}):([\da-f]{1,4})(?::|$)/.exec(host);
+		if (embedded === null) return false;
+		const [high, low] = [parseInt(embedded[1], 16), parseInt(embedded[2], 16)];
+		return isLocalHost(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+	}
 	return false;
 };
 

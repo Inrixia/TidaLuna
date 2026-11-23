@@ -654,4 +654,18 @@ describe("core registry", () => {
 		assert.ok(yes.asked[0].lines.some((line) => line.includes("http://192.168.1.10:8123")));
 		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["http://192.168.1.10:8123"]);
 	});
+
+	it("lists the local hosts an update adds to a plugin in compatibility mode", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serve(URL, "v1", {}, { hosts: ["http://192.168.1.10:8123"] });
+		await registry.load(URL);
+		assert.strictEqual(registry.hostsOf(URL)?.hosts, undefined);
+		const yes = asker(true);
+		assert.strictEqual(await registry.acceptUpdate(URL, yes), true);
+		assert.ok(yes.asked[0].lines.some((line) => line.includes("http://192.168.1.10:8123")));
+		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["http://192.168.1.10:8123"]);
+	});
 });

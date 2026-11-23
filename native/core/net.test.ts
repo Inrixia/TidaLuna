@@ -274,4 +274,67 @@ describe("luna.fetch", () => {
 		assert.equal((await net.fetch("https://store/compat", "page", { url: "https://a.org/steady" })).body.byteLength, 6);
 		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://a.org/stalled" }), /No answer/);
 	});
+
+	it("refuses a name that doesn't resolve in compatibility mode", async () => {
+		const { net, calls } = fakeNet(plugins, {}, { resolve: async () => Promise.reject(new Error("ENOTFOUND")) });
+		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://nowhere.example/" }), /doesn't resolve/);
+		assert.equal(calls.length, 0);
+	});
+
+	it("drops the body headers when a redirect continues as GET, and resends the body on 307", async () => {
+		const { net, calls } = fakeNet(plugins, {
+			"https://a.org/303": () => new Response(null, { status: 303, headers: { location: "https://a.org/done" } }),
+			"https://a.org/307": () => new Response(null, { status: 307, headers: { location: "https://a.org/done" } }),
+			"https://a.org/done": () => new Response("ok"),
+		});
+		const request = { method: "POST", body: "x", headers: { "Content-Type": "text/plain", "x-a": "b" } };
+		await net.fetch("https://store/compat", "page", { url: "https://a.org/303", ...request });
+		assert.deepEqual([calls[1].method, calls[1].body, calls[1].headers], ["GET", undefined, { "x-a": "b" }]);
+		await net.fetch("https://store/compat", "page", { url: "https://a.org/307", ...request });
+		assert.deepEqual([calls[3].method, calls[3].body, calls[3].headers], ["POST", "x", { "Content-Type": "text/plain", "x-a": "b" }]);
+	});
+
+	it("keeps content-encoding it doesn't decode, and content-length of a HEAD answer", async () => {
+		const { net } = fakeNet(plugins, {
+			"https://a.org/raw": () => new Response("raw", { headers: { "content-encoding": "zz", "content-length": "3" } }),
+			"https://a.org/head": () => new Response(null, { headers: { "content-encoding": "gzip", "content-length": "1234" } }),
+		});
+		const names = (res: { headers: [string, string][] }) => res.headers.map(([name]) => name);
+		assert.ok(names(await net.fetch("https://store/compat", "page", { url: "https://a.org/raw" })).includes("content-encoding"));
+		assert.ok(names(await net.fetch("https://store/compat", "page", { url: "https://a.org/head", method: "HEAD" })).includes("content-length"));
+	});
+
+	it("caps request bodies and the requests a plugin has in flight", async () => {
+		const waiting: (() => void)[] = [];
+		const { net } = fakeNet(
+			plugins,
+			{},
+			{
+				fetch: () => new Promise((resolve) => waiting.push(() => resolve(new Response("ok")))),
+			},
+		);
+		await assert.rejects(
+			net.fetch("https://store/compat", "page", { url: "https://a.org/", method: "POST", body: new Uint8Array(33 * 1024 * 1024) }),
+			/larger than/,
+		);
+		const running = Array.from({ length: 16 }, () => net.fetch("https://store/compat", "page", { url: "https://a.org/" }));
+		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://a.org/" }), /too many requests/);
+		// Another plugin isn't held up by this one
+		const other = net.fetch("https://store/none", "page", { url: "https://a.org/" }).catch((err) => err);
+		await new Promise((res) => setTimeout(res, 10));
+		for (const release of waiting) release();
+		await Promise.all(running);
+		assert.match(String(await other), /not in the hosts/);
+		assert.equal(
+			(
+				await (async () => {
+					const p = net.fetch("https://store/compat", "page", { url: "https://a.org/" });
+					await new Promise((res) => setTimeout(res, 10));
+					waiting.at(-1)!();
+					return p;
+				})()
+			).status,
+			200,
+		);
+	});
 });

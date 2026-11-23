@@ -69,15 +69,26 @@ const maxUrlLength = 8192;
 const methods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 // Not sent on to another origin after a redirect, as browsers do
 const crossOriginDropped = ["authorization", "cookie", "proxy-authorization"];
+// Headers about the body, dropped with it when a redirect continues as GET
+const bodyHeaders = ["content-type", "content-encoding", "content-language", "content-location", "content-length"];
+// The encodings fetch decodes: their content-encoding/content-length describe the encoded body, not the one handed on
+const decodedEncodings = new Set(["gzip", "x-gzip", "deflate", "br"]);
+/** Request bodies larger than this are refused (they are held in the main process) */
+const maxRequestBytes = 32 * 1024 * 1024;
+/** Requests one plugin (or the bucket of unknown callers) may have in flight, and all of them together */
+const maxInFlightPerPlugin = 16;
+const maxInFlight = 64;
 
 const clip = (text: string) => (text.length > 300 ? `${text.slice(0, 300)}…` : text);
-const targetOf = (url: URL) => clip(`${url.origin}${url.pathname}`);
+const targetOf = (url: URL) => clip(`${url.protocol}//${url.host}${url.pathname}`);
 const isIpLiteral = (hostname: string) => /^[\d.]+$/.test(hostname) || hostname.startsWith("[");
 
 export class NetRefused extends Error {}
 
 export const createNet = (deps: NetDeps) => {
 	const logs = new Map<string, NetLogEntry[]>();
+	const inFlight = new Map<string, number>();
+	let inFlightTotal = 0;
 	const record = (entry: NetLogEntry, known: boolean) => {
 		const key = known ? entry.plugin : unknownPlugin;
 		let log = logs.get(key);
@@ -98,7 +109,15 @@ export const createNet = (deps: NetDeps) => {
 		const local = `${url.hostname} is a local address: ${plugin.name} must list it in its hosts as a local entry`;
 		if (isLocalHost(url.hostname)) return local;
 		if (deps.resolve !== undefined && !isIpLiteral(url.hostname)) {
-			const addresses = await deps.resolve(url.hostname).catch(() => []);
+			// A name that doesn't resolve now is refused: the fetch resolves it again and could get a local answer
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const addresses = await Promise.race([
+				deps.resolve(url.hostname),
+				new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("timeout")), deps.timeoutMs ?? 30000))),
+			])
+				.catch(() => undefined)
+				.finally(() => clearTimeout(timer));
+			if (addresses === undefined || addresses.length === 0) return `${url.hostname} doesn't resolve`;
 			if (addresses.some(isLocalHost)) return local;
 		}
 		return undefined;
@@ -158,13 +177,39 @@ export const createNet = (deps: NetDeps) => {
 		if (plugin === undefined) refuse(`${entry.plugin} is not an enabled plugin`);
 		if (!methods.has(method)) refuse(`method ${method.slice(0, 20)} is not allowed`);
 		if (body !== undefined && typeof body !== "string" && !(body instanceof Uint8Array)) refuse("the body must be a string or bytes");
+		if (body !== undefined && (typeof body === "string" ? body.length * 3 : body.byteLength) > maxRequestBytes)
+			refuse(`the body is larger than ${maxRequestBytes} bytes`);
 		const headers: Record<string, string> = {};
 		if (rawHeaders !== undefined && (typeof rawHeaders !== "object" || rawHeaders === null)) refuse("headers must be an object");
 		for (const [name, value] of Object.entries(rawHeaders ?? {})) {
 			if (typeof value !== "string") refuse(`header ${name} must be a string`);
 			headers[name] = value;
 		}
-		const firstRefusal = await refusal(plugin!, url);
+		const key = entry.plugin;
+		if ((inFlight.get(key) ?? 0) >= maxInFlightPerPlugin || inFlightTotal >= maxInFlight) refuse("too many requests at once");
+		inFlight.set(key, (inFlight.get(key) ?? 0) + 1);
+		inFlightTotal++;
+		try {
+			return await fetchAllowed(plugin!, url, method, headers, body, entry, refuse);
+		} finally {
+			inFlightTotal--;
+			const left = (inFlight.get(key) ?? 1) - 1;
+			if (left === 0) inFlight.delete(key);
+			else inFlight.set(key, left);
+		}
+	};
+
+	const fetchAllowed = async (
+		plugin: NonNullable<PluginHosts>,
+		firstUrl: URL,
+		method: string,
+		headers: Record<string, string>,
+		body: string | Uint8Array | undefined,
+		entry: NetLogEntry,
+		refuse: (reason: string) => never,
+	): Promise<NetResponse> => {
+		let url = firstUrl;
+		const firstRefusal = await refusal(plugin, url);
 		if (firstRefusal !== undefined) refuse(firstRefusal);
 
 		entry.allowed = true;
@@ -192,7 +237,7 @@ export const createNet = (deps: NetDeps) => {
 					const from = url;
 					url = new URL(location, url);
 					// Every hop is checked like the first: a declared host can't redirect the plugin to another one
-					const hopRefusal = await refusal(plugin!, url);
+					const hopRefusal = await refusal(plugin, url);
 					if (hopRefusal !== undefined) {
 						entry.allowed = false;
 						throw new NetRefused(`[🛑Security🛑] luna.fetch refused a redirect: ${hopRefusal}`);
@@ -203,13 +248,19 @@ export const createNet = (deps: NetDeps) => {
 					// As browsers do: 303, and 301/302 after a POST, continue as GET without a body
 					if (res.status === 303 || ((res.status === 301 || res.status === 302) && currentMethod === "POST")) {
 						currentMethod = currentMethod === "HEAD" ? "HEAD" : "GET";
+						if (currentBody !== undefined) for (const name of Object.keys(headers)) if (bodyHeaders.includes(name.toLowerCase())) delete headers[name];
 						currentBody = undefined;
 					}
 					continue;
 				}
 				entry.status = res.status;
-				// fetch decodes gzip/br/deflate bodies but keeps the headers of the encoded one
-				const decoded = res.headers.has("content-encoding");
+				// fetch decodes gzip/br/deflate bodies but keeps the headers of the encoded one (a HEAD answer has no body)
+				const encodings =
+					res.headers
+						.get("content-encoding")
+						?.split(",")
+						.map((coding) => coding.trim().toLowerCase()) ?? [];
+				const decoded = currentMethod !== "HEAD" && encodings.length !== 0 && encodings.every((coding) => decodedEncodings.has(coding));
 				return {
 					status: res.status,
 					statusText: res.statusText,
