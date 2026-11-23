@@ -587,7 +587,7 @@ export class LunaPlugin {
 	public async enable(queued = false) {
 		try {
 			this.loading._ = true;
-			await this.loadExports(undefined, undefined, queued);
+			await this.loadExports(undefined, undefined, !queued);
 			// Turned off while queued (see loadExports): the user's choice stands
 			if (queued && !this.wanted) return;
 			this._enabled._ = true;
@@ -955,13 +955,15 @@ export class LunaPlugin {
 		return this.enabled && this.installed !== false;
 	}
 	/**
-	 * `queued`: a load for an enabled plugin (load()), which may wait on the semaphore and fetch while the user disables or uninstalls it
-	 * (they don't wait for loads): it stops wherever it finds that, and unloads if it got as far as importing
+	 * `enabling`: the user turning the plugin on (enable(), before it counts as enabled). Every other load is for a plugin that is on
+	 * (load(), reload, an accepted update, live reload, a lifted revocation, a restore) and may wait on the semaphore and fetch while the
+	 * user disables or uninstalls it (they don't wait for loads): it stops wherever it finds that, and unloads if it got as far as importing
 	 */
-	private async loadExports(reload?: true, update?: PluginPackage, queued?: boolean): Promise<void> {
+	private async loadExports(reload?: true, update?: PluginPackage, enabling?: boolean): Promise<void> {
 		// Ensure we cant start loading midway through loading
 		const release = await this.loadSemaphore.obtain();
-		if (queued && !this.wanted) {
+		const unwanted = () => !enabling && !this.wanted;
+		if (unwanted()) {
 			release();
 			return;
 		}
@@ -976,7 +978,7 @@ export class LunaPlugin {
 			if (update !== undefined) replaced = { previous: this.applyUpdate(update) };
 			// If code hasnt changed and we have already loaded exports we are done
 			const codeChanged = await this.fetchPackage();
-			if (queued && !this.wanted) return;
+			if (unwanted()) return;
 			if (!reload && !codeChanged && this.exports !== undefined) return;
 
 			// If code failed to fetch then nothing we can do
@@ -1040,7 +1042,7 @@ export class LunaPlugin {
 			}
 
 			// Turned off during the import: its unload found no exports to unload, so unload here (before the dependants loop below loads any)
-			if (queued && !this.wanted) {
+			if (unwanted()) {
 				await this.unload();
 				return;
 			}
