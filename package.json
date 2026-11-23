@@ -24,12 +24,14 @@
   "scripts": {
     "format": "prettier -wc ./src",
     "watch": "rimraf ./dist && tsx ./esbuild.config.ts --watch",
-    "build": "rimraf ./dist && tsx ./esbuild.config.ts"
+    "build": "rimraf ./dist && tsx ./esbuild.config.ts",
+    "test": "tsx --test \"{native,render,plugins}/**/*.test.ts\""
   },
   "license": "MS-Pl",
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "happy-dom": "^21.0.4",
     "prettier": "^3.10.1",
     "rimraf": "^6.1.4",
     "tsx": "^4.23.15",

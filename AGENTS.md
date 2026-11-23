@@ -9,7 +9,7 @@ Luna (TidaLuna) = client mod for TIDAL desktop app (Electron). Takes over TIDAL 
 - `pnpm i`: install.
 - `pnpm run build`: clean build into `dist/`. `pnpm run watch` rebuilds on change.
 - `pnpm exec tsc --noEmit -p .`: typecheck (few sec). master already has errors; judge only errors in touched code.
-- No test suite. Verify with typecheck + build. For runtime behaviour, run TIDAL test instance ([docs/test-instances.md](docs/test-instances.md)); `.claude/skills/tidal-test-instance/` has script that sets one up in `.tidal-test/` (Windows, Linux) and drives it: page + main-process eval, console logs, live reload, TIDAL render/native source dump to grep for hooks, screenshots.
+- `pnpm test`: runs every `*.test.ts` under `native`, `render` and `plugins` (node:test via tsx; DOM tests use happy-dom). For runtime behaviour, run TIDAL test instance ([docs/test-instances.md](docs/test-instances.md)); `.claude/skills/tidal-test-instance/` has script that sets one up in `.tidal-test/` (Windows, Linux) and drives it: page + main-process eval, console logs, live reload, TIDAL render/native source dump to grep for hooks, screenshots.
 - `pnpm run format` broken (targets nonexistent `./src`). Run `pnpm exec prettier --write <file>` on files you create.
 
 ## Architecture
