@@ -151,8 +151,7 @@ export class LunaPlugin {
 		const stops: Promise<void>[] = [];
 		const loads: LunaPlugin[] = [];
 		for (const plugin of Object.values(LunaPlugin.plugins)) {
-			const pending = plugin.pendingUpdate._;
-			if (pending !== undefined && plugin.revokedUpdate(pending) !== undefined) plugin.pendingUpdate._ = undefined;
+			plugin.dropRevokedPending();
 			plugin.offerLiftedUpdate();
 			const next = revocationAction(
 				{
@@ -542,7 +541,13 @@ export class LunaPlugin {
 		const revoked = this.revokedUpdate(update);
 		if (revoked !== undefined) return this.refuseUpdate(update, revoked);
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
-		if (this.enabled) return this.loadExports(true, update);
+		if (this.enabled) {
+			await this.loadExports(true, update);
+			// Revoked while it loaded: loadExports kept the previous version (see stopAsRevoked) and already said why
+			const revokedLate = this.revokedUpdate(update);
+			if (revokedLate !== undefined) throw new Error(`Not updating ${this.name}: the Luna plugin registry revoked ${update.version ?? "this version"}`);
+			return;
+		}
 		const release = await this.loadSemaphore.obtain();
 		try {
 			// Checked again: the list may have changed while waiting for the semaphore
@@ -681,6 +686,19 @@ export class LunaPlugin {
 	private refusedHash?: string;
 	/** The last update refused as revoked, offered after all if its revocation is lifted (see offerLiftedUpdate) */
 	private refusedUpdate?: PluginPackage;
+	/** Drop the pending update if the list in use revokes it, say so once, and remember it in case the revocation is lifted */
+	private dropRevokedPending() {
+		const pending = this.pendingUpdate._;
+		const revoked = pending !== undefined ? this.revokedUpdate(pending) : undefined;
+		if (pending === undefined || revoked === undefined) return;
+		this.pendingUpdate._ = undefined;
+		if (this.refusedHash !== pending.hash)
+			this.trace.msg.warn(
+				`Update of ${this.name} to ${pending.version ?? "a new version"} withdrawn: the Luna plugin registry revoked it. ${describeRevoked(revoked)}`,
+			);
+		this.refusedHash = pending.hash;
+		this.refusedUpdate = pending;
+	}
 	/** Offer an update that was refused as revoked once the registry no longer revokes it */
 	private offerLiftedUpdate() {
 		const refused = this.refusedUpdate;
@@ -706,7 +724,10 @@ export class LunaPlugin {
 			const codeChanged = this.package?.hash !== newPackage.hash;
 			// If code hasnt changed then just reuse stored code, or the code of the update already waiting.
 			// Its sha256 comes along, never from the url's json (loadExports recomputes it from what it imports)
-			const reused = !codeChanged ? this.package : this.pendingUpdate._?.hash === newPackage.hash ? this.pendingUpdate._ : undefined;
+			const known = !codeChanged ? this.package : this.pendingUpdate._?.hash === newPackage.hash ? this.pendingUpdate._ : undefined;
+			// Code stored without a rawSha256 was decoded before fetchCode kept BOMs and refused invalid UTF-8: fetched again once,
+			// so its hash is the registry's (if the fetch fails, the stored code stays)
+			const reused = known?.rawSha256 !== undefined ? known : undefined;
 			newPackage.code = reused?.code;
 			newPackage.codeSha256 = reused?.code !== undefined ? reused.codeSha256 : undefined;
 			newPackage.rawSha256 = reused?.code !== undefined ? reused.rawSha256 : undefined;

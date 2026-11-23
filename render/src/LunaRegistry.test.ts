@@ -124,6 +124,8 @@ test("an invalid baseUrl override is ignored", async () => {
 	restart();
 	stored.set("baseUrl", "http://example.com/registry/");
 	assert.equal(await LunaRegistry.baseUrl(), "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
+	stored.set("baseUrl", "https://evil.example/registry/");
+	assert.equal(await LunaRegistry.baseUrl(), "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
 });
 
 test("serials are kept per registry url: a local test registry doesn't block the real one", async () => {

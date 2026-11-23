@@ -74,7 +74,11 @@ export class LunaRegistry {
 		const override = await this.storage.get<string>("baseUrl");
 		if (override === undefined) return registryBaseUrl(defaultRegistryBase);
 		try {
-			return registryBaseUrl(override);
+			const base = registryBaseUrl(override);
+			// Only a local test registry: an override to another host could serve old signed lists and hide newer revocations
+			const { hostname } = new URL(base);
+			if (hostname !== "127.0.0.1" && hostname !== "localhost") throw new Error(`only 127.0.0.1 or localhost: ${override}`);
+			return base;
 		} catch (err) {
 			this.trace.warn(`Ignoring registry baseUrl override`, err);
 			return registryBaseUrl(defaultRegistryBase);
@@ -97,7 +101,7 @@ export class LunaRegistry {
 		if (this.inUseFrom[fileName] === base) {
 			if (!replacesInUse(signal._, file)) return false;
 			// The same signed file fetched again (hourly): nothing changes, nothing re-renders or rechecks plugins
-			if (signal._?.serial === file.serial) return true;
+			if (signal._?.serial === file.serial && JSON.stringify(signal._.entries) === JSON.stringify(file.entries)) return true;
 		}
 		this.inUseFrom[fileName] = base;
 		signal._ = <any>file;
