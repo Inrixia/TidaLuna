@@ -7,7 +7,7 @@ export type RequestCacheRule = {
 	extraUrls?: (url: URL, value: unknown) => (string | URL)[];
 	/**
 	 * Also answer TIDAL's own matching requests from the cache (stale-while-revalidate): a cached response is returned at once
-	 * and re-fetched in the background when older than a few seconds, a changed response is reported to `requestCache.onChange`
+	 * and re-fetched in the background when older than `revalidateAfterMs`, a changed response is reported to `requestCache.onChange`
 	 */
 	swr?: true;
 	/** Entries older than this are re-fetched, e.g. while urls in them are valid */
@@ -34,10 +34,13 @@ const changeListeners = new Set<(url: string) => void>();
 /** Keys a `get` fetcher is fetching */
 const fetching = new Set<string>();
 
-/** A response served from the cache is re-fetched in the background when older than this */
-const revalidateAfterMs = 5_000;
-/** and not served at all once older than this */
-const maxServeAgeMs = 10 * 60_000;
+/**
+ * A response served from the cache is re-fetched in the background when older than this, so going back and forth doesn't re-fetch every page.
+ * Served however old (unless a rule's `maxAgeMs` says otherwise): it re-renders through `onChange` when the re-fetch differs and mutations drop
+ * what they change, so a page revisited after a break shows at once instead of waiting on the network
+ */
+const revalidateAfterMs = 60_000;
+/** The least recently used entries are dropped past this */
 const maxEntries = 10_000;
 const stats = { served: 0, fetched: 0 };
 
@@ -73,7 +76,7 @@ const valueOf = (key: string, entry: Entry) => {
 const store = (url: URL, key: string, value: Promise<unknown> | undefined, raw?: Promise<RawResponse>) => {
 	const entry: Entry = { value, raw, time: Date.now() };
 	(raw ?? value)!.catch(() => drop(key, entry));
-	// Re-inserted so the map stays in age order for eviction
+	// Re-inserted so the map stays in use order for eviction
 	entries.delete(key);
 	entries.set(key, entry);
 	if (entries.size > maxEntries) entries.delete(entries.keys().next().value!);
@@ -224,8 +227,11 @@ const fromCache = (url: URL, key: string, input: FetchInput, init: FetchInit): P
 	const entry = entries.get(key);
 	if (entry?.raw === undefined) return;
 	const age = Date.now() - entry.time;
-	if (age > maxServeAgeMs) return;
+	if (age > maxAgeOf(url.href)) return;
 	if (age > revalidateAfterMs && !entry.revalidating) revalidate(url, key, entry, input, init);
+	// Moved to the end so eviction drops the least recently used
+	entries.delete(key);
+	entries.set(key, entry);
 	const fallback = () => fill(url, key, input, init);
 	return entry.raw.then((raw) => {
 		if (raw.status !== 200) return fallback();
