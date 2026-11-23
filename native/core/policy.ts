@@ -10,11 +10,47 @@ const coreConfirmed = new Set(["update", "startNativeDebugging"]);
 export const coreNativeRule = (exportName: string): CoreNativeRule =>
 	coreDenied.has(exportName) ? "deny" : coreConfirmed.has(exportName) ? "confirm" : "allow";
 
-/** What the confirmation window says before a confirmed core native runs */
-export const coreNativeQuestion = (exportName: string, args: unknown[]): [title: string, lines: string[], confirmText: string] => {
+/**
+ * Compares two release versions like "1.25.0" or "1.25.0-beta": negative if `a` is older, 0 if the same, positive if
+ * newer. A pre-release is older than its release.
+ */
+export const compareVersions = (a: string, b: string): number => {
+	const parse = (version: string) => {
+		const [main, ...pre] = version.replace(/^v/, "").split("-");
+		return { parts: main.split(".").map((part) => Number.parseInt(part, 10) || 0), pre: pre.join("-") };
+	};
+	const left = parse(a);
+	const right = parse(b);
+	for (let i = 0; i < Math.max(left.parts.length, right.parts.length); i++) {
+		const diff = (left.parts[i] ?? 0) - (right.parts[i] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	if (left.pre === right.pre) return 0;
+	if (left.pre === "") return 1;
+	if (right.pre === "") return -1;
+	return left.pre.localeCompare(right.pre, "en", { numeric: true });
+};
+
+/**
+ * What the confirmation window says before a confirmed core native runs
+ *
+ * @param current Luna's installed version, shown next to the one an update installs
+ */
+export const coreNativeQuestion = (
+	exportName: string,
+	args: unknown[],
+	current?: string,
+): [title: string, lines: string[], confirmText: string] => {
 	switch (exportName) {
-		case "update":
-			return ["Update Luna?", [`Download and install Luna ${String(args[0])}, then restart TIDAL.`], "Update"];
+		case "update": {
+			const target = String(args[0]);
+			const lines = [`Download and install Luna ${target}, then restart TIDAL.`];
+			if (current !== undefined) {
+				lines.push(`Installed now: ${current} -> ${target}.`);
+				if (compareVersions(target, current) < 0) lines.push(`${target} is older than the installed version.`);
+			}
+			return ["Update Luna?", lines, "Update"];
+		}
 		case "startNativeDebugging":
 			return [
 				"Start native debugging?",
