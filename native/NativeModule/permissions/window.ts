@@ -1,6 +1,7 @@
-import { BrowserWindow } from "electron";
+import type { BrowserWindow } from "electron";
 
 import { groupModules } from "./categories";
+import { createPromptWindow, escapeHtml, inPromptQueue, visibleOwner } from "./promptWindow";
 import type { PermissionAnswer } from "./store";
 
 export type PermissionRequest = {
@@ -12,9 +13,6 @@ export type PermissionRequest = {
 	/** Modules the file's source names, shown for information */
 	modules: string[];
 };
-
-const escapeHtml = (text: string) =>
-	text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 
 const SUBMIT = "luna-permissions:";
 const FIT = "luna-permissions-fit:";
@@ -214,9 +212,6 @@ const MEASURE = `(() => {
 
 const answerValues = new Set<string>(["deny", "allow", "allowUpdates"]);
 
-// One window at a time: several native files can load at once
-let queue: Promise<unknown> = Promise.resolve();
-
 /**
  * Asks whether a native file may run in TIDAL's main process and resolves with the answer (none if the window was closed).
  * A window of its own (own session, no preload), so the TIDAL page and its plugins cannot see or click it.
@@ -231,30 +226,16 @@ export const askPermission = (
 	const show = (request: PermissionRequest) =>
 		new Promise<PermissionAnswer | undefined>((resolve) => {
 			// Not owned by a minimized or hidden TIDAL window: it would be hidden with it, and the plugin would wait unseen
-			const owner = parent !== undefined && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized() ? parent : undefined;
-			const win = new BrowserWindow({
+			const owner = visibleOwner(parent);
+			const win = createPromptWindow({
 				parent: owner,
 				modal: owner !== undefined,
 				width: 620,
 				height: 480,
 				resizable: true,
-				minimizable: false,
-				maximizable: false,
-				fullscreenable: false,
-				autoHideMenuBar: true,
-				backgroundColor: "#0a0a0a",
 				title: "Plugin Permission",
-				show: false,
-				webPreferences: {
-					partition: "luna-permissions",
-					sandbox: true,
-					contextIsolation: true,
-					nodeIntegration: false,
-					devTools: false,
-					spellcheck: false,
-				},
+				partition: "luna-permissions",
 			});
-			win.removeMenu();
 			// Fits the window to its content, also once the list of modules is opened
 			const fit = (first: boolean) =>
 				win.webContents
@@ -280,12 +261,6 @@ export const askPermission = (
 				if (answerValues.has(chosen) && (chosen !== "allowUpdates" || request.url !== undefined)) answered = chosen as PermissionAnswer;
 				win.close();
 			});
-			// The page is ours and static: nothing in it may navigate or open windows
-			win.webContents.on("will-navigate", (event) => event.preventDefault());
-			win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-			// A window that can't show would hold up every later one (see queue)
-			win.webContents.once("render-process-gone", () => !win.isDestroyed() && win.destroy());
-			win.webContents.once("did-fail-load", () => !win.isDestroyed() && win.destroy());
 			win.once("ready-to-show", () => void fit(true).finally(() => !win.isDestroyed() && win.show()));
 			win.once("closed", () => resolve(answered));
 			win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildHtml(request))}`).catch((err) => {
@@ -297,7 +272,5 @@ export const askPermission = (
 		const request = getRequest();
 		return request === undefined ? undefined : { answer: await show(request) };
 	};
-	const result = queue.then(ask, ask);
-	queue = result;
-	return result;
+	return inPromptQueue(ask);
 };

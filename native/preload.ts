@@ -31,6 +31,28 @@ if (isTidalPage)
 		once: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onceU(null, channel, (_, ...args) => listener(...args)),
 	});
 
+// Luna's confirmation window opens only while TIDAL is in use (see native/core/confirmPage.ts confirmGate). Focus alone is
+// not reported by every Linux window manager, so a trusted click or key in TIDAL counts too: page code can't make one.
+// Leaving TIDAL ends it
+if (isTidalPage) {
+	let lastSent = -Infinity;
+	const sawUserInput = (event: Event) => {
+		if (!event.isTrusted || performance.now() - lastSent < 1000) return;
+		lastSent = performance.now();
+		ipcRenderer.send("__Luna.userInput", true);
+	};
+	for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, sawUserInput, { capture: true, passive: true });
+	window.addEventListener(
+		"blur",
+		(event) => {
+			if (!event.isTrusted || event.target !== window) return;
+			lastSent = -Infinity;
+			ipcRenderer.send("__Luna.userInput", false);
+		},
+		{ capture: true, passive: true },
+	);
+}
+
 type ConsoleMethodName = {
 	[K in keyof Console]: Console[K] extends (...args: any[]) => any ? K : never;
 }[keyof Console];
