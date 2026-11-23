@@ -11,7 +11,7 @@ import { isCoreUrl, sha256Hex } from "./pluginUpdates";
 /**
  * TEST KEY: the public half of a key made only to test this client. It is NOT the registry's signing key.
  * The maintainer replaces it with the contents of keys/registry.pub in Inrixia/luna-registry (base64 of the raw 32 ed25519 bytes).
- * Anyone with the matching test private key can sign a registry this build accepts.
+ * Anyone with the matching test private key can sign a registry this build accepts: replace it before this ships.
  */
 export const registryPublicKey = "mTYTC1NX88yDPzAuKmJoFXjM5cdJaCnsb5NXU8yAYRY=";
 
@@ -27,6 +27,10 @@ export type VerifiedEntry = {
 	name: string;
 	repo?: string;
 	commit?: string;
+	/** Where in the repo the plugin is, its build command and output folder (as the registry built it) */
+	path?: string;
+	build?: string;
+	out?: string;
 	natives?: Record<string, string>;
 	capabilities?: string[];
 	report?: string;
@@ -71,6 +75,9 @@ const toVerifiedEntry = (value: unknown): VerifiedEntry | undefined => {
 		name: value.name,
 		repo: optionalString(value.repo),
 		commit: optionalString(value.commit),
+		path: optionalString(value.path),
+		build: optionalString(value.build),
+		out: optionalString(value.out),
 		natives: isObject(value.natives) ? (value.natives as Record<string, string>) : undefined,
 		capabilities: Array.isArray(value.capabilities) ? value.capabilities.filter((cap): cap is string => typeof cap === "string") : undefined,
 		report: optionalLink(value.report),
@@ -172,6 +179,8 @@ export async function acceptRegistryFile(
 	return { ok: true, file: parsed };
 }
 
+/** Whether an accepted file replaces the one in use: not when the one in use has a higher serial (a stored copy read after a newer fetch) */
+export const replacesInUse = (inUse: { serial: number } | undefined, file: { serial: number }): boolean => inUse === undefined || file.serial >= inUse.serial;
 /**
  * The code a plugin's `.mjs` served, from the code Luna stores for it (LunaPlugin.fetchPackage appends `\n//# sourceURL=<url>.mjs`).
  * The suffix is matched by shape, not by url, so code stored before the plugin's url moved (LunaPlugin.migrateBaseUrl) still matches.

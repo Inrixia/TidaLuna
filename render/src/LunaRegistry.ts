@@ -7,6 +7,7 @@ import {
 	registryBaseUrl,
 	registryFileNames,
 	registryLoadDecision,
+	replacesInUse,
 	revokedEntryFor,
 	verifiedEntryFor,
 	type AcceptResult,
@@ -42,8 +43,8 @@ export type RegistryFileStatus = {
  * The Luna plugin registry: signed lists of verified and revoked plugin builds, keyed by raw sha256 (see helpers/registry).
  *
  * Startup: index.ts awaits loadCached (the last good copies from IndexedDB, checked again) before user plugins load,
- * so a plugin revoked in a list this client already accepted never runs. refresh() then fetches the lists without blocking plugin loading;
- * a newly accepted revoked.json unloads the plugins it revokes (LunaPlugin listens to `revoked`).
+ * so a plugin revoked in a list this client already accepted never runs. refreshEvery() then fetches the lists without blocking plugin loading,
+ * and again every hour; a newly accepted revoked.json unloads the plugins it revokes (LunaPlugin listens to `revoked`).
  * A missing, unreachable or badly signed registry never blocks plugins: the last good copy stays in use, or none.
  */
 export class LunaRegistry {
@@ -88,9 +89,12 @@ export class LunaRegistry {
 		this.status._ = { ...this.status._, [fileName]: status };
 	}
 
-	private static use(fileName: RegistryFileName, file: VerifiedFile | RevokedFile) {
-		if (fileName === "verified.json") this.verified._ = <VerifiedFile>file;
-		else this.revoked._ = <RevokedFile>file;
+	/** Put a checked file in use, unless the one in use has a higher serial (a slow loadCached finishing after refresh). Returns whether it did */
+	private static use(fileName: RegistryFileName, file: VerifiedFile | RevokedFile): boolean {
+		const signal = fileName === "verified.json" ? this.verified : this.revoked;
+		if (!replacesInUse(signal._, file)) return false;
+		signal._ = <any>file;
+		return true;
 	}
 
 	/** Put the last good copies in use. Called once at startup, before user plugins load */
@@ -108,8 +112,7 @@ export class LunaRegistry {
 					this.trace.warn(`Stored copy not used: ${result.reason}`);
 					continue;
 				}
-				this.use(fileName, result.file);
-				this.setStatus(fileName, { source: "cached", serial: result.file.serial, generated: result.file.generated });
+				if (this.use(fileName, result.file)) this.setStatus(fileName, { source: "cached", serial: result.file.serial, generated: result.file.generated });
 			} catch (err) {
 				this.trace.err.withContext("loadCached", fileName)(err);
 			}
@@ -151,12 +154,9 @@ export class LunaRegistry {
 			result = { ok: false, reason: `${fileName}: ${(<Error>err)?.message ?? err}` };
 		}
 		if (!result.ok) {
+			// The copy in use stays, and so does where it came from
 			this.trace.warn(`Not using the fetched ${fileName}, keeping the ${this.status._[fileName].source} copy: ${result.reason}`);
-			this.setStatus(fileName, {
-				...this.status._[fileName],
-				source: this.status._[fileName].source === "none" ? "none" : "cached",
-				error: result.reason,
-			});
+			this.setStatus(fileName, { ...this.status._[fileName], error: result.reason });
 			return;
 		}
 		const { file } = result;
@@ -167,7 +167,14 @@ export class LunaRegistry {
 		} catch (err) {
 			this.trace.err.withContext("Failed to store", fileName)(err);
 		}
-		this.setStatus(fileName, { source: "fetched", serial: file.serial, generated: file.generated });
-		this.use(fileName, file);
+		if (this.use(fileName, file)) this.setStatus(fileName, { source: "fetched", serial: file.serial, generated: file.generated });
+	}
+
+	private static refreshTimer?: ReturnType<typeof setInterval>;
+	/** Refresh now and then every `intervalMs` (default hourly), so a client left open picks up new revocations. Calling again restarts the timer */
+	public static refreshEvery(intervalMs: number = 60 * 60 * 1000): Promise<void> {
+		clearInterval(this.refreshTimer);
+		this.refreshTimer = setInterval(() => void this.refresh(), intervalMs);
+		return this.refresh();
 	}
 }

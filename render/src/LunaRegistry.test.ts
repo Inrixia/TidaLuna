@@ -1,0 +1,127 @@
+// Run: pnpm exec tsx --test render/src/LunaRegistry.test.ts
+// LunaRegistry against a fake registry server (fetch) and an in-memory store, with the signed fixtures of helpers/registry.fixtures
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+
+// The trace module patches window on import
+globalThis.window ??= <any>globalThis;
+const { LunaRegistry } = await import("./LunaRegistry");
+
+const fixture = (name: string) => new Uint8Array(readFileSync(new URL(`./helpers/registry.fixtures/${name}`, import.meta.url)));
+const codes: { sha256: { verified: string; revoked: string } } = JSON.parse(new TextDecoder().decode(fixture("codes.json")));
+
+// The server: url > bytes. Missing urls are 404
+const base = "http://127.0.0.1:3002/registry/";
+let served = new Map<string, Uint8Array>();
+const serve = (files: Record<string, string>) => {
+	served = new Map(Object.entries(files).map(([name, from]) => [`${base}${name}`, fixture(from)]));
+};
+globalThis.fetch = async (input) => {
+	const bytes = served.get(String(input));
+	return bytes === undefined ? new Response("", { status: 404, statusText: "Not Found" }) : new Response(<Uint8Array<ArrayBuffer>>bytes);
+};
+
+// The store, in memory
+let stored = new Map<string, unknown>();
+const storage = <any>LunaRegistry.storage;
+storage.get = async (key: string) => stored.get(key);
+storage.set = async (key: string, value: unknown) => void stored.set(key, value);
+storage.del = async (key: string) => void stored.delete(key);
+
+/** A client start: nothing in use, the store as it was (or empty) */
+const restart = (store: Map<string, unknown> = new Map()) => {
+	stored = store;
+	stored.set("baseUrl", base);
+	LunaRegistry.verified._ = undefined;
+	LunaRegistry.revoked._ = undefined;
+	LunaRegistry.status._ = { "verified.json": { source: "none" }, "revoked.json": { source: "none" } };
+};
+const good = {
+	"verified.json": "verified.json",
+	"verified.json.sig": "verified.json.sig",
+	"revoked.json": "revoked.json",
+	"revoked.json.sig": "revoked.json.sig",
+};
+
+test("refresh: fetched, checked and signed lists are used and stored with their serials", async () => {
+	restart();
+	serve(good);
+	await LunaRegistry.refresh();
+	assert.equal(LunaRegistry.verified._?.serial, 3);
+	assert.equal(LunaRegistry.revoked._?.serial, 2);
+	assert.equal(LunaRegistry.verifiedEntry(codes.sha256.verified, "Fixture")?.name, "Fixture");
+	assert.equal(LunaRegistry.loadDecision({ url: "https://example.com/Fixture", rawSha256: codes.sha256.revoked }).load, false);
+	assert.deepEqual(LunaRegistry.status._["revoked.json"], { source: "fetched", serial: 2, generated: LunaRegistry.revoked._?.generated });
+	assert.equal(stored.get("verified.json.serial"), 3);
+	assert.equal(stored.get("revoked.json.serial"), 2);
+});
+
+test("loadCached: the stored copies are checked again and used at the next start", async () => {
+	restart();
+	serve(good);
+	await LunaRegistry.refresh();
+	restart(stored);
+	await LunaRegistry.loadCached();
+	assert.equal(LunaRegistry.revoked._?.serial, 2);
+	assert.equal(LunaRegistry.status._["revoked.json"].source, "cached");
+	// A stored copy that no longer checks out is not used
+	const copy = <{ bytes: string }>stored.get("verified.json");
+	stored.set("verified.json", { ...copy, bytes: Buffer.from("{}").toString("base64") });
+	restart(stored);
+	await LunaRegistry.loadCached();
+	assert.equal(LunaRegistry.verified._, undefined);
+	assert.equal(LunaRegistry.status._["verified.json"].source, "none");
+});
+
+test("a failed or badly signed fetch keeps the copy in use and says why, without relabelling it", async () => {
+	restart();
+	serve(good);
+	await LunaRegistry.refresh();
+	// verified.json with revoked.json's signature, and no revoked.json at all
+	serve({ "verified.json": "verified.json", "verified.json.sig": "revoked.json.sig" });
+	await LunaRegistry.refresh();
+	assert.equal(LunaRegistry.verified._?.serial, 3);
+	assert.equal(LunaRegistry.revoked._?.serial, 2);
+	assert.match(LunaRegistry.status._["verified.json"].error ?? "", /signature/);
+	assert.match(LunaRegistry.status._["revoked.json"].error ?? "", /404/);
+	assert.equal(LunaRegistry.status._["revoked.json"].source, "fetched");
+	// The next good fetch clears the error
+	serve(good);
+	await LunaRegistry.refresh();
+	assert.equal(LunaRegistry.status._["revoked.json"].error, undefined);
+});
+
+test("a signed file with a lower serial than one accepted before is rejected (rollback), even after a restart", async () => {
+	restart();
+	serve(good);
+	await LunaRegistry.refresh();
+	restart(stored);
+	serve({ ...good, "revoked.json": "revoked-serial1.json", "revoked.json.sig": "revoked-serial1.json.sig" });
+	await LunaRegistry.refresh();
+	assert.equal(LunaRegistry.revoked._, undefined);
+	assert.match(LunaRegistry.status._["revoked.json"].error ?? "", /serial 1 is lower than 2/);
+	assert.equal(stored.get("revoked.json.serial"), 2);
+});
+
+test("a stored copy read after a newer fetch does not replace it (slow IndexedDB at startup)", async () => {
+	// The store holds serial 1 and no serial yet, as if the newer fetch had not stored its own
+	restart();
+	serve({ "revoked.json": "revoked-serial1.json", "revoked.json.sig": "revoked-serial1.json.sig" });
+	await LunaRegistry.refresh();
+	const olderCopy = stored.get("revoked.json");
+	stored.delete("revoked.json.serial");
+	serve(good);
+	await LunaRegistry.refresh();
+	stored.set("revoked.json", olderCopy);
+	stored.delete("revoked.json.serial");
+	await LunaRegistry.loadCached();
+	assert.equal(LunaRegistry.revoked._?.serial, 2);
+	assert.equal(LunaRegistry.status._["revoked.json"].source, "fetched");
+});
+
+test("an invalid baseUrl override is ignored", async () => {
+	restart();
+	stored.set("baseUrl", "http://example.com/registry/");
+	assert.equal(await LunaRegistry.baseUrl(), "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
+});

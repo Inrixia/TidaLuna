@@ -65,7 +65,7 @@ export type LunaPluginStorage = {
 
 type PartialLunaPluginStorage = Partial<LunaPluginStorage> & { url: string };
 
-const describeRevoked = (entry: RevokedEntry) => `${entry.reason}${entry.report !== undefined ? ` Report: ${entry.report}` : ""}`;
+const describeRevoked = (entry: RevokedEntry) => `${entry.reason.replace(/([^.!?])$/, "$1.")}${entry.report !== undefined ? ` Report: ${entry.report}` : ""}`;
 
 export class LunaPlugin {
 	// #region Static
@@ -135,14 +135,21 @@ export class LunaPlugin {
 		});
 	}
 
-	/** Unload loaded plugins whose code is revoked, and drop pending updates that are */
+	/**
+	 * Unload loaded plugins whose code is revoked, drop pending updates that are, and load again enabled plugins a revocation stopped
+	 * whose code is no longer revoked. A plugin still loading checks again after its import (see loadExports)
+	 */
 	private static async applyRevocations(): Promise<void> {
 		for (const plugin of Object.values(LunaPlugin.plugins)) {
 			const pending = plugin.pendingUpdate._;
 			if (pending !== undefined && plugin.revokedUpdate(pending) !== undefined) plugin.pendingUpdate._ = undefined;
-			if (plugin.exports === undefined) continue;
 			const decision = LunaRegistry.loadDecision({ url: plugin.url, rawSha256: plugin.package?.rawSha256 });
-			if (!decision.load) await plugin.stopRevoked(decision.revoked);
+			if (!decision.load) {
+				if (plugin.exports !== undefined) await plugin.stopRevoked(decision.revoked);
+			} else if (plugin.revoked._ !== undefined && plugin.enabled && plugin.installed !== false) {
+				plugin.trace.log("No longer revoked, loading again");
+				await plugin.reload().catch(plugin.trace.err.withContext("Failed to load again after the revocation was lifted"));
+			}
 		}
 	}
 
@@ -557,10 +564,14 @@ export class LunaPlugin {
 	// #region registry
 	/** The registry's revocation of the code this plugin has, set when it refused to load it (see LunaRegistry) */
 	public readonly revoked: Signal<RevokedEntry | undefined> = new Signal(undefined);
+	/** The raw sha256 `revoked` is for */
+	private revokedSha256?: string;
 	private markRevoked(entry: RevokedEntry) {
 		this.loadError._ = `Revoked by the Luna plugin registry: ${entry.reason}`;
-		// Once per revocation: live reload calls loadExports every second, and each fetched revoked.json has new entry objects
-		if (this.revoked._?.reason === entry.reason && this.revoked._?.report === entry.report) return;
+		// Once per revoked build: live reload calls loadExports every second, and each fetched revoked.json has new entry objects
+		const sha = this.package?.rawSha256;
+		if (this.revokedSha256 === sha && this.revoked._?.reason === entry.reason && this.revoked._?.report === entry.report) return;
+		this.revokedSha256 = sha;
 		this.revoked._ = entry;
 		this.trace.msg.err(`${this.name} ${this.package?.version ?? ""} was not loaded: the Luna plugin registry revoked it. ${describeRevoked(entry)}`);
 	}
@@ -626,6 +637,8 @@ export class LunaPlugin {
 	/**
 	 * Returns true if code changed, should never be called outside of loadExports
 	 */
+	/** The hash of the last fetched build refused as revoked, so it is announced once */
+	private refusedHash?: string;
 	private async fetchPackage(): Promise<boolean> {
 		try {
 			this.fetching._ = true;
@@ -673,6 +686,19 @@ export class LunaPlugin {
 			}
 			this.pendingUpdate._ = undefined;
 
+			// New code that replaces stored code without asking (dev, live reload) is not taken if it is revoked: the stored code stays
+			if (codeChanged && this.code !== undefined) {
+				newPackage.rawSha256 ??= await rawSha256(newPackage.code);
+				const revoked = this.revokedUpdate(newPackage);
+				if (revoked !== undefined) {
+					// Once per build: live reload fetches every second
+					if (this.refusedHash !== newPackage.hash)
+						this.trace.msg.warn(`New code of ${this.name} not loaded: the Luna plugin registry revoked it. ${describeRevoked(revoked)}`);
+					this.refusedHash = newPackage.hash;
+					return false;
+				}
+			}
+
 			// Only replace the stored package once its code is fetched, so a failed fetch keeps the cached code
 			this.package = newPackage;
 
@@ -694,6 +720,13 @@ export class LunaPlugin {
 	private async loadExports(reload?: true, update?: PluginPackage): Promise<void> {
 		// Ensure we cant start loading midway through loading
 		const release = await this.loadSemaphore.obtain();
+		// The list may have changed while waiting for the semaphore: a revoked update replaces nothing and the running version keeps running
+		const revokedUpdate = update !== undefined ? this.revokedUpdate(update) : undefined;
+		if (revokedUpdate !== undefined) {
+			release();
+			if (this.pendingUpdate._?.hash === update!.hash) this.pendingUpdate._ = undefined;
+			return this.trace.msg.err.throw(`Not updating ${this.name}: the Luna plugin registry revoked ${update!.version ?? "this version"}. ${describeRevoked(revokedUpdate)}`);
+		}
 		let replaced: { previous: PluginPackage | undefined } | undefined;
 		try {
 			if (update !== undefined) replaced = { previous: this.applyUpdate(update) };
@@ -747,6 +780,17 @@ export class LunaPlugin {
 			// Prefix all unload sources with plugin name
 			for (const unload of this.unloads) {
 				unload.source = this.name + (unload.source ? `.${unload.source}` : "");
+			}
+
+			// A revoked.json accepted during the import: applyRevocations skipped this plugin (no exports yet), so it is stopped here,
+			// once its unloads are known
+			const late = LunaRegistry.loadDecision({ url: this.url, rawSha256: raw });
+			if (!late.load) {
+				await this.unload();
+				this.markRevoked(late.revoked);
+				// An accepted update revoked meanwhile: the version the user had is stored again (and runs on the next load)
+				if (replaced?.previous !== undefined && this.package?.hash === update?.hash) this.package = replaced.previous;
+				return;
 			}
 
 			this.trace.log("Loaded");

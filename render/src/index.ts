@@ -54,11 +54,11 @@ setTimeout(async () => {
 	await applySeedSettings();
 
 	// The last good registry lists, so a plugin revoked in one never runs. Bounded: a slow or broken IndexedDB must not hold plugins back.
-	// The fresh lists are fetched without waiting, a newly revoked plugin is unloaded when they arrive (see LunaRegistry)
+	// The fresh lists are fetched without waiting and then hourly, a newly revoked plugin is unloaded when they arrive (see LunaRegistry)
 	await Promise.race([LunaRegistry.loadCached(), new Promise((resolve) => setTimeout(resolve, 3000))]).catch(
 		LunaRegistry.trace.err.withContext("loadCached"),
 	);
-	LunaRegistry.refresh();
+	LunaRegistry.refreshEvery();
 
 	// Load all plugins from storage
 	await LunaPlugin.loadStoredPlugins();

@@ -14,6 +14,7 @@ import {
 	registryBaseUrl,
 	registryLoadDecision,
 	registryPublicKey,
+	replacesInUse,
 	revokedEntryFor,
 	unverifiedPlugins,
 	verifiedEntryFor,
@@ -204,4 +205,31 @@ test("registry base url: https or a local http server, always ending with /", ()
 	assert.throws(() => registryBaseUrl("http://example.com/registry/"), /https/);
 	assert.throws(() => registryBaseUrl("http://127.0.0.1.example.com/"), /https/);
 	assert.throws(() => registryBaseUrl("file:///C:/registry/"), /https/);
+});
+
+test("a list in use is replaced by the same or a higher serial, not a lower one", () => {
+	assert.equal(replacesInUse(undefined, { serial: 1 }), true);
+	assert.equal(replacesInUse({ serial: 2 }, { serial: 2 }), true);
+	assert.equal(replacesInUse({ serial: 2 }, { serial: 3 }), true);
+	assert.equal(replacesInUse({ serial: 2 }, { serial: 1 }), false);
+});
+
+test("verified entries in the current format: path, build, out and a commit url report are kept", () => {
+	const sha = "a".repeat(64);
+	const entry = {
+		id: "test.p",
+		name: "P",
+		repo: "https://github.com/Inrixia/luna-plugins",
+		commit: "0".repeat(40),
+		path: "plugins/P",
+		build: "pnpm build",
+		out: "dist",
+		natives: {},
+		capabilities: [],
+		report: `https://github.com/Inrixia/luna-registry/commit/${"1".repeat(40)}`,
+		verifiedAt: "2026-11-23T12:00:00.000Z",
+		sig: "x",
+	};
+	const file = parseRegistryFile("verified.json", JSON.stringify({ schema: 1, serial: 1, entries: { [sha]: entry } }));
+	assert.deepEqual(file.entries[sha], entry);
 });
