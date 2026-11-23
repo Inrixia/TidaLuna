@@ -575,7 +575,8 @@ export class LunaPlugin {
 				hasCode: this.code !== undefined,
 				isDev: this.isDev,
 				liveReload: this._liveReload._,
-				isCore: LunaPlugin.corePlugins.has(this.name),
+				// By url, not by name: any plugin can name itself like a core plugin, only Luna serves https://luna/
+				isCore: this.url.startsWith("https://luna/"),
 			});
 			if (waits) {
 				// The same update fetched again keeps its object, so an open update dialog still matches it
