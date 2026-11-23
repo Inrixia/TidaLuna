@@ -42,7 +42,7 @@ const nextGeneration = (url: string) => {
 	return generation;
 };
 
-/** The accepted world text whose natives a url's last finished load put in `luna.modules` */
+/** The accepted world text whose natives a url's loads last put in `luna.modules` (set at each fill) */
 const filledFrom = new Map<string, string>();
 /** Takes a url's world natives out of `luna.modules` (other natives import them by name). `keep`: names its new load still has */
 const releaseModules = (url: string, keep: ReadonlySet<string> = new Set()) => {
@@ -121,6 +121,7 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 			// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
 			globalThis.luna.modules[fileName] = exports;
 			filled.set(fileName, exports);
+			filledFrom.set(url, accepted);
 		}
 		// Natives an earlier version had and this one dropped
 		releaseModules(url, new Set(Object.keys(bundle.natives)));

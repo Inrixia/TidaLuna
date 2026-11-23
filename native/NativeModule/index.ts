@@ -8,6 +8,7 @@ import { ipcHandle } from "../ipc";
 
 import { createHash } from "crypto";
 import { askerFor } from "../core/confirmWindow";
+import { legacyListReady } from "../core/legacyListMain";
 import { coreNativeArgsError, coreNativeQuestion, coreNativeRule } from "../core/policy";
 import { registry } from "../core/registryMain";
 import * as expose from "../expose";
@@ -71,6 +72,8 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: unkn
 		done.catch(() => coreLoads.get(channel)?.done === done && coreLoads.delete(channel));
 		return done;
 	}
+	// Old-format natives need the registry's list: on a first start it may still be on its way
+	await legacyListReady();
 	const url = registry().nativeOwner(fileName, code);
 	const refusal = url === undefined ? registry().legacyRefusal(fileName, code) : undefined;
 	if (refusal !== undefined) throw new Error(`[🛑Security🛑] ${refusal}`);
