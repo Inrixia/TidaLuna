@@ -1,5 +1,5 @@
-// The page of Luna's confirmation window (confirmWindow.ts), kept apart so it can be tested without Electron.
-import { escapeHtml } from "../NativeModule/permissions/escapeHtml";
+// The page of Luna's confirmation window (confirmWindow.ts) and when it may open, kept apart so it can be tested without Electron.
+import { escapeHtml, promptPage } from "../NativeConfirm/page";
 
 /** A link in a confirmation: main opens its http(s) url in the browser (confirmWindow.ts) */
 export type ConfirmLink = { text: string; href: string };
@@ -22,15 +22,6 @@ export type ConfirmRequest = {
 	warning?: ConfirmWarning | (() => ConfirmWarning | undefined);
 };
 
-export const TITLE = "Luna";
-export const SUBMIT = "luna-core-confirm:";
-/** Title prefix of a click that doesn't answer: `link:<index>` or `action`, then `#<count>` so the same click twice changes the title */
-export const NOTE = "luna-core-note:";
-/**
- * The confirm button stays disabled this long after the window shows or gets the focus back: a click meant for TIDAL or
- * another window can't land on it
- */
-export const ARM_DELAY_MS = 700;
 const MAX_LINES = 12;
 const MAX_TEXT = 600;
 /** Confirmations open or waiting at once; more are cancelled */
@@ -163,48 +154,32 @@ const lineHtml = (line: ConfirmLine, next: () => number) =>
 				)
 				.join("");
 
+// The confirm button is armed by the window (data-arm, see promptPage). Clicks on links and the warning's action are
+// notes (`link:<index>`, `action`) that confirmWindow.ts acts on
 export const buildConfirmHtml = ({ title, lines, confirmText, warning }: Omit<ConfirmRequest, "warning"> & { warning?: ConfirmWarning }) => {
 	let links = 0;
 	const next = () => links++;
-	return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<title>${TITLE}</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-:root { color-scheme:dark; }
-body { background:#0a0a0a; color:#f4f4f5; font-family:system-ui,"Segoe UI",sans-serif; font-size:14px; padding:24px 28px 22px; user-select:none; }
-.eyebrow { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#8b8b93; font-weight:600; }
-h1 { font-size:22px; font-weight:700; margin:4px 0 14px; overflow-wrap:anywhere; }
+	return promptPage({
+		title: "Luna",
+		style: `h1 { font-size:22px; font-weight:700; margin:4px 0 14px; overflow-wrap:anywhere; }
 p { color:#c4c4cc; line-height:1.45; margin-bottom:8px; overflow-wrap:anywhere; }
 .by { color:#5eead4; font-size:12px; margin-top:12px; }
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
-button { font:inherit; border:none; cursor:pointer; padding:10px 20px; border-radius:6px; font-size:15px; font-weight:700; }
+.actions button { padding:10px 20px; border-radius:6px; font-size:15px; font-weight:700; }
 #cancel { background:#2a2a2a; color:#f4f4f5; }
 #cancel:hover { background:#353535; }
 #confirm { background:#f4f4f5; color:#0a0a0a; }
-#confirm:disabled { opacity:.4; cursor:default; }
 a { color:#5eead4; }
 .warning { display:flex; align-items:center; gap:12px; background:#3a2a08; color:#fcd34d; border-radius:6px; padding:10px 12px; margin-top:10px; overflow-wrap:anywhere; }
 .warning span { flex:1; }
-#warning-action { background:transparent; color:#fcd34d; border:1px solid #fcd34d; padding:6px 12px; font-size:13px; white-space:nowrap; }
-:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
-</style>
-</head>
-<body>
-<div class="eyebrow">Luna</div>
+#warning-action { background:transparent; color:#fcd34d; border:1px solid #fcd34d; border-radius:6px; padding:6px 12px; font-size:13px; font-weight:700; white-space:nowrap; }`,
+		body: `<div class="eyebrow">Luna</div>
 <h1>${escapeHtml(title)}</h1>
 ${lines.map((line) => `<p>${lineHtml(line, next)}</p>`).join("\n")}
 ${warning === undefined ? "" : `<div class="warning"><span id="warning-text">${escapeHtml(warning.text)}</span><button id="warning-action">${escapeHtml(warning.action)}</button></div>`}
 <p class="by">Asked by Luna in its own window. Plugins and page scripts can't see or answer it.</p>
-<div class="actions"><button id="cancel">Cancel</button><button id="confirm" disabled>${escapeHtml(confirmText)}</button></div>
-<script>
-const submit = (answer) => (document.title = "${SUBMIT}" + answer);
-let notes = 0;
-const note = (what) => (document.title = "${NOTE}" + what + "#" + ++notes);
-for (const link of document.querySelectorAll("a[data-link]"))
+<div class="actions"><button id="cancel">Cancel</button><button id="confirm" data-arm disabled>${escapeHtml(confirmText)}</button></div>`,
+		script: `for (const link of document.querySelectorAll("a[data-link]"))
 	link.addEventListener("click", (event) => (event.preventDefault(), note("link:" + link.dataset.link)));
 document.getElementById("warning-action")?.addEventListener("click", () => note("action"));
 // The user chose the warning's action: its text replaces the warning
@@ -212,15 +187,9 @@ window.warningDone = (text) => {
 	document.getElementById("warning-text").textContent = text;
 	document.getElementById("warning-action").remove();
 };
-const confirmButton = document.getElementById("confirm");
 document.getElementById("cancel").addEventListener("click", () => submit("no"));
-confirmButton.addEventListener("click", () => submit("yes"));
+document.getElementById("confirm").addEventListener("click", () => submit("yes"));
 document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
-document.getElementById("cancel").focus();
-// Armed by main once the window shows or gets the focus back, disarmed when it loses it (see ARM_DELAY_MS)
-window.arm = () => (confirmButton.disabled = false);
-window.disarm = () => (confirmButton.disabled = true);
-</script>
-</body>
-</html>`;
+document.getElementById("cancel").focus();`,
+	});
 };
