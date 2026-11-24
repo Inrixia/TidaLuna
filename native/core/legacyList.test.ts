@@ -343,6 +343,27 @@ describe("old native format list", () => {
 		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
 	});
 
+	it("logs a cache that can't be read once, not on every check", async () => {
+		const logs: string[] = [];
+		const store = createLegacyStore({
+			readCache: () => {
+				throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+			},
+			writeCache: () => {},
+			fetchList: async () => {
+				throw new Error("not reached");
+			},
+			publicKey: pub,
+			log: (message) => void logs.push(message),
+		});
+		for (let i = 0; i < 20; i++) {
+			assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+		assert.strictEqual(logs.length, 1);
+		assert.match(logs[0], /can't be read now: EACCES/);
+	});
+
 	it("allows exactly the listed code of a listed plugin", () => {
 		assert.strictEqual(listAllows(base, "https://example.com/store/a.mjs", "code a"), true);
 		// Served from another store (it moved): the id and the code decide

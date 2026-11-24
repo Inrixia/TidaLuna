@@ -133,6 +133,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	 * accepted list, an older bigger one would pass as the first.
 	 */
 	let cache: "unread" | "none" | "ok" | "broken" = "unread";
+	let lastReadError: string | undefined;
 	/** The list bytes the cache file holds: behind `current` while writing it fails (written again on the next refresh) */
 	let cachedBytes: Buffer | undefined;
 	const loadCache = () => {
@@ -141,7 +142,10 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		try {
 			text = deps.readCache();
 		} catch (err) {
-			deps.log?.(`[Luna.core] The cached old native format list can't be read now: ${(err as Error)?.message ?? err}`);
+			// Tried again on each check: logged once per error, not on every native call
+			const message = String((err as Error)?.message ?? err);
+			if (message !== lastReadError) deps.log?.(`[Luna.core] The cached old native format list can't be read now: ${message}`);
+			lastReadError = message;
 			return;
 		}
 		if (text === undefined) return void (cache = "none");
@@ -210,9 +214,10 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		return (first = refresh().then(
 			() => void (failures = 0),
 			(err) => {
+				// A cache that can't be read is logged by loadCache
+				if (cache === "unread") return void (retryAt = now());
 				deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
-				if (cache === "unread") retryAt = now();
-				else if (cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
+				if (cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
 			},
 		));
 	};
