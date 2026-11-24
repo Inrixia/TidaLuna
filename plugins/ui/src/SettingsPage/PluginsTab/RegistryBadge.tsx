@@ -8,15 +8,21 @@ import VerifiedIcon from "@mui/icons-material/Verified";
 import BlockIcon from "@mui/icons-material/Block";
 
 const subscribeRegistry = (notify: () => void) => {
-	const unloads = [LunaRegistry.verified.onValue(notify), LunaRegistry.revoked.onValue(notify), LunaRegistry.status.onValue(notify)];
+	const unloads = [
+		LunaRegistry.verified.onValue(notify),
+		LunaRegistry.revoked.onValue(notify),
+		LunaRegistry.status.onValue(notify),
+		LunaRegistry.verifiedUpdatesOnly.onValue(notify),
+	];
 	return () => unloads.forEach((unload) => unload());
 };
-/** Re-renders when the registry lists in use change. Returns them */
+/** Re-renders when the registry lists in use or "Only verified updates" change. Returns them */
 export const useRegistry = () => {
 	const verified = React.useSyncExternalStore(subscribeRegistry, () => LunaRegistry.verified._);
 	const revoked = React.useSyncExternalStore(subscribeRegistry, () => LunaRegistry.revoked._);
 	const status = React.useSyncExternalStore(subscribeRegistry, () => LunaRegistry.status._);
-	return { verified, revoked, status };
+	const verifiedUpdatesOnly = React.useSyncExternalStore(subscribeRegistry, () => LunaRegistry.verifiedUpdatesOnly._);
+	return { verified, revoked, status, verifiedUpdatesOnly };
 };
 
 export type RegistryEntry =

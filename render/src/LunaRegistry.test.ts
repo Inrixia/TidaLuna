@@ -168,3 +168,32 @@ test("a stored copy older than the serial accepted before (saving it failed): re
 	assert.equal(LunaRegistry.revoked._?.serial, 2);
 	assert.equal(LunaRegistry.status._["revoked.json"].error, undefined);
 });
+
+test("only verified updates: on by default and after a restart unless turned off; offers only verified code then", async () => {
+	restart();
+	serve(good);
+	await LunaRegistry.loadCached();
+	await LunaRegistry.refresh();
+	assert.equal(LunaRegistry.verifiedUpdatesOnly._, true);
+	assert.equal(LunaRegistry.updateOffered(codes.sha256.verified, "Fixture"), true);
+	// Unlisted code, code verified under another name, code not hashed yet
+	assert.equal(LunaRegistry.updateOffered(codes.sha256.revoked, "Fixture"), false);
+	assert.equal(LunaRegistry.updateOffered(codes.sha256.verified, "Other"), false);
+	assert.equal(LunaRegistry.updateOffered(undefined, "Fixture"), false);
+
+	await LunaRegistry.setVerifiedUpdatesOnly(false);
+	assert.equal(LunaRegistry.updateOffered(codes.sha256.revoked, "Fixture"), true);
+	restart(stored);
+	LunaRegistry.verifiedUpdatesOnly._ = true;
+	await LunaRegistry.loadCached();
+	assert.equal(LunaRegistry.verifiedUpdatesOnly._, false);
+
+	await LunaRegistry.setVerifiedUpdatesOnly(true);
+	restart(stored);
+	await LunaRegistry.loadCached();
+	assert.equal(LunaRegistry.verifiedUpdatesOnly._, true);
+	// No verified list (registry unreachable, nothing cached): nothing is offered
+	restart();
+	await LunaRegistry.loadCached();
+	assert.equal(LunaRegistry.updateOffered(codes.sha256.verified, "Fixture"), false);
+});

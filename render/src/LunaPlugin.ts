@@ -354,6 +354,10 @@ export class LunaPlugin {
 		// A newly accepted revoked.json stops the plugins it revokes (at startup plugins load before the fetch finishes, see LunaRegistry).
 		// Here, after trace: onValue calls the listener right away
 		LunaRegistry.revoked.onValue(() => LunaPlugin.applyRevocations().catch(LunaPlugin.trace.err.withContext("applyRevocations")));
+		// A waiting update that is offered now (newly verified, or "Only verified updates" turned off) is announced
+		const announce = () => Object.values(LunaPlugin.plugins).forEach((plugin) => plugin.announcePending());
+		LunaRegistry.verified.onValue(announce);
+		LunaRegistry.verifiedUpdatesOnly.onValue(announce);
 	}
 	public readonly trace: Tracer;
 	// #endregion
@@ -630,8 +634,8 @@ export class LunaPlugin {
 		// Hashed here from the code that would be stored, not taken from the package: any caller can hand one in
 		const raw = await rawSha256(update.code);
 		if (update.rawSha256 !== raw) update = { ...update, rawSha256: raw };
-		const revoked = this.revokedUpdate(update);
-		if (revoked !== undefined) return this.refuseUpdate(update, revoked);
+		const refusal = this.updateRefusal(update);
+		if (refusal !== undefined) return this.refuseUpdate(update, refusal);
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
 		if (this.enabled) {
 			await this.loadExports(true, update);
@@ -646,17 +650,25 @@ export class LunaPlugin {
 		const release = await this.loadSemaphore.obtain();
 		try {
 			// Checked again: the list may have changed while waiting for the semaphore
-			const revokedNow = this.revokedUpdate(update);
-			if (revokedNow !== undefined) return this.refuseUpdate(update, revokedNow);
+			const refusalNow = this.updateRefusal(update);
+			if (refusalNow !== undefined) return this.refuseUpdate(update, refusalNow);
 			this.applyUpdate(update);
 		} finally {
 			release();
 		}
 	}
-	/** Drop a revoked update and say why. Throws */
-	private refuseUpdate(update: PluginPackage, revoked: RevokedEntry): never {
-		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
-		return this.trace.msg.err.throw(`Not updating ${this.name}: the Luna plugin registry revoked ${update.version ?? "this version"}. ${describeRevoked(revoked)}`);
+	/** Why the user can't take this update now: the registry revoked it, or "Only verified updates" is on and the registry hasn't verified it */
+	private updateRefusal(update: PluginPackage): string | undefined {
+		const version = update.version ?? "this version";
+		const revoked = this.revokedUpdate(update);
+		if (revoked !== undefined) return `the Luna plugin registry revoked ${version}. ${describeRevoked(revoked)}`;
+		if (!LunaRegistry.updateOffered(update.rawSha256, update.name ?? this.name))
+			return `the Luna plugin registry hasn't verified ${version}, and only verified updates are on (Luna Settings > Plugins)`;
+	}
+	/** Say why the update is refused, and drop it if it is revoked (an unverified one stays shown). Throws */
+	private refuseUpdate(update: PluginPackage, reason: string): never {
+		if (this.pendingUpdate._?.hash === update.hash && this.revokedUpdate(update) !== undefined) this.pendingUpdate._ = undefined;
+		return this.trace.msg.err.throw(`Not updating ${this.name}: ${reason}`);
 	}
 	/**
 	 * Call while holding loadSemaphore.
@@ -836,6 +848,8 @@ export class LunaPlugin {
 		const revoked = pending !== undefined ? this.revokedUpdate(pending) : undefined;
 		if (pending === undefined || revoked === undefined) return;
 		this.pendingUpdate._ = undefined;
+		// Announced again if its revocation is lifted
+		this.announcedHash = undefined;
 		if (this.refusedHash !== pending.hash)
 			this.trace.msg.warn(
 				`Update of ${this.name} to ${pending.version ?? "a new version"} withdrawn: the Luna plugin registry revoked it. ${describeRevoked(revoked)}`,
@@ -853,6 +867,15 @@ export class LunaPlugin {
 		if (this.pendingUpdate._ !== undefined || this.package?.hash === refused.hash) return;
 		this.trace.log(`Update ${this.package?.version ?? ""} -> ${refused.version ?? ""} no longer revoked, waits for confirmation`);
 		this.pendingUpdate._ = refused;
+		this.announcePending();
+	}
+	/** The pending update announced last, so each is announced once */
+	private announcedHash?: string;
+	/** Say that the pending update waits for the user, once, as soon as it is offered (verified, or "Only verified updates" off) */
+	private announcePending() {
+		const pending = this.pendingUpdate._;
+		if (pending === undefined || this.announcedHash === pending.hash || !LunaRegistry.updateOffered(pending.rawSha256, pending.name ?? this.name)) return;
+		this.announcedHash = pending.hash;
 		LunaPlugin.announceUpdate(this.name);
 	}
 	/**
@@ -917,7 +940,7 @@ export class LunaPlugin {
 					}
 					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);
 					this.pendingUpdate._ = newPackage;
-					LunaPlugin.announceUpdate(this.name);
+					this.announcePending();
 				}
 				return false;
 			}
@@ -971,11 +994,11 @@ export class LunaPlugin {
 			release();
 			return;
 		}
-		// The list may have changed while waiting for the semaphore: a revoked update replaces nothing and the running version keeps running
-		const revokedUpdate = update !== undefined ? this.revokedUpdate(update) : undefined;
-		if (revokedUpdate !== undefined) {
+		// The lists or the setting may have changed while waiting for the semaphore: a refused update replaces nothing and the running version keeps running
+		const refusal = update !== undefined ? this.updateRefusal(update) : undefined;
+		if (refusal !== undefined) {
 			release();
-			return this.refuseUpdate(update!, revokedUpdate);
+			return this.refuseUpdate(update!, refusal);
 		}
 		let replaced: { previous: PluginPackage | undefined } | undefined;
 		try {

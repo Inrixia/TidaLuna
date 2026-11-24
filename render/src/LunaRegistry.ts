@@ -111,8 +111,20 @@ export class LunaRegistry {
 	/** The registry url each file in use came from */
 	private static readonly inUseFrom: Partial<Record<RegistryFileName, string>> = {};
 
-	/** Put the last good copies in use. Called once at startup, before user plugins load */
+	/** "Only verified updates" (Luna Settings > Plugins, on unless turned off): updates the registry hasn't verified are shown but not offered */
+	public static readonly verifiedUpdatesOnly: Signal<boolean> = new Signal(true);
+	public static async setVerifiedUpdatesOnly(on: boolean): Promise<void> {
+		this.verifiedUpdatesOnly._ = on;
+		await this.storage.set("verifiedUpdatesOnly", on);
+	}
+	/** Whether an update with this code is offered: any while verifiedUpdatesOnly is off, else only one verified for `name` (the name the code carries) */
+	public static updateOffered(rawSha256: string | undefined, name: string): boolean {
+		return !this.verifiedUpdatesOnly._ || (rawSha256 !== undefined && this.verifiedEntry(rawSha256, name) !== undefined);
+	}
+
+	/** Put the user's setting and the last good copies in use. Called once at startup, before user plugins load */
 	public static async loadCached(): Promise<void> {
+		this.verifiedUpdatesOnly._ = (await this.storage.get<boolean>("verifiedUpdatesOnly")) !== false;
 		const base = await this.baseUrl();
 		for (const fileName of registryFileNames) {
 			try {

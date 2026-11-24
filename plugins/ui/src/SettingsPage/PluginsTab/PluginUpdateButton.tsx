@@ -1,9 +1,10 @@
 import React from "react";
 
-import { asSentence, LunaPlugin, type PluginPackage } from "@luna/core";
+import { asSentence, LunaPlugin, LunaRegistry, type PluginPackage } from "@luna/core";
 import { useConfirm } from "material-ui-confirm";
 
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
@@ -110,8 +111,18 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			setUpdating(false);
 		}
 	}, [plugin, update, confirm]);
+	// Re-renders when the lists or "Only verified updates" change: an update verified meanwhile becomes a button
+	useRegistry();
 
 	if (update === undefined) return null;
+	if (!LunaRegistry.updateOffered(update.rawSha256, update.name ?? plugin.name))
+		return (
+			<Tooltip
+				title={`${update.version ?? "A new version"} is not verified by the Luna plugin registry. Only verified updates are offered: turn that off above to update anyway`}
+			>
+				<Chip size="small" variant="outlined" color="warning" label={`Unverified update ${update.version ?? ""}`.trim()} sx={{ marginLeft: 1 }} />
+			</Tooltip>
+		);
 	return (
 		<Tooltip title={`Update to ${update.version ?? "a new version"}`}>
 			<span>
