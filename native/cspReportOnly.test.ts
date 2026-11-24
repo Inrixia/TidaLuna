@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { networkBaseline, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
+import { networkBaseline, reportOnlyHeader, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 
-// TIDAL 2.48.0's meta policy (desktop.tidal.com, 2026-11-23)
+// TIDAL 2.48.0's meta policy, copied from desktop.tidal.com on 2026-11-23. Kept here rather than fetched so the tests
+// run offline and give the same result every time: a change on TIDAL's side shouldn't fail CI. The code reads whatever
+// policy the live page has; this is a sample of its real shape (quotes, hashes, wildcard hosts, a trailing ";")
 const tidal =
 	"base-uri 'self'; object-src 'none'; script-src 'unsafe-inline' 'self' 'wasm-unsafe-eval' *.gstatic.com *.stripe.com *.tidal.com *.cookielaw.org blob:; style-src 'unsafe-inline' 'self' *.gstatic.com *.tidal.com *.cookielaw.org *.squarecdn.com sha256-0hAheEzaMe6uXIKV4EehS9pu1am1lj/KnnzrOYqckXk=; font-src data: *.squarecdn.com;";
 
@@ -60,5 +62,24 @@ describe("reportOnlyPolicy", () => {
 			[...policy.keys()].filter((d) => !["connect-src", "img-src", "media-src", "frame-src"].includes(d)),
 			["object-src"],
 		);
+	});
+
+	it("reads only the policy's own tag, whatever comes before and after it", () => {
+		const page = `<head>${"<script>x>1</script>".repeat(50)}<meta name="a" content="b"><meta http-equiv="Content-Security-Policy" content="object-src 'none'" /><meta content="c"></head>`;
+		assert.equal(tidalMetaPolicy(page), "object-src 'none'");
+		assert.equal(tidalMetaPolicy(`<meta http-equiv="Content-Security-Policy" content="object-src 'none'"`), undefined);
+		const markerInText = `<meta name="x" content="y"><script>const m = 'http-equiv="Content-Security-Policy"'</script><meta http-equiv="Content-Security-Policy" content="object-src 'none'">`;
+		assert.equal(tidalMetaPolicy(markerInText), "object-src 'none'");
+	});
+
+	it("normalizes spaces and keeps directives without sources", () => {
+		assert.equal(reportOnlyPolicy("default-src  'self'\t;  upgrade-insecure-requests ;"), "default-src 'self'; upgrade-insecure-requests");
+	});
+
+	it("builds the header again only when TIDAL's policy changes", () => {
+		const first = reportOnlyHeader(tidal);
+		assert.equal(first, reportOnlyPolicy(tidal));
+		assert.strictEqual(reportOnlyHeader(tidal), first);
+		assert.equal(reportOnlyHeader("object-src 'none'"), reportOnlyPolicy("object-src 'none'"));
 	});
 });
