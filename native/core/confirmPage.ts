@@ -1,15 +1,8 @@
-// The page of Luna's confirmation window (confirmWindow.ts), kept apart so it can be tested without Electron.
-import { escapeHtml } from "../NativeModule/permissions/escapeHtml";
+// The page of Luna's confirmation window (confirmWindow.ts) and when it may open, kept apart so it can be tested without Electron.
+import { escapeHtml, promptPage } from "../NativeConfirm/page";
 
 export type ConfirmRequest = { title: string; lines: string[]; confirmText: string };
 
-export const TITLE = "Luna";
-export const SUBMIT = "luna-core-confirm:";
-/**
- * The confirm button stays disabled this long after the window shows or gets the focus back: a click meant for TIDAL or
- * another window can't land on it
- */
-export const ARM_DELAY_MS = 700;
 const MAX_LINES = 12;
 const MAX_TEXT = 600;
 /** Confirmations open or waiting at once; more are cancelled */
@@ -92,45 +85,25 @@ export const confirmRequest = (title: unknown, lines: unknown, confirmText: unkn
 	return request;
 };
 
-export const buildConfirmHtml = ({ title, lines, confirmText }: ConfirmRequest) => `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<title>${TITLE}</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-:root { color-scheme:dark; }
-body { background:#0a0a0a; color:#f4f4f5; font-family:system-ui,"Segoe UI",sans-serif; font-size:14px; padding:24px 28px 22px; user-select:none; }
-.eyebrow { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#8b8b93; font-weight:600; }
-h1 { font-size:22px; font-weight:700; margin:4px 0 14px; overflow-wrap:anywhere; }
+// The confirm button is armed by the window (data-arm, see promptPage)
+export const buildConfirmHtml = ({ title, lines, confirmText }: ConfirmRequest) =>
+	promptPage({
+		title: "Luna",
+		style: `h1 { font-size:22px; font-weight:700; margin:4px 0 14px; overflow-wrap:anywhere; }
 p { color:#c4c4cc; line-height:1.45; margin-bottom:8px; overflow-wrap:anywhere; }
 .by { color:#5eead4; font-size:12px; margin-top:12px; }
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
-button { font:inherit; border:none; cursor:pointer; padding:10px 20px; border-radius:6px; font-size:15px; font-weight:700; }
+.actions button { padding:10px 20px; border-radius:6px; font-size:15px; font-weight:700; }
 #cancel { background:#2a2a2a; color:#f4f4f5; }
 #cancel:hover { background:#353535; }
-#confirm { background:#f4f4f5; color:#0a0a0a; }
-#confirm:disabled { opacity:.4; cursor:default; }
-:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
-</style>
-</head>
-<body>
-<div class="eyebrow">Luna</div>
+#confirm { background:#f4f4f5; color:#0a0a0a; }`,
+		body: `<div class="eyebrow">Luna</div>
 <h1>${escapeHtml(title)}</h1>
 ${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("\n")}
 <p class="by">Asked by Luna in its own window. Plugins and page scripts can't see or answer it.</p>
-<div class="actions"><button id="cancel">Cancel</button><button id="confirm" disabled>${escapeHtml(confirmText)}</button></div>
-<script>
-const submit = (answer) => (document.title = "${SUBMIT}" + answer);
-const confirmButton = document.getElementById("confirm");
-document.getElementById("cancel").addEventListener("click", () => submit("no"));
-confirmButton.addEventListener("click", () => submit("yes"));
+<div class="actions"><button id="cancel">Cancel</button><button id="confirm" data-arm disabled>${escapeHtml(confirmText)}</button></div>`,
+		script: `document.getElementById("cancel").addEventListener("click", () => submit("no"));
+document.getElementById("confirm").addEventListener("click", () => submit("yes"));
 document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
-document.getElementById("cancel").focus();
-// Armed by main once the window shows or gets the focus back, disarmed when it loses it (see ARM_DELAY_MS)
-window.arm = () => (confirmButton.disabled = false);
-window.disarm = () => (confirmButton.disabled = true);
-</script>
-</body>
-</html>`;
+document.getElementById("cancel").focus();`,
+	});
