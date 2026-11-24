@@ -106,7 +106,12 @@ export type LegacyStoreDeps = {
 	log?(message: string): void;
 	/** How long the first check of a start with no cached copy waits for the first fetch */
 	firstWaitMs?: number;
+	/** Waits before fetching again while no list was ever accepted (the last one repeats) */
+	retryMs?: number[];
+	now?(): number;
 };
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
 
 /**
  * The accepted list: the cached copy (its signature checked again on each start), replaced only by a fetched list
@@ -114,64 +119,143 @@ export type LegacyStoreDeps = {
  * mid-write can't leave a copy that fails its check (and with it the "only shrinks" rule).
  */
 export const createLegacyStore = (deps: LegacyStoreDeps) => {
-	let current: { list: LegacyList; bytes: Buffer } | undefined;
+	let current: { list: LegacyList; bytes: Buffer; sig: string } | undefined;
 	/** `${id}\n${sha256}` of the current list */
 	let allowed = new Set<string>();
-	const use = (list: LegacyList, bytes: Buffer) => {
-		current = { list, bytes };
+	const use = (list: LegacyList, bytes: Buffer, sig: string) => {
+		current = { list, bytes, sig };
 		allowed = new Set(list.entries.map((e) => `${e.id}\n${e.sha256}`));
 	};
 
-	let readCache = false;
+	/**
+	 * "unread": not read yet, or reading failed (a locked file): tried again on the next call. "none": no cached copy.
+	 * "broken": a cached copy that fails its check. Only with "none" or "ok" can a fetched list be taken: without the
+	 * accepted list, an older bigger one would pass as the first.
+	 */
+	let cache: "unread" | "none" | "ok" | "broken" = "unread";
+	let lastReadError: string | undefined;
+	/** The list bytes the cache file holds: behind `current` while writing it fails (written again on the next refresh) */
+	let cachedBytes: Buffer | undefined;
 	const loadCache = () => {
-		if (readCache) return;
-		readCache = true;
+		if (cache !== "unread") return;
+		let text: string | undefined;
 		try {
-			const text = deps.readCache();
-			if (text === undefined) return;
+			text = deps.readCache();
+		} catch (err) {
+			// Tried again on each check: logged once per error, not on every native call
+			const message = String((err as Error)?.message ?? err);
+			if (message !== lastReadError) deps.log?.(`[Luna.core] The cached old native format list can't be read now: ${message}`);
+			lastReadError = message;
+			return;
+		}
+		if (text === undefined) return void (cache = "none");
+		try {
 			const cached = JSON.parse(text);
 			const bytes = Buffer.from(String(cached?.list), "base64");
-			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes);
+			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes, String(cached?.sig));
+			cachedBytes = bytes;
+			cache = "ok";
 		} catch (err) {
-			deps.log?.(`[Luna.core] The cached old native format list is not usable: ${(err as Error)?.message ?? err}`);
+			cache = "broken";
+			deps.log?.(
+				`[Luna.core] The cached old native format list fails its check: no old-format natives run until it is removed (${(err as Error)?.message ?? err})`,
+			);
+		}
+	};
+
+	const now = deps.now ?? Date.now;
+	const retryMs = deps.retryMs ?? [30000, 120000, 600000];
+	/** When to write the current list to the cache again, while the cache holds an older one */
+	let writeAt = 0;
+	/** The current list to the cache, if it doesn't hold it yet (writing failed): needs no fetch, so an offline start keeps it */
+	const writeCurrent = () => {
+		if (current === undefined || cachedBytes?.equals(current.bytes)) return;
+		const { bytes, sig } = current;
+		try {
+			deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
+			cachedBytes = bytes;
+		} catch (err) {
+			writeAt = now() + retryMs[0];
+			deps.log?.(`[Luna.core] The old native format list can't be cached now: ${(err as Error)?.message ?? err}`);
 		}
 	};
 
 	/** Fetches the registry's list once; throws if it can't be used */
 	const refresh = async () => {
 		loadCache();
+		if (cache === "unread") throw new Error("the cached list can't be read yet: not replaced");
+		if (cache === "broken") throw new Error("the cached list fails its check: not replaced");
+		writeCurrent();
 		const { bytes, sig } = await deps.fetchList();
+		loadCache();
 		const next = parseLegacyList(bytes, sig, deps.publicKey);
 		const replaces = replacesList(current?.list, next);
 		if (!replaces.ok) throw new Error(`refused: ${replaces.reason}`);
 		// A removal under the same serial is still a removal: only the same bytes change nothing
-		if (current !== undefined && current.bytes.equals(bytes)) return;
-		deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
-		use(next, bytes);
+		if (current !== undefined && current.bytes.equals(bytes) && cachedBytes?.equals(bytes)) return;
+		// Used at once, even if it can't be cached: a smaller list must apply now. Writing it is tried again shortly (on a
+		// check) and on each refresh until the cache holds it
+		if (current === undefined || !current.bytes.equals(bytes)) use(next, bytes, sig);
+		writeCurrent();
 		deps.log?.(`[Luna.core] Old native format list: serial ${next.serial}, ${next.entries.length} plugins`);
 	};
 
 	let first: Promise<void> | undefined;
-	/** The first refresh (started once); never rejects */
-	const start = () =>
-		(first ??= refresh().catch((err) => deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`)));
-	let firstWait: Promise<void> | undefined;
+	/**
+	 * After a refresh that failed (offline, a page that isn't the list, a list refused): when to try again, also with a
+	 * cached list, so a removal isn't held back until the next scheduled refresh. A cache that can't be read yet: on the
+	 * next call. A cache that fails its check: never (no fetched list can be taken)
+	 */
+	let retryAt: number | undefined;
+	let failures = 0;
+	/** A refresh whose failure schedules the next try; never rejects */
+	const tracked = () => {
+		retryAt = undefined;
+		return (first = refresh().then(
+			() => void (failures = 0),
+			(err) => {
+				// A cache that can't be read is logged by loadCache
+				if (cache === "unread") return void (retryAt = now());
+				deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
+				if (cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
+			},
+		));
+	};
+	/** The first refresh of a start, and the tries after a failed one (on the next check once due) */
+	const start = () => (first !== undefined && (retryAt === undefined || now() < retryAt) ? first : tracked());
+	let waitUntil: number | undefined;
 
 	return {
 		refresh,
+		/** The scheduled refresh: like refresh, but a failure is tried again soon and nothing is thrown */
+		refreshNow: (): Promise<void> => tracked(),
 		/** Whether the current list has this plugin's code (see RegistryDeps.legacyAllows) */
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();
 			void start();
+			if (now() >= writeAt) writeCurrent();
 			return allowed.has(`${id}\n${servedSha256}`);
 		},
-		/** Before a check: with no list yet, waits (once per start, at most firstWaitMs) for the first fetch */
+		/**
+		 * Before a check: with no list yet, waits for the cache to be readable and for the first fetch, at most
+		 * firstWaitMs after the first call of this start
+		 */
 		ready: async (): Promise<void> => {
-			loadCache();
-			const started = start();
-			if (current !== undefined) return;
-			firstWait ??= Promise.race([started, new Promise<void>((resolve) => setTimeout(resolve, deps.firstWaitMs ?? 10000).unref?.())]);
-			await firstWait;
+			waitUntil ??= now() + (deps.firstWaitMs ?? 10000);
+			for (;;) {
+				loadCache();
+				if (current !== undefined || cache === "broken") return;
+				const left = waitUntil - now();
+				if (left <= 0) return;
+				const started = start();
+				// A locked cache: read it again shortly
+				if (cache === "unread") {
+					await sleep(Math.min(200, left));
+					continue;
+				}
+				await Promise.race([started, sleep(left)]);
+				return;
+			}
 		},
 		current: () => current?.list,
 	};

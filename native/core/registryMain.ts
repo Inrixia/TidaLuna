@@ -14,7 +14,7 @@ import { ipcHandle } from "../ipc";
 import { nativeSourcesOf } from "../NativeModule/permissions/verifySource";
 import { forgetAnswers } from "../NativeModule/trust";
 import { askerFor } from "./confirmWindow";
-import { legacyAllows } from "./legacyListMain";
+import { legacyAllows, legacyListLoaded, legacyListReady } from "./legacyListMain";
 import { boundedCache } from "./policy";
 import { cspSources } from "./hosts";
 import { createNet } from "./net";
@@ -67,6 +67,8 @@ export const registry = () =>
 			renameSync(`${file}.tmp`, file);
 		},
 		legacyAllows,
+		legacyReady: legacyListReady,
+		legacyLoaded: legacyListLoaded,
 		wasMigrated: () => existsSync(migratedFile()),
 		markMigrated: () => {
 			mkdirSync(path.dirname(migratedFile()), { recursive: true });

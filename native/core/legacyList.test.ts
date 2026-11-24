@@ -114,6 +114,41 @@ describe("old native format list", () => {
 		assert.strictEqual(tampered.current(), undefined);
 	});
 
+	it("takes no fetched list while the cache can't be read or fails its check: an older one can't come back", async () => {
+		const good = signed(doc(5, [A]));
+		const older = signed(doc(4, [A, B]));
+		let locked = true;
+		let cache: string | undefined = JSON.stringify({ list: good.bytes.toString("base64"), sig: good.sig });
+		const writes: string[] = [];
+		const store = createLegacyStore({
+			readCache: () => {
+				if (locked) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+				return cache;
+			},
+			writeCache: (text) => void writes.push(text),
+			fetchList: async () => older,
+			publicKey: pub,
+		});
+		await assert.rejects(store.refresh(), /can't be read yet/);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// Readable again: the cached serial 5 refuses the older list
+		locked = false;
+		await assert.rejects(store.refresh(), /rollback/);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(writes.length, 0);
+
+		cache = "{broken";
+		const broken = createLegacyStore({
+			readCache: () => cache,
+			writeCache: (text) => void writes.push(text),
+			fetchList: async () => older,
+			publicKey: pub,
+		});
+		await assert.rejects(broken.refresh(), /fails its check/);
+		assert.strictEqual(broken.allows("b.mjs", B.sha256), false);
+		assert.strictEqual(writes.length, 0);
+	});
+
 	it("waits once for the first fetch when nothing is cached, and refuses meanwhile", async () => {
 		let release: () => void = () => {};
 		const fetched = new Promise<void>((resolve) => (release = resolve));
@@ -130,8 +165,203 @@ describe("old native format list", () => {
 		assert.ok(Date.now() - started < 1000);
 		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
 		release();
+		await fetched;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+	});
+
+	it("waits for a cache locked at the start, and reads it once it is free", async () => {
+		const { bytes, sig } = signed(doc(1, [A]));
+		let locked = 3;
+		const store = createLegacyStore({
+			readCache: () => {
+				if (locked-- > 0) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+				return JSON.stringify({ list: bytes.toString("base64"), sig });
+			},
+			writeCache: () => {},
+			fetchList: async () => {
+				throw new Error("offline");
+			},
+			publicKey: pub,
+			firstWaitMs: 5000,
+		});
 		await store.ready();
 		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+	});
+
+	it("fetches again while no list was ever accepted, after a growing wait", async () => {
+		const { bytes, sig } = signed(doc(1, [A]));
+		let time = 0;
+		let online = false;
+		let fetches = 0;
+		const store = createLegacyStore({
+			readCache: () => undefined,
+			writeCache: () => {},
+			fetchList: async () => {
+				fetches++;
+				if (!online) throw new Error("offline");
+				return { bytes, sig };
+			},
+			publicKey: pub,
+			retryMs: [100, 1000],
+			now: () => time,
+		});
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 1);
+		time = 100;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		// The next wait is longer
+		time = 600;
+		online = true;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		time = 1100;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		// Accepted: no more fetches of its own (the 6 h refresh is legacyListMain's)
+		time = 99999;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 3);
+	});
+
+	it("applies a smaller list at once even if it can't be cached, and caches it once it can", async () => {
+		const first = signed(doc(1, [A, B]));
+		let served = first;
+		let locked = true;
+		let time = 0;
+		let cache = JSON.stringify({ list: first.bytes.toString("base64"), sig: first.sig });
+		const store = createLegacyStore({
+			readCache: () => cache,
+			writeCache: (text) => {
+				if (locked) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+				cache = text;
+			},
+			fetchList: async () => served,
+			publicKey: pub,
+			now: () => time,
+		});
+		assert.strictEqual(store.allows("b.mjs", B.sha256), true);
+		served = signed(doc(2, [A]));
+		await store.refresh();
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// Still the only-shrinks rule against the list in use
+		served = first;
+		await assert.rejects(store.refresh(), /rollback/);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// Not tried again before the wait
+		locked = false;
+		store.allows("a.mjs", A.sha256);
+		assert.strictEqual(JSON.parse(cache).list, first.bytes.toString("base64"));
+		time = 30000;
+		// Writable again, and offline: the next check writes it (no fetch needed), so a start offline keeps it
+		locked = false;
+		served = { bytes: Buffer.from("offline"), sig: "" };
+		store.allows("a.mjs", A.sha256);
+		const offline = createLegacyStore({
+			readCache: () => cache,
+			writeCache: () => {},
+			fetchList: async () => {
+				throw new Error("offline");
+			},
+			publicKey: pub,
+		});
+		assert.strictEqual(offline.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(offline.allows("b.mjs", B.sha256), false);
+	});
+
+	it("fetches again after an offline start with a cached list, and takes a removal once online", async () => {
+		const cached = signed(doc(1, [A, B]));
+		let time = 0;
+		let online = false;
+		let fetches = 0;
+		const store = createLegacyStore({
+			readCache: () => JSON.stringify({ list: cached.bytes.toString("base64"), sig: cached.sig }),
+			writeCache: () => {},
+			fetchList: async () => {
+				fetches++;
+				if (!online) throw new Error("offline");
+				return signed(doc(2, [A]));
+			},
+			publicKey: pub,
+			retryMs: [100],
+			now: () => time,
+		});
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+		assert.strictEqual(store.allows("b.mjs", B.sha256), true);
+		await settle();
+		online = true;
+		time = 100;
+		store.allows("b.mjs", B.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+	});
+
+	it("tries again soon after a fetched list that can't be used, and after a failed scheduled refresh", async () => {
+		const cached = signed(doc(1, [A, B]));
+		let time = 0;
+		let served: { bytes: Buffer; sig: string } = { bytes: Buffer.from("<html>portal</html>"), sig: "" };
+		let fetches = 0;
+		const store = createLegacyStore({
+			readCache: () => JSON.stringify({ list: cached.bytes.toString("base64"), sig: cached.sig }),
+			writeCache: () => {},
+			fetchList: async () => (fetches++, served),
+			publicKey: pub,
+			retryMs: [100],
+			now: () => time,
+		});
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+		store.allows("b.mjs", B.sha256);
+		await settle();
+		served = signed(doc(2, [A]));
+		time = 100;
+		store.allows("b.mjs", B.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// The scheduled refresh fails: the next check after the wait fetches again
+		served = { bytes: Buffer.from("offline"), sig: "" };
+		await store.refreshNow();
+		served = signed(doc(3, []));
+		time = 150;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 3);
+		time = 200;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 4);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+	});
+
+	it("logs a cache that can't be read once, not on every check", async () => {
+		const logs: string[] = [];
+		const store = createLegacyStore({
+			readCache: () => {
+				throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+			},
+			writeCache: () => {},
+			fetchList: async () => {
+				throw new Error("not reached");
+			},
+			publicKey: pub,
+			log: (message) => void logs.push(message),
+		});
+		for (let i = 0; i < 20; i++) {
+			assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+		assert.strictEqual(logs.length, 1);
+		assert.match(logs[0], /can't be read now: EACCES/);
 	});
 
 	it("allows exactly the listed code of a listed plugin", () => {

@@ -43,10 +43,7 @@ const store = createLegacyStore({
 
 let timer: NodeJS.Timeout | undefined;
 const startTimer = () => {
-	timer ??= setInterval(
-		() => store.refresh().catch((err) => console.warn("[Luna.core] Old native format list not refreshed:", err?.message ?? err)),
-		REFRESH_MS,
-	);
+	timer ??= setInterval(() => void store.refreshNow(), REFRESH_MS);
 	timer.unref();
 };
 
@@ -55,6 +52,9 @@ export const legacyAllows = (id: string, servedSha256: string): boolean => {
 	startTimer();
 	return store.allows(id, servedSha256);
 };
+
+/** Whether a list is loaded (cached or fetched) */
+export const legacyListLoaded = (): boolean => store.current() !== undefined;
 
 /** Before the first check of a start with no stored copy: waits a little for the first fetch */
 export const legacyListReady = (): Promise<void> => {
