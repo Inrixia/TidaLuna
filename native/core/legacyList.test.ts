@@ -388,5 +388,11 @@ describe("old format list hosts", () => {
 		const before = parse(doc(1, [{ ...A, hosts: ["api.a.com"] } as any]));
 		const more = parse(doc(2, [{ ...A, hosts: ["api.a.com", "evil.example"] } as any]));
 		assert.strictEqual(replacesList(before, more).ok, false);
+		// Hosts dropped from an entry are a change too
+		assert.strictEqual(replacesList(before, parse(doc(2, [A]))).ok, false);
+	});
+	it("takes hosts added once to an entry that had none", () => {
+		const added = parse(doc(2, [{ ...A, hosts: ["api.a.com"] } as any, B]));
+		assert.strictEqual(replacesList(base, added).ok, true);
 	});
 });

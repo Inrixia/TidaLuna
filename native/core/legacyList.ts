@@ -38,11 +38,14 @@ const sha256 = (text: string) => createHash("sha256").update(text, "utf8").diges
 const SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 const entryKey = (e: LegacyListEntry) => `${e.store}\n${e.id}\n${e.sha256}`;
+/**
+ * `b` is the entry `a`: same code and natives, the same hosts, or hosts added to an entry that had none (the registry
+ * reads them once for a list collected before it read hosts; luna-registry legacy.mjs hosts)
+ */
 const sameEntry = (a: LegacyListEntry, b: LegacyListEntry) =>
 	entryKey(a) === entryKey(b) &&
 	JSON.stringify(sortedNatives(a)) === JSON.stringify(sortedNatives(b)) &&
-	JSON.stringify([...(a.hosts ?? [])].sort()) === JSON.stringify([...(b.hosts ?? [])].sort()) &&
-	(a.hosts === undefined) === (b.hosts === undefined);
+	(a.hosts === undefined || (b.hosts !== undefined && JSON.stringify([...a.hosts].sort()) === JSON.stringify([...b.hosts].sort())));
 const sortedNatives = (e: LegacyListEntry) => Object.entries(e.natives).sort(([a], [b]) => a.localeCompare(b));
 
 /** Whether `sig` (base64, as in a .sig file) is an ed25519 signature of exactly `bytes` by `publicKey` (base64, raw) */
