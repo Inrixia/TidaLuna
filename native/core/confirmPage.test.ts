@@ -112,10 +112,10 @@ describe("core confirmation page", () => {
 
 	it("starts with the confirm button disabled and Cancel focused", () => {
 		const html = buildConfirmHtml({ title: "T", lines: [], confirmText: "Install" });
-		assert.match(html, /<button id="confirm" disabled>Install<\/button>/);
+		// Armed by the window (data-arm, see NativeConfirm), Cancel never is
+		assert.match(html, /<button id="confirm" data-arm disabled>Install<\/button>/);
+		assert.match(html, /<button id="cancel">Cancel<\/button>/);
 		assert.match(html, /getElementById\("cancel"\)\.focus\(\)/);
-		// Main disarms it while another window has the focus
-		assert.match(html, /window\.disarm = \(\) => \(confirmButton\.disabled = true\)/);
 	});
 
 	it("checks requests that come over IPC", () => {
