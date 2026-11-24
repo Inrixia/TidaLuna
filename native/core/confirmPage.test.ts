@@ -129,15 +129,15 @@ describe("core confirmation page", () => {
 
 	it("takes http(s) links only, and a warning only with an action to run", () => {
 		const link = { text: "v2", href: "https://example.com/owner/repo/commit/abc1234" };
-		assert.deepEqual(confirmRequest("T", [["a ", link]], "Go").lines, [["a ", link]]);
-		assert.throws(() => confirmRequest("T", [[{ text: "x", href: "javascript:alert(1)" }]], "Go"));
-		assert.throws(() => confirmRequest("T", [[{ text: "x", href: "file:///C:/x" }]], "Go"));
-		assert.throws(() => confirmRequest("T", [[{ text: "x" }]], "Go"));
-		assert.throws(() => confirmRequest("T", [[1]], "Go"));
+		expect(confirmRequest("T", [["a ", link]], "Go").lines).toStrictEqual([["a ", link]]);
+		expect(() => confirmRequest("T", [[{ text: "x", href: "javascript:alert(1)" }]], "Go")).toThrow();
+		expect(() => confirmRequest("T", [[{ text: "x", href: "file:///C:/x" }]], "Go")).toThrow();
+		expect(() => confirmRequest("T", [[{ text: "x" }]], "Go")).toThrow();
+		expect(() => confirmRequest("T", [[1]], "Go")).toThrow();
 		const run = () => {};
-		assert.equal(shownWarning(confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d", run }))?.run, run);
-		assert.throws(() => confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d" }));
-		assert.throws(() => confirmRequest("T", [], "Go", { text: 1, action: "Ask again", done: "d", run }));
+		expect(shownWarning(confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d", run }))?.run).toBe(run);
+		expect(() => confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d" })).toThrow();
+		expect(() => confirmRequest("T", [], "Go", { text: 1, action: "Ask again", done: "d", run })).toThrow();
 	});
 
 	it("numbers its links in the order main opens them, and escapes them", () => {
@@ -147,18 +147,18 @@ describe("core confirmation page", () => {
 			"Go",
 		);
 		// Normalized: b.example's path gets its slash
-		assert.deepEqual(confirmLinks(request), ["https://a.example/1?x=1&y=2", "http://b.example/"]);
+		expect(confirmLinks(request)).toStrictEqual(["https://a.example/1?x=1&y=2", "http://b.example/"]);
 		const html = buildConfirmHtml({ ...request, warning: shownWarning(request) });
-		assert.match(html, /<a href="#" data-link="0" title="https:\/\/a\.example\/1\?x=1&amp;y=2">&lt;b&gt;one&lt;\/b&gt;<\/a>/);
-		assert.match(html, /<a href="#" data-link="1" title="http:\/\/b\.example\/">two<\/a>/);
-		assert.equal(html.includes("<b>one</b>"), false);
+		expect(html).toMatch(/<a href="#" data-link="0" title="https:\/\/a\.example\/1\?x=1&amp;y=2">&lt;b&gt;one&lt;\/b&gt;<\/a>/);
+		expect(html).toMatch(/<a href="#" data-link="1" title="http:\/\/b\.example\/">two<\/a>/);
+		expect(html.includes("<b>one</b>")).toBe(false);
 	});
 
 	it("shows a warning with its own button only when there is one", () => {
 		const warning = { text: "<i>Allowed</i>", action: "Ask again", done: "Asks again", run: () => {} };
 		const html = buildConfirmHtml({ title: "T", lines: [], confirmText: "Go", warning });
-		assert.match(html, /<span id="warning-text">&lt;i&gt;Allowed&lt;\/i&gt;<\/span><button id="warning-action">Ask again<\/button>/);
-		assert.equal(buildConfirmHtml({ title: "T", lines: [], confirmText: "Go" }).includes('id="warning-text"'), false);
+		expect(html).toMatch(/<span id="warning-text">&lt;i&gt;Allowed&lt;\/i&gt;<\/span><button id="warning-action">Ask again<\/button>/);
+		expect(buildConfirmHtml({ title: "T", lines: [], confirmText: "Go" }).includes('id="warning-text"')).toBe(false);
 	});
 
 	it("takes a warning given as a function when the window shows, and checks it then", () => {
@@ -166,28 +166,28 @@ describe("core confirmation page", () => {
 		const request = confirmRequest("T", [], "Go", () =>
 			state === undefined ? undefined : { text: state, action: "A", done: "D", run: () => {} },
 		);
-		assert.equal(shownWarning(request), undefined);
+		expect(shownWarning(request)).toBe(undefined);
 		state = "now";
-		assert.equal(shownWarning(request)?.text, "now");
+		expect(shownWarning(request)?.text).toBe("now");
 		const bad = confirmRequest("T", [], "Go", () => ({ text: "w", action: "A", done: "D" }));
-		assert.throws(() => shownWarning(bad));
+		expect(() => shownWarning(bad)).toThrow();
 	});
 
 	it("runs the warning's action only if the user chose it and then confirmed", () => {
 		const warning = { text: "w", action: "A", done: "D", run: () => {} };
-		assert.equal(actionToRun(true, true, warning), warning.run);
-		assert.equal(actionToRun(true, false, warning), undefined);
+		expect(actionToRun(true, true, warning)).toBe(warning.run);
+		expect(actionToRun(true, false, warning)).toBe(undefined);
 		// Cancel, Escape, closed or never shown
-		assert.equal(actionToRun(false, true, warning), undefined);
-		assert.equal(actionToRun(undefined, true, warning), undefined);
-		assert.equal(actionToRun(true, true, undefined), undefined);
+		expect(actionToRun(false, true, warning)).toBe(undefined);
+		expect(actionToRun(undefined, true, warning)).toBe(undefined);
+		expect(actionToRun(true, true, undefined)).toBe(undefined);
 	});
 
 	it("opens normalized http(s) links only", () => {
-		assert.equal(httpLink("https://example.com/a b"), "https://example.com/a%20b");
-		assert.equal(httpLink("https:example.com"), "https://example.com/");
-		assert.equal(httpLink("javascript:alert(1)"), undefined);
-		assert.equal(httpLink(" file:///C:/x"), undefined);
-		assert.equal(httpLink(1), undefined);
+		expect(httpLink("https://example.com/a b")).toBe("https://example.com/a%20b");
+		expect(httpLink("https:example.com")).toBe("https://example.com/");
+		expect(httpLink("javascript:alert(1)")).toBe(undefined);
+		expect(httpLink(" file:///C:/x")).toBe(undefined);
+		expect(httpLink(1)).toBe(undefined);
 	});
 });

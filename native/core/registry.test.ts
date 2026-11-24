@@ -1,5 +1,4 @@
-import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 
 import { createHash } from "node:crypto";
 
@@ -66,16 +65,16 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 
 		const no = asker(false);
-		assert.strictEqual(await registry.install(URL, no), false);
-		assert.strictEqual(no.asked.length, 1);
-		assert.strictEqual(registry.info(URL), undefined);
-		assert.strictEqual(registry.isEnabled(URL), false);
+		expect(await registry.install(URL, no)).toBe(false);
+		expect(no.asked.length).toBe(1);
+		expect(registry.info(URL)).toBe(undefined);
+		expect(registry.isEnabled(URL)).toBe(false);
 
 		const yes = asker(true);
-		assert.strictEqual(await registry.install(URL, yes), true);
-		assert.match(yes.asked[0].title, /^Install /);
-		assert.strictEqual(registry.isEnabled(URL), true);
-		assert.strictEqual(registry.info(URL)?.hash, "v1");
+		expect(await registry.install(URL, yes)).toBe(true);
+		expect(yes.asked[0].title).toMatch(/^Install /);
+		expect(registry.isEnabled(URL)).toBe(true);
+		expect(registry.info(URL)?.hash).toBe("v1");
 	});
 
 	it("asks before enabling native code, not plain page code", async () => {
@@ -89,32 +88,32 @@ describe("core registry", () => {
 		await registry.disable(DEV_URL);
 
 		const plain = asker(false);
-		assert.strictEqual(await registry.enable(DEV_URL, plain), true);
-		assert.strictEqual(plain.asked.length, 0);
+		expect(await registry.enable(DEV_URL, plain)).toBe(true);
+		expect(plain.asked.length).toBe(0);
 
 		const no = asker(false);
-		assert.strictEqual(await registry.enable(URL, no), false);
-		assert.strictEqual(no.asked.length, 1);
-		assert.strictEqual(registry.isEnabled(URL), false);
-		assert.strictEqual(await registry.enable(URL, asker(true)), true);
-		assert.strictEqual(registry.isEnabled(URL), true);
+		expect(await registry.enable(URL, no)).toBe(false);
+		expect(no.asked.length).toBe(1);
+		expect(registry.isEnabled(URL)).toBe(false);
+		expect(await registry.enable(URL, asker(true))).toBe(true);
+		expect(registry.isEnabled(URL)).toBe(true);
 	});
 
 	it("registers native code only for the accepted code of an enabled plugin", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		const registry = createRegistry(deps);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(undefined);
 
 		await registry.install(URL, asker(true));
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(URL);
 		// Other code under the same name, or a file the plugin doesn't have
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a, changed"), undefined);
-		assert.strictEqual(registry.nativeOwner("b.native.ts", "native a"), undefined);
+		expect(registry.nativeOwner("a.native.ts", "native a, changed")).toBe(undefined);
+		expect(registry.nativeOwner("b.native.ts", "native a")).toBe(undefined);
 
 		await registry.disable(URL);
-		assert.strictEqual(registry.isEnabled(URL), false);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		expect(registry.isEnabled(URL)).toBe(false);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(undefined);
 	});
 
 	it("keeps running the accepted version until the user accepts an update", async () => {
@@ -125,26 +124,26 @@ describe("core registry", () => {
 
 		serve(URL, "v2", { "a.native.ts": "native a2", "b.native.ts": "native b" });
 		const loaded = await registry.load(URL);
-		assert.strictEqual(loaded.package.hash, "v1");
-		assert.deepStrictEqual(loaded.pending?.added, ["b.native.ts"]);
+		expect(loaded.package.hash).toBe("v1");
+		expect(loaded.pending?.added).toStrictEqual(["b.native.ts"]);
 		// The new native code isn't registered before it is accepted
-		assert.strictEqual(registry.nativeOwner("b.native.ts", "native b"), undefined);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+		expect(registry.nativeOwner("b.native.ts", "native b")).toBe(undefined);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(URL);
 
 		const no = asker(false);
-		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
-		assert.ok(no.asked[0].lines.map(lineText).includes(`Update only if you trust the author and ${URL}`));
-		assert.strictEqual(shownWarning(no.asked[0]), undefined);
-		assert.strictEqual(registry.info(URL)?.hash, "v1");
+		expect(await registry.acceptUpdate(URL, no)).toBe(false);
+		expect(no.asked[0].lines.map(lineText).includes(`Update only if you trust the author and ${URL}`)).toBeTruthy();
+		expect(shownWarning(no.asked[0])).toBe(undefined);
+		expect(registry.info(URL)?.hash).toBe("v1");
 
-		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
-		assert.strictEqual(registry.info(URL)?.hash, "v2");
-		assert.strictEqual(registry.info(URL)?.pending, undefined);
-		assert.strictEqual(registry.nativeOwner("b.native.ts", "native b"), URL);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		expect(await registry.acceptUpdate(URL, asker(true))).toBe(true);
+		expect(registry.info(URL)?.hash).toBe("v2");
+		expect(registry.info(URL)?.pending).toBe(undefined);
+		expect(registry.nativeOwner("b.native.ts", "native b")).toBe(URL);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(undefined);
 		// What v1 registered can't be called any more
-		assert.strictEqual(registry.ownsNative(URL, "a.native.ts", "native a"), false);
-		assert.strictEqual(registry.ownsNative(URL, "a.native.ts", "native a2"), true);
+		expect(registry.ownsNative(URL, "a.native.ts", "native a")).toBe(false);
+		expect(registry.ownsNative(URL, "a.native.ts", "native a2")).toBe(true);
 	});
 
 	it("accepts the update the user was asked about, a newer one found meanwhile waits", async () => {
@@ -162,10 +161,10 @@ describe("core registry", () => {
 			return true;
 		};
 		// load waits for acceptUpdate (one operation per url): the user accepted v2, and v3 waits for its own window
-		assert.strictEqual(await registry.acceptUpdate(URL, ask), true);
+		expect(await registry.acceptUpdate(URL, ask)).toBe(true);
 		await laterLoad;
-		assert.strictEqual(registry.info(URL)?.hash, "v2");
-		assert.strictEqual(registry.info(URL)?.pending?.hash, "v3");
+		expect(registry.info(URL)?.hash).toBe("v2");
+		expect(registry.info(URL)?.pending?.hash).toBe("v3");
 	});
 
 	it("accepts dev updates without asking", async () => {
@@ -174,8 +173,8 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		await registry.install(DEV_URL, asker(true));
 		serve(DEV_URL, "d2", { "a.native.ts": "native a" });
-		assert.strictEqual((await registry.load(DEV_URL)).package.hash, "d2");
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), DEV_URL);
+		expect((await registry.load(DEV_URL)).package.hash).toBe("d2");
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(DEV_URL);
 	});
 
 	it("runs the accepted version offline, and nothing for a disabled plugin", async () => {
@@ -184,9 +183,9 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		await registry.install(URL, asker(true));
 		served.delete(URL);
-		assert.strictEqual((await registry.load(URL)).package.hash, "v1");
+		expect((await registry.load(URL)).package.hash).toBe("v1");
 		await registry.disable(URL);
-		await assert.rejects(registry.load(URL), /not enabled/);
+		await expect(registry.load(URL)).rejects.toThrow(/not enabled/);
 	});
 
 	it("disables migrated native plugins until the user reviews them", async () => {
@@ -194,35 +193,35 @@ describe("core registry", () => {
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		serve(DEV_URL, "d1");
 		const registry = createRegistry(deps);
-		assert.strictEqual(registry.needsMigration(), true);
+		expect(registry.needsMigration()).toBe(true);
 		await registry.migrate([
 			{ url: URL, name: "native", enabled: true },
 			{ url: DEV_URL, name: "plain", enabled: true },
 			{ url: "https://luna/core", name: "core", enabled: true },
 		]);
-		assert.strictEqual(registry.needsMigration(), false);
-		assert.strictEqual(registry.info("https://luna/core"), undefined);
+		expect(registry.needsMigration()).toBe(false);
+		expect(registry.info("https://luna/core")).toBe(undefined);
 
-		await assert.rejects(registry.load(URL), /has native code/);
-		assert.strictEqual(registry.isEnabled(URL), false);
+		await expect(registry.load(URL)).rejects.toThrow(/has native code/);
+		expect(registry.isEnabled(URL)).toBe(false);
 		// Waiting for its first review, not an update: the page shows it disabled, with no Update button
-		assert.strictEqual(registry.info(URL)?.pending, undefined);
-		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), false);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
-		assert.strictEqual((await registry.load(DEV_URL)).package.hash, "d1");
+		expect(registry.info(URL)?.pending).toBe(undefined);
+		expect(await registry.acceptUpdate(URL, asker(true))).toBe(false);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(undefined);
+		expect((await registry.load(DEV_URL)).package.hash).toBe("d1");
 
 		const yes = asker(true);
-		assert.strictEqual(await registry.enable(URL, yes), true);
-		assert.strictEqual(yes.asked.length, 1);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+		expect(await registry.enable(URL, yes)).toBe(true);
+		expect(yes.asked.length).toBe(1);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(URL);
 	});
 
 	it("migrates only once, and never over a stored state", async () => {
 		const stored: CoreState = { version: 1, plugins: {} };
 		const registry = createRegistry(fakeDeps(stored).deps);
-		assert.strictEqual(registry.needsMigration(), false);
+		expect(registry.needsMigration()).toBe(false);
 		await registry.migrate([{ url: URL, name: "x", enabled: true }]);
-		assert.strictEqual(registry.info(URL), undefined);
+		expect(registry.info(URL)).toBe(undefined);
 	});
 
 	it("reads an accepted bundle's native files once, however often they are checked", async () => {
@@ -231,8 +230,8 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		await registry.install(URL, asker(true));
 		const before = reads.count;
-		for (let i = 0; i < 5; i++) assert.strictEqual(registry.ownsNative(URL, "a.native.ts", "native a"), true);
-		assert.ok(reads.count - before <= 1);
+		for (let i = 0; i < 5; i++) expect(registry.ownsNative(URL, "a.native.ts", "native a")).toBe(true);
+		expect(reads.count - before <= 1).toBeTruthy();
 	});
 
 	it("forgets native answers on uninstall", async () => {
@@ -241,9 +240,9 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		await registry.install(URL, asker(true));
 		await registry.uninstall(URL);
-		assert.deepStrictEqual(forgotten, [URL]);
-		assert.strictEqual(registry.info(URL), undefined);
-		assert.strictEqual(registry.isEnabled(URL), false);
+		expect(forgotten).toStrictEqual([URL]);
+		expect(registry.info(URL)).toBe(undefined);
+		expect(registry.isEnabled(URL)).toBe(false);
 	});
 
 	it("shows the sha256 of the code the page runs, before and after an update", async () => {
@@ -252,15 +251,15 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		await registry.install(URL, asker(true));
 		const v1 = createHash("sha256").update("code v1", "utf8").digest("hex");
-		assert.strictEqual(registry.info(URL)?.codeSha256, v1);
-		assert.strictEqual((await registry.load(URL)).package.codeSha256, v1);
+		expect(registry.info(URL)?.codeSha256).toBe(v1);
+		expect((await registry.load(URL)).package.codeSha256).toBe(v1);
 
 		serve(URL, "v2");
 		const v2 = createHash("sha256").update("code v2", "utf8").digest("hex");
-		assert.strictEqual((await registry.load(URL)).pending?.codeSha256, v2);
+		expect((await registry.load(URL)).pending?.codeSha256).toBe(v2);
 		const ask = asker(false);
 		await registry.acceptUpdate(URL, ask);
-		assert.ok(ask.asked[0].lines.map(lineText).includes(`Code sha256: ${v1.slice(0, 12)} -> ${v2.slice(0, 12)}`));
+		expect(ask.asked[0].lines.map(lineText).includes(`Code sha256: ${v1.slice(0, 12)} -> ${v2.slice(0, 12)}`)).toBeTruthy();
 	});
 
 	it("links the update's versions, release and changes, and the plugin url", async () => {
@@ -275,7 +274,7 @@ describe("core registry", () => {
 		const ask = asker(false);
 		await registry.acceptUpdate(RELEASE, ask);
 		const [versions, hashes, trust] = ask.asked[0].lines;
-		assert.deepStrictEqual(versions, [
+		expect(versions).toStrictEqual([
 			{ text: "v1", href: `https://github.com/owner/repo/commit/${A}` },
 			" -> ",
 			{ text: "v2", href: `https://github.com/owner/repo/commit/${B}` },
@@ -283,12 +282,12 @@ describe("core registry", () => {
 			{ text: "release latest", href: "https://github.com/owner/repo/releases/tag/latest" },
 			")",
 		]);
-		assert.deepStrictEqual((hashes as Exclude<ConfirmLine, string>).slice(1), [
+		expect((hashes as Exclude<ConfirmLine, string>).slice(1)).toStrictEqual([
 			" (",
 			{ text: "changes", href: `https://github.com/owner/repo/compare/${A}...${B}` },
 			")",
 		]);
-		assert.deepStrictEqual(trust, ["Update only if you trust the author and ", { text: RELEASE, href: `${RELEASE}.json` }]);
+		expect(trust).toStrictEqual(["Update only if you trust the author and ", { text: RELEASE, href: `${RELEASE}.json` }]);
 	});
 
 	it("keeps the version the user has when the confirmation is rejected (as when its Ask again action fails)", async () => {
@@ -301,12 +300,12 @@ describe("core registry", () => {
 		const failing = async () => {
 			throw new Error('"Ask again" failed');
 		};
-		await assert.rejects(registry.acceptUpdate(URL, failing), /Ask again/);
-		assert.strictEqual(registry.info(URL)?.hash, "v1");
-		assert.strictEqual(registry.info(URL)?.pending?.hash, "v2");
+		await expect(registry.acceptUpdate(URL, failing)).rejects.toThrow(/Ask again/);
+		expect(registry.info(URL)?.hash).toBe("v1");
+		expect(registry.info(URL)?.pending?.hash).toBe("v2");
 		// The url's queue goes on
-		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
-		assert.strictEqual(registry.info(URL)?.hash, "v2");
+		expect(await registry.acceptUpdate(URL, asker(true))).toBe(true);
+		expect(registry.info(URL)?.hash).toBe("v2");
 	});
 
 	it("warns when the plugin's native files are allowed for all versions, and asks again only if the user updates", async () => {
@@ -323,24 +322,24 @@ describe("core registry", () => {
 		allVersions.set(URL, ["a.native.ts", "gone.native.ts"]);
 		const warning = shownWarning(no.asked[0]);
 		// Only the update's own files
-		assert.strictEqual(warning?.text, "Native code allowed for all versions (a.native.ts): the update's runs without asking.");
-		assert.strictEqual(warning?.action, "Ask again");
+		expect(warning?.text).toBe("Native code allowed for all versions (a.native.ts): the update's runs without asking.");
+		expect(warning?.action).toBe("Ask again");
 		allVersions.set(URL, ["gone.native.ts"]);
-		assert.strictEqual(shownWarning(no.asked[0]), undefined);
+		expect(shownWarning(no.asked[0])).toBe(undefined);
 		allVersions.set(URL, ["a.native.ts", "gone.native.ts"]);
 		// The window runs it only when the user chose it and then confirmed (confirmWindow.ts)
-		assert.deepStrictEqual(allVersions.get(URL), ["a.native.ts", "gone.native.ts"]);
+		expect(allVersions.get(URL)).toStrictEqual(["a.native.ts", "gone.native.ts"]);
 		await warning!.run();
-		assert.strictEqual(allVersions.get(URL), undefined);
+		expect(allVersions.get(URL)).toBe(undefined);
 	});
 
 	it("does nothing for Luna's own plugins and refuses non-plugin urls", async () => {
 		const registry = createRegistry(fakeDeps().deps);
 		const ask = asker(true);
-		assert.strictEqual(await registry.install("https://luna/core", ask), true);
-		assert.strictEqual(ask.asked.length, 0);
-		await assert.rejects(registry.install("file:///C:/x", ask), /Not a plugin url/);
-		assert.throws(() => registry.info(42), /Not a plugin url/);
+		expect(await registry.install("https://luna/core", ask)).toBe(true);
+		expect(ask.asked.length).toBe(0);
+		await expect(registry.install("file:///C:/x", ask)).rejects.toThrow(/Not a plugin url/);
+		expect(() => registry.info(42)).toThrow(/Not a plugin url/);
 	});
 
 	it("moves a plugin to a new store url, other code there waits as an update", async () => {
@@ -352,18 +351,18 @@ describe("core registry", () => {
 
 		// The same code (fetchCode adds the url's sourceURL in Luna; the fake serves it bare)
 		served.set(NEW_URL, served.get(URL)!);
-		assert.strictEqual(await registry.moveUrl(URL, NEW_URL), true);
-		assert.strictEqual(registry.info(URL), undefined);
-		assert.strictEqual(registry.info(NEW_URL)?.enabled, true);
-		assert.strictEqual(registry.info(NEW_URL)?.pending, undefined);
-		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), NEW_URL);
-		assert.deepStrictEqual(forgotten, [URL]);
+		expect(await registry.moveUrl(URL, NEW_URL)).toBe(true);
+		expect(registry.info(URL)).toBe(undefined);
+		expect(registry.info(NEW_URL)?.enabled).toBe(true);
+		expect(registry.info(NEW_URL)?.pending).toBe(undefined);
+		expect(registry.nativeOwner("a.native.ts", "native a")).toBe(NEW_URL);
+		expect(forgotten).toStrictEqual([URL]);
 
 		const OTHER_URL = "https://example.net/plugin";
 		serve(OTHER_URL, "v2");
-		assert.strictEqual(await registry.moveUrl(NEW_URL, OTHER_URL), true);
-		assert.strictEqual(registry.info(OTHER_URL)?.hash, "v1");
-		assert.strictEqual(registry.info(OTHER_URL)?.pending?.hash, "v2");
+		expect(await registry.moveUrl(NEW_URL, OTHER_URL)).toBe(true);
+		expect(registry.info(OTHER_URL)?.hash).toBe("v1");
+		expect(registry.info(OTHER_URL)?.pending?.hash).toBe("v2");
 	});
 
 	it("drops a waiting update the url no longer serves", async () => {
@@ -372,10 +371,10 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		await registry.install(URL, asker(true));
 		serve(URL, "v2");
-		assert.strictEqual((await registry.load(URL)).pending?.hash, "v2");
+		expect((await registry.load(URL)).pending?.hash).toBe("v2");
 		serve(URL, "v1");
-		assert.strictEqual((await registry.load(URL)).pending, undefined);
-		assert.strictEqual(registry.info(URL)?.pending, undefined);
+		expect((await registry.load(URL)).pending).toBe(undefined);
+		expect(registry.info(URL)?.pending).toBe(undefined);
 	});
 
 	it("doesn't move to or from a dev url, nor over an installed plugin", async () => {
@@ -386,9 +385,9 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		await registry.install(URL, asker(true));
 		await registry.install("https://example.org/plugin", asker(true));
-		await assert.rejects(registry.moveUrl(URL, DEV_URL), /Can't move/);
-		await assert.rejects(registry.moveUrl(URL, "https://example.org/plugin"), /already installed/);
-		assert.strictEqual(await registry.moveUrl("https://example.com/none", "https://example.com/other"), false);
-		assert.strictEqual(registry.info(URL)?.hash, "v1");
+		await expect(registry.moveUrl(URL, DEV_URL)).rejects.toThrow(/Can't move/);
+		await expect(registry.moveUrl(URL, "https://example.org/plugin")).rejects.toThrow(/already installed/);
+		expect(await registry.moveUrl("https://example.com/none", "https://example.com/other")).toBe(false);
+		expect(registry.info(URL)?.hash).toBe("v1");
 	});
 });

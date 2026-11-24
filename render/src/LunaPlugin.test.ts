@@ -1,7 +1,7 @@
 // Run: pnpm exec vitest run --project dom render/src/LunaPlugin.test.ts
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { setIpcHandler } from "../../test/setup-node";
+import { isCoreUrl, isDevUrl } from "../../native/core/policy";
 import { LunaPlugin, type LunaPluginStorage } from "./LunaPlugin";
 
 /**
@@ -114,6 +114,8 @@ export const onUnload = () => globalThis.__lunaTest.log.push("onUnload:${name}")
 ${extra}`;
 
 let seq = 0;
+/** Luna's own plugins are told apart by their url (https://luna/), not by their name */
+const nextCoreUrl = (label: string) => `https://luna/${++seq}/${label}`;
 /** Unique urls keep the loader's registries and the mocked fetch clean between tests */
 const nextUrl = (label: string) => `https://luna.test/${++seq}/${label}`;
 
@@ -126,6 +128,95 @@ const serve = (
 	server.serve(url, { hash, code: code === null ? undefined : (code ?? pluginCode(name)), package: { name, ...fields } });
 	return url;
 };
+
+/**
+ * Luna core (`__LunaCore`, main process) holds what is installed and the code the user accepted. This fake keeps the
+ * same: `records` are the installed plugins with the version accepted (`served` at the time), and `load` hands that
+ * version back, plus the newer one the url serves now as `pending`. Luna's own plugins (https://luna/...) are not
+ * recorded: the core serves what their bundle has.
+ */
+const lunaCore = {
+	records: new Map<string, { name: string; enabled: boolean; accepted: Served }>(),
+	/** What the user answers to the core's confirmation windows */
+	answers: { install: true, enable: true, update: true },
+	requests: [] as string[],
+	reset() {
+		this.records.clear();
+		this.answers = { install: true, enable: true, update: true };
+		this.requests.length = 0;
+	},
+	/** Installs what the url serves now, as accepted */
+	accept(url: string, enabled = true) {
+		const served = server.served.get(url)!;
+		this.records.set(url, { name: String(served.package?.name), enabled, accepted: { ...served } });
+	},
+	pendingOf(url: string) {
+		const record = this.records.get(url);
+		const served = server.served.get(url);
+		// A plugin served from this computer is not held back: Luna core loads what the url serves
+		if (isDevUrl(url) || record === undefined || served === undefined || (served.hash ?? "hash-1") === (record.accepted.hash ?? "hash-1"))
+			return undefined;
+		return { hash: served.hash ?? "hash-1", version: undefined, codeSha256: "sha", natives: [], added: [], removed: [] };
+	},
+	api: {
+		list: async () => [...lunaCore.records].map(([url, record]) => ({ url, name: record.name, enabled: record.enabled })),
+		info: async (url: string) => {
+			const record = lunaCore.records.get(url);
+			return record === undefined ? undefined : { enabled: record.enabled, pending: lunaCore.pendingOf(url) };
+		},
+		needsMigration: async () => false,
+		migrate: vi.fn(async () => {}),
+		moveUrl: vi.fn(async (from: string, to: string) => {
+			const record = lunaCore.records.get(from);
+			if (record === undefined) return false;
+			lunaCore.records.delete(from);
+			lunaCore.records.set(to, record);
+			return true;
+		}),
+		install: vi.fn(async (url: string) => {
+			if (!lunaCore.answers.install) return false;
+			lunaCore.accept(url);
+			return true;
+		}),
+		enable: vi.fn(async (url: string) => {
+			const record = lunaCore.records.get(url);
+			if (record === undefined || !lunaCore.answers.enable) return false;
+			record.enabled = true;
+			return true;
+		}),
+		disable: vi.fn(async (url: string) => {
+			const record = lunaCore.records.get(url);
+			if (record !== undefined) record.enabled = false;
+		}),
+		uninstall: vi.fn(async (url: string) => void lunaCore.records.delete(url)),
+		acceptUpdate: vi.fn(async (url: string) => {
+			if (!lunaCore.answers.update) return false;
+			lunaCore.accept(url, lunaCore.records.get(url)?.enabled);
+			return true;
+		}),
+		load: vi.fn(async (url: string) => {
+			const record = lunaCore.records.get(url);
+			const served = record !== undefined && !isDevUrl(url) ? record.accepted : server.served.get(url);
+			if (served === undefined || served.code === undefined) throw new Error(`Luna core has no code for ${url}`);
+			// What it fetches itself, in the main process
+			lunaCore.requests.push(url);
+			const hold = server.hold;
+			if (hold !== undefined && hold.matches(`${url}.mjs`)) {
+				hold.started();
+				await hold.promise;
+			}
+			return {
+				package: { hash: "hash-1", ...served.package, ...(served.hash === undefined ? {} : { hash: served.hash }) },
+				code: `${served.code}
+//# sourceURL=${url}.mjs`,
+				pending: lunaCore.pendingOf(url),
+			};
+		}),
+	},
+};
+
+/** How many times the plugin asked Luna core for its code */
+const loads = (url: string) => lunaCore.requests.filter((request) => request === url).length;
 
 /** Creates a plugin the way the loader does at startup: from a store entry, fetching its package if it has none */
 const createPlugin = async (
@@ -140,6 +231,7 @@ const createPlugin = async (
 	}: { installed?: boolean; enabled?: boolean; hash?: string; code?: string | null; package?: Record<string, unknown>; url?: string } = {},
 ) => {
 	serve(url, name, { hash, code, package: fields });
+	if (installed && !isCoreUrl(url)) lunaCore.accept(url, enabled);
 	const plugin = await LunaPlugin.fromStorage({ url, installed, enabled });
 	return { url, plugin };
 };
@@ -149,8 +241,6 @@ const settle = async (ticks = 5) => {
 	for (let index = 0; index < ticks; index++) await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-let forgetNativePermissions: ReturnType<typeof vi.fn>;
-
 beforeEach(async () => {
 	await LunaPlugin.pluginStorage.clear();
 	for (const url of Object.keys(LunaPlugin.plugins)) delete LunaPlugin.plugins[url];
@@ -159,6 +249,9 @@ beforeEach(async () => {
 	traceLines.length = 0;
 	(globalThis as any).__lunaTest = { log };
 	server.reset();
+	lunaCore.reset();
+	for (const method of Object.values(lunaCore.api)) if (vi.isMockFunction(method)) method.mockClear();
+	(globalThis as any).__LunaCore = lunaCore.api;
 	objectUrls.codes.length = 0;
 	objectUrls.urls.length = 0;
 	objectUrls.revoked.length = 0;
@@ -173,8 +266,6 @@ beforeEach(async () => {
 		}
 		return respond(request);
 	});
-	forgetNativePermissions = vi.fn(async () => undefined);
-	setIpcHandler("__Luna.nativePermissions.forget", forgetNativePermissions as (...args: any[]) => unknown);
 });
 
 afterEach(() => {
@@ -256,20 +347,13 @@ describe("fromStorage", () => {
 		const unloads = [...(plugin.exports?.unloads ?? [])];
 		expect(unloads.map((unload) => unload.source)).toEqual(["stored", "stored.onUnload"]);
 
-		// Package fetched twice (fromStorage, then loadExports) and the bundle once
-		expect(server.jsonRequests(url)).toBe(2);
-		expect(server.codeRequests(url)).toBe(1);
+		// The page asks Luna core for the code, once; all it fetches itself is the package name of a new entry
+		expect(server.requests).toEqual([`${url}.json`]);
+		expect(loads(url)).toBe(1);
 		expect(objectUrls.codes).toHaveLength(1);
 		expect(objectUrls.codes[0].endsWith(`\n//# sourceURL=${url}.mjs`)).toBe(true);
 		expect(objectUrls.revoked).toEqual(objectUrls.urls);
 		expect(log).toEqual(["load:stored"]);
-	});
-
-	test("rewrites a registerNative call so native permissions are keyed by the plugin's url", async () => {
-		const register = `export const register = () => __ipcRenderer.invoke("__Luna.registerNative", "native.js");`;
-		const { url } = await createPlugin("native", { code: pluginCode("native", register) });
-
-		expect(objectUrls.codes[0]).toContain(`"__Luna.registerNativeFrom",${JSON.stringify(url)},`);
 	});
 
 	test("keeps a plugin on a throwaway store when its name is persisted at another url", async () => {
@@ -307,7 +391,8 @@ describe("install / uninstall", () => {
 		expect(plugin.installed).toBe(true);
 		expect(plugin.enabled).toBe(true);
 		expect(plugin.exports).toBeDefined();
-		expect(server.codeRequests(url)).toBe(1);
+		expect(lunaCore.api.install).toHaveBeenCalledWith(url);
+		expect(loads(url)).toBe(1);
 
 		await settle();
 		const persisted = await LunaPlugin.pluginStorage.get<LunaPluginStorage>("instP");
@@ -328,7 +413,9 @@ describe("install / uninstall", () => {
 		expect(switchedTo.plugin.exports).toBeDefined();
 		expect(switchedTo.plugin.installed).toBe(true);
 		expect(switchedTo.plugin.enabled).toBe(true);
-		expect(forgetNativePermissions).toHaveBeenCalledWith(switchedFrom.url);
+		// Luna core forgets the old version's permissions (it also holds the record)
+		expect(lunaCore.api.uninstall).toHaveBeenCalledWith(switchedFrom.url);
+		expect(lunaCore.records.has(switchedFrom.url)).toBe(false);
 		expect(log).toContain("unload:switch");
 
 		await settle();
@@ -347,7 +434,7 @@ describe("install / uninstall", () => {
 		expect(plugin.plugin.enabled).toBe(false);
 		expect(plugin.plugin.exports).toBeUndefined();
 		expect(dependency.plugin.dependants.has(plugin.plugin)).toBe(false);
-		expect(forgetNativePermissions).toHaveBeenCalledWith(plugin.url);
+		expect(lunaCore.api.uninstall).toHaveBeenCalledWith(plugin.url);
 
 		await settle();
 		// `uninstall` deletes the entry, but ReactiveStore writes changes on a later microtask, so the write that
@@ -380,14 +467,14 @@ describe("enable / disable / reload", () => {
 		const { url, plugin } = await createPlugin("twice");
 		await plugin.enable();
 
-		expect(server.codeRequests(url)).toBe(1);
-		expect(server.jsonRequests(url)).toBe(3);
+		// Asked again, but the code is the same, so it does not run twice
+		expect(loads(url)).toBe(2);
 		expect(log).toEqual(["load:twice"]);
 		expect(plugin.exports).toBeDefined();
 	});
 
 	test("a bundle that throws sets loadError and leaves the plugin unloaded", async () => {
-		const { plugin } = await createPlugin("throws", { installed: false, enabled: false, code: `throw new Error("boom from plugin");` });
+		const { plugin } = await createPlugin("throws", { enabled: false, code: `throw new Error("boom from plugin");` });
 
 		await expect(plugin.enable()).rejects.toThrow("boom from plugin");
 
@@ -408,11 +495,12 @@ describe("enable / disable / reload", () => {
 		expect(plugin.installed).toBe(true);
 		expect(plugin.exports).toBeUndefined();
 		expect(plugin.loadError._).toBeUndefined();
-		expect(server.codeRequests(url)).toBe(1);
+		// Luna core has no code for it and says so, nothing else runs instead
+		expect(lunaCore.api.load).toHaveBeenCalledWith(url);
 	});
 
 	test("fetching is signalled while the bundle is being fetched", async () => {
-		const { plugin } = await createPlugin("gate", { installed: false, enabled: false });
+		const { plugin } = await createPlugin("gate", { enabled: false });
 
 		let started!: () => void;
 		const requestStarted = new Promise<void>((resolve) => (started = resolve));
@@ -437,10 +525,18 @@ describe("enable / disable / reload", () => {
 		serve(url, "reload", { hash: "hash-2", code: pluginCode("reload", `globalThis.__lunaTest.log.push("v2");`) });
 		await plugin.reload();
 
+		// New code for an installed plugin waits for the user, the stored version keeps running (see acceptUpdate)
+		expect(plugin.package?.hash).toBe("hash-1");
+		expect(plugin.pendingUpdate._?.hash).toBe("hash-2");
+		// The reload ran the stored code again (the same module, so it logs no second load), nothing of v2
+		expect(log).toEqual(["load:reload", "unload:reload", "onUnload:reload"]);
+		log.length = 0;
+		await plugin.acceptUpdate();
+
 		expect(plugin.package?.hash).toBe("hash-2");
 		expect(plugin.code).toContain("v2");
-		expect(log).toEqual(["load:reload", "unload:reload", "onUnload:reload", "load:reload", "v2"]);
-		expect(server.codeRequests(url)).toBe(2);
+		expect(log).toEqual(["onUnload:reload", "load:reload", "v2"]);
+		expect(lunaCore.api.acceptUpdate).toHaveBeenCalledWith(url);
 		expect(plugin.exports).toBeDefined();
 	});
 
@@ -450,9 +546,8 @@ describe("enable / disable / reload", () => {
 
 		await plugin.reload();
 
-		// No bundle fetch: the code kept in the plugin's package is what gets loaded again
-		expect(server.codeRequests(url)).toBe(1);
-		expect(server.jsonRequests(url)).toBe(3);
+		// Luna core hands back the accepted code, which is loaded again
+		expect(loads(url)).toBe(2);
 		expect(objectUrls.codes).toHaveLength(before + 1);
 		// The old unloads always run before the code is loaded again
 		expect(log).toContain("unload:same");
@@ -468,13 +563,13 @@ describe("enable / disable / reload", () => {
 		expect(plugin.store.liveReload).toBe(true);
 
 		await vi.advanceTimersByTimeAsync(0);
-		expect(server.jsonRequests(url)).toBe(3);
+		expect(loads(url)).toBe(2);
 		await vi.advanceTimersByTimeAsync(1000);
-		expect(server.jsonRequests(url)).toBe(4);
+		expect(loads(url)).toBe(3);
 
 		plugin.liveReload = false;
 		await vi.advanceTimersByTimeAsync(5000);
-		expect(server.jsonRequests(url)).toBe(4);
+		expect(loads(url)).toBe(3);
 		expect(plugin.store.liveReload).toBe(false);
 	});
 });
@@ -503,11 +598,14 @@ describe("dependants", () => {
 		const parent = await createPlugin("depParent");
 		// An enabled plugin that never loaded: its bundle is missing, see the noCode test above
 		const childUrl = serve(nextUrl("depChild"), "depChild", { code: null });
+		lunaCore.accept(childUrl);
 		const child = await LunaPlugin.fromStorage({ url: childUrl, installed: true, enabled: true });
 		expect(child.exports).toBeUndefined();
 		parent.plugin.addDependant(child);
 
+		// The user accepted the bundle that was missing
 		serve(childUrl, "depChild", { hash: "hash-2" });
+		lunaCore.accept(childUrl);
 		await parent.plugin.reload();
 		await settle();
 
@@ -518,10 +616,12 @@ describe("dependants", () => {
 
 	test("defers a dependant while another plugin it depends on is still loading", async () => {
 		const otherUrl = serve(nextUrl("deferOther"), "deferOther", { code: null });
+		lunaCore.accept(otherUrl);
 		const other = await LunaPlugin.fromStorage({ url: otherUrl, installed: true, enabled: true });
 		expect(other.exports).toBeUndefined();
 		const parent = await createPlugin("deferParent");
 		const childUrl = serve(nextUrl("deferChild"), "deferChild", { code: null });
+		lunaCore.accept(childUrl);
 		const child = await LunaPlugin.fromStorage({ url: childUrl, installed: true, enabled: true });
 		parent.plugin.addDependant(child);
 		other.addDependant(child);
@@ -535,6 +635,8 @@ describe("dependants", () => {
 
 		serve(otherUrl, "deferOther", { hash: "hash-2" });
 		serve(childUrl, "deferChild", { hash: "hash-2" });
+		lunaCore.accept(otherUrl);
+		lunaCore.accept(childUrl);
 		await other.reload();
 		await settle();
 		expect(child.exports).toBeDefined();
@@ -614,13 +716,17 @@ describe("storage", () => {
 			hideSettings: false,
 		});
 
+		// What is installed is Luna core's record, not the page's storage: it lists the first and the last one
+		lunaCore.accept(loadUrl);
+		lunaCore.records.set(goneUrl, { name: "storedGone", enabled: true, accepted: { package: { name: "storedGone" } } });
+
 		await LunaPlugin.loadStoredPlugins();
 		await settle();
 
 		expect(log).toEqual(["load:storedLoad"]);
 		expect(LunaPlugin.plugins[loadUrl].exports).toBeDefined();
-		expect(LunaPlugin.plugins[offUrl].installed).toBe(false);
-		expect(LunaPlugin.plugins[offUrl].exports).toBeUndefined();
+		// Not installed in Luna core: not loaded, whatever the page's storage says
+		expect(LunaPlugin.plugins[offUrl]).toBeUndefined();
 		expect(LunaPlugin.plugins[goneUrl].enabled).toBe(true);
 		expect(LunaPlugin.plugins[goneUrl].exports).toBeUndefined();
 	});
@@ -629,12 +735,16 @@ describe("storage", () => {
 		const fromBase = "https://old-store.test/plugins";
 		const toBase = "https://new-store.test/plugins";
 		const oldUrl = serve(`${fromBase}/Migrate`, "migrate", { code: null });
-		const plugin = await LunaPlugin.fromStorage({ url: oldUrl, installed: false, enabled: false });
+		lunaCore.accept(oldUrl);
+		const plugin = await LunaPlugin.fromStorage({ url: oldUrl, installed: true, enabled: true });
 		await settle();
 
 		await LunaPlugin.migrateBaseUrl(fromBase, toBase);
 
 		const newUrl = `${toBase}/Migrate`;
+		// Luna core's record moves, the page's copy and the loaded plugin follow
+		expect(lunaCore.api.moveUrl).toHaveBeenCalledWith(oldUrl, newUrl);
+		expect(lunaCore.records.has(newUrl)).toBe(true);
 		expect(LunaPlugin.plugins[oldUrl]).toBeUndefined();
 		expect(LunaPlugin.plugins[newUrl]).toBe(plugin);
 		expect((await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>("migrate")).url).toBe(newUrl);
@@ -658,22 +768,21 @@ describe("core plugins", () => {
 	test("reloadAll skips core plugins and leaves them where they are", async () => {
 		expect([...LunaPlugin.corePlugins]).toEqual(["@luna/lib", "@luna/lib.native", "@luna/ui", "@luna/dev", "@luna/linux"]);
 
-		const core = await createPlugin("@luna/lib");
+		// A core plugin is told apart by its url (https://luna/), not by its name
+		const core = await createPlugin("@luna/lib", { url: nextCoreUrl("lib") });
 		const regular = await createPlugin("regular");
-		const regularCodes = server.codeRequests(regular.url);
 
 		expect(await LunaPlugin.reloadAll()).toEqual([]);
 
-		expect(server.jsonRequests(core.url)).toBe(2);
-		expect(server.jsonRequests(regular.url)).toBe(3);
-		// Unchanged hash, so the bundle it already has is reused
-		expect(server.codeRequests(regular.url)).toBe(regularCodes);
+		expect(loads(core.url)).toBe(1);
+		expect(loads(regular.url)).toBe(2);
 		expect(core.plugin.exports).toBeDefined();
 		expect(regular.plugin.exports).toBeDefined();
 	});
 
 	test("reloadAll reports a plugin that failed and the dependants it took down", async () => {
-		const failing = await createPlugin("failA");
+		// A dev url, the only kind whose new code loads without waiting for the user
+		const failing = await createPlugin("failA", { url: `http://127.0.0.1:1/${++seq}/failA` });
 		const dependant = await createPlugin("failB");
 		failing.plugin.addDependant(dependant.plugin);
 
@@ -688,7 +797,7 @@ describe("core plugins", () => {
 
 	test("fromStack names the plugin a stack frame belongs to, never a core plugin", async () => {
 		const { url, plugin } = await createPlugin("stack", { installed: false, enabled: false });
-		const core = await createPlugin("@luna/lib", { installed: false, enabled: false });
+		const core = await createPlugin("@luna/lib", { installed: false, enabled: false, url: nextCoreUrl("lib") });
 
 		expect(LunaPlugin.fromStack(`Error: boom\n    at listener (${url}.mjs:12:3)`)).toBe(plugin);
 		expect(LunaPlugin.fromStack(`Error: boom\n    at listener (${core.url}.mjs:1:1)`)).toBeUndefined();

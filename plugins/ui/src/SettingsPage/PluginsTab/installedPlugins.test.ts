@@ -78,7 +78,7 @@ test("sorts installed non-core plugins in either direction without changing regi
 	expect(installedPlugins(plugins, true)).toEqual([z, a]);
 	expect(plugins[0]).toBe(z);
 	expect(plugins.map((plugin) => plugin.name)).toEqual(["Zulu", "store", "core", "alpha"]);
-	expect(installedPlugins([], core, false)).toEqual([]);
+	expect(installedPlugins([], false)).toEqual([]);
 });
 
 test("collates case-insensitively, so uppercase names don't jump to the front", () => {
@@ -99,5 +99,5 @@ test("matches partial names ignoring case and surrounding whitespace", () => {
 	expect(matchingPluginNames(list, "store").size).toBe(0);
 	// Lowercases the plugin names too, and an uninstalled plugin can still match
 	expect([...matchingPluginNames(plugins, "ZULU")]).toEqual([z]);
-	expect([...matchingPluginNames(plugins, "core")]).toEqual([item("core")]);
+	expect([...matchingPluginNames(plugins, "core")]).toEqual([item("core", true, true)]);
 });

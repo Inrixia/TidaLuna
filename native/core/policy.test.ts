@@ -14,24 +14,24 @@ import {
 
 describe("core policy", () => {
 	it("tells Luna's own urls apart", () => {
-		assert.equal(isCoreUrl("https://luna/luna.lib"), true);
-		assert.equal(isCoreUrl("https://luna.example.com/x"), false);
-		assert.equal(isCoreUrl("http://luna/luna.lib"), false);
+		expect(isCoreUrl("https://luna/luna.lib")).toBe(true);
+		expect(isCoreUrl("https://luna.example.com/x")).toBe(false);
+		expect(isCoreUrl("http://luna/luna.lib")).toBe(false);
 	});
 
 	it("only treats http on host 127.0.0.1 as a dev url", () => {
-		assert.equal(isDevUrl("http://127.0.0.1:3002/Tidal Tags"), true);
-		assert.equal(isDevUrl("http://127.0.0.1/Plugin"), true);
-		assert.equal(isDevUrl("http://localhost:3000/Plugin"), false);
-		assert.equal(isDevUrl("https://127.0.0.1/Plugin"), false);
-		assert.equal(isDevUrl("http://127.0.0.1.example.com/Plugin"), false);
-		assert.equal(isDevUrl("http://127.0.0.1@example.com/Plugin"), false);
-		assert.equal(isDevUrl("not a url"), false);
+		expect(isDevUrl("http://127.0.0.1:3002/Tidal Tags")).toBe(true);
+		expect(isDevUrl("http://127.0.0.1/Plugin")).toBe(true);
+		expect(isDevUrl("http://localhost:3000/Plugin")).toBe(false);
+		expect(isDevUrl("https://127.0.0.1/Plugin")).toBe(false);
+		expect(isDevUrl("http://127.0.0.1.example.com/Plugin")).toBe(false);
+		expect(isDevUrl("http://127.0.0.1@example.com/Plugin")).toBe(false);
+		expect(isDevUrl("not a url")).toBe(false);
 	});
 
 	it("lists added and removed native files", () => {
-		assert.deepEqual(nativesDiff(["a", "b"], ["b", "c"]), { added: ["c"], removed: ["a"] });
-		assert.deepEqual(nativesDiff([], []), { added: [], removed: [] });
+		expect(nativesDiff(["a", "b"], ["b", "c"])).toStrictEqual({ added: ["c"], removed: ["a"] });
+		expect(nativesDiff([], [])).toStrictEqual({ added: [], removed: [] });
 	});
 
 	it("forgets the least recently used cache entries", () => {
@@ -40,11 +40,11 @@ describe("core policy", () => {
 		cache.set("b", 2);
 		cache.get("a");
 		cache.set("c", 3);
-		assert.equal(cache.size, 2);
+		expect(cache.size).toBe(2);
 		// "a" was used after "b", so "b" is the oldest
-		assert.equal(cache.get("b"), undefined);
-		assert.equal(cache.get("a"), 1);
-		assert.equal(cache.get("c"), 3);
+		expect(cache.get("b")).toBe(undefined);
+		expect(cache.get("a")).toBe(1);
+		expect(cache.get("c")).toBe(3);
 	});
 });
 
@@ -99,10 +99,10 @@ describe("core policy: native answers for all versions", () => {
 			d: { url: "https://example.com/other", claimedUrl: URL, fileName: "d.native.ts", answer: "allowUpdates" },
 			e: { url: "https://example.com/other", fileName: "e.native.ts", answer: "allowUpdates" },
 		};
-		assert.deepEqual(allVersionsEntries(natives, URL), [
+		expect(allVersionsEntries(natives, URL)).toStrictEqual([
 			["a", "a.native.ts"],
 			["b", "b.native.ts"],
 		]);
-		assert.deepEqual(allVersionsEntries({}, URL), []);
+		expect(allVersionsEntries({}, URL)).toStrictEqual([]);
 	});
 });
