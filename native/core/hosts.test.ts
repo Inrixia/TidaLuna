@@ -11,6 +11,7 @@ import {
 	localEntryAllows,
 	parseHostEntry,
 	sameHosts,
+	worldCsp,
 } from "./hosts";
 
 const allowed = (hosts: string[], url: string) => hostAllowed(hosts, new URL(url));
@@ -178,5 +179,20 @@ describe("plugin hosts", () => {
 			"2001:0:4136:e378:8000:63bf:f7f7:f7f7",
 		])
 			assert.equal(isLocalHost(host), false, host);
+	});
+
+	it("closes a plugin world's own network: no directive allows a host, a scheme or 'self'", () => {
+		const directives = new Map(
+			worldCsp.split(";").map((part) => {
+				const [name, ...sources] = part.trim().split(/\s+/);
+				return [name, sources];
+			}),
+		);
+		assert.deepEqual(directives.get("default-src"), ["'none'"]);
+		for (const [name, sources] of directives)
+			for (const source of sources) assert.ok(["'none'", "'unsafe-eval'"].includes(source), `${name} ${source}`);
+		// A directive that falls back to nothing but default-src: none of the network ones are listed apart
+		for (const name of ["connect-src", "img-src", "media-src", "font-src", "style-src", "frame-src", "worker-src"])
+			assert.equal(directives.has(name), false, name);
 	});
 });

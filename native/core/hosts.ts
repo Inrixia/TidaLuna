@@ -186,6 +186,16 @@ const ipv6Groups = (address: string): number[] | undefined => {
 	return groups.some(Number.isNaN) ? undefined : groups;
 };
 
+/**
+ * The CSP of every plugin world (coreWorld.ts sets it with setIsolatedWorldInfo). The world's own fetch, XMLHttpRequest,
+ * WebSocket, sendBeacon, import() and the images, scripts and styles it puts into the page are blocked: luna.fetch
+ * (`__LunaNative.fetch`, checked against the plugin's hosts in main) is its way out. `'unsafe-eval'`: libraries that
+ * build functions still run, that needs no network.
+ * Not a boundary while the page's own CSP blocks nothing: what the world writes into the page's DOM that runs or loads in
+ * the page (an inline `onerror=` handler, an iframe, a style attribute's url()) is the page's request, not the world's.
+ */
+export const worldCsp = "default-src 'none'; script-src 'unsafe-eval'";
+
 /** CSP source expressions for the entries (cspReportOnly.ts adds them to the network directives) */
 export const cspSources = (hosts: string[]): string[] => {
 	const sources = new Set<string>();

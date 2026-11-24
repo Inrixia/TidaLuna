@@ -19,6 +19,7 @@ import { unloadableEmitter, type AnyFn } from "@inrixia/helpers";
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 import type { NetLogEntry, NetRequest, NetResponse } from "./net";
+import { worldCsp } from "./hosts";
 import { isCoreUrl } from "./policy";
 import { pluginUrl, type CorePluginInfo, type PluginPackage } from "./registry";
 
@@ -121,7 +122,9 @@ const loadWorld = async (url: string) => {
 		// Active before it runs: its top level may already call its natives
 		const load: WorldLoad = { worldId, active: true };
 		world.current = load;
-		webFrame.setIsolatedWorldInfo(worldId, { name: `Luna plugin ${url}` });
+		// Its own network is closed (hosts.ts worldCsp): luna.fetch below is its way out. Electron applies a world's csp only
+		// with a securityOrigin: the page's, as the world had without one
+		webFrame.setIsolatedWorldInfo(worldId, { name: `Luna plugin ${url}`, securityOrigin: window.location.origin, csp: worldCsp });
 		// This load's bridge only: it stays off once this load is unloaded, whatever loads after it
 		contextBridge.exposeInIsolatedWorld(worldId, "__LunaNative", {
 			url,
