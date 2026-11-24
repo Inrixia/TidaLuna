@@ -430,23 +430,34 @@ export class LunaPlugin {
 	 */
 	public static fromStack(stack?: string): LunaPlugin | undefined {
 		if (stack === undefined) return undefined;
-		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !plugin.isCore && plugin.url.length > 0);
+		const plugins = Object.values(LunaPlugin.plugins)
+			.filter((plugin) => !plugin.isCore && plugin.url.length > 0)
+			.map((plugin) => ({ plugin, name: plugin.sourceName, own: `${plugin.url}.mjs` }));
+		/** The longest name in the frame (`https://s/p.mjs.mjs` over `https://s/p.mjs`), then the one at its own url */
+		const best = (names: { name: string; own: string; plugin: LunaPlugin }[]) =>
+			names.reduce<(typeof names)[number] | undefined>(
+				(a, b) =>
+					a === undefined || b.name.length > a.name.length || (b.name.length === a.name.length && b.name === b.own && a.name !== a.own) ? b : a,
+				undefined,
+			)?.plugin;
 		for (const frame of stack.split("\n")) {
-			// The plugin whose code names this frame's url; of two that do (one moved off a url, the other installed there
-			// since), the one at that url
-			const named = plugins.filter((plugin) => frame.includes(plugin.sourceName));
+			// The plugin whose code names this frame's url (of two that do, one moved off a url and one installed there
+			// since, the one at that url), else one at the url
 			const plugin =
-				named.find((plugin) => plugin.sourceName === `${plugin.url}.mjs`) ??
-				named[0] ??
-				plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
+				best(plugins.filter(({ name }) => frame.includes(name))) ??
+				best(plugins.filter(({ own }) => frame.includes(own)).map((entry) => ({ ...entry, name: entry.own })));
 			if (plugin !== undefined) return plugin;
 		}
 		return undefined;
 	}
 
-	/** The name the plugin's frames carry: the url in its code's `//# sourceURL=` line, else `<url>.mjs` */
+	/** The name the plugin's frames carry: the url in its code's `//# sourceURL=` line (its last), else `<url>.mjs` */
 	private get sourceName(): string {
-		return this.code?.match(/\n\/\/# sourceURL=([^\n\r\u2028\u2029]*)$/)?.[1] ?? `${this.url}.mjs`;
+		const code = this.code ?? "";
+		const marker = "\n//# sourceURL=";
+		const at = code.lastIndexOf(marker);
+		const name = at === -1 ? "" : code.slice(at + marker.length);
+		return name.length > 0 && !/[\n\r\u2028\u2029]/.test(name) ? name : `${this.url}.mjs`;
 	}
 
 	/** Show an error that happened after the plugin loaded (e.g. in one of its listeners) on its card */
