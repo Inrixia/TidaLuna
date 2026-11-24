@@ -246,6 +246,9 @@ describe("core confirmation page", () => {
 		const huge = Array.from({ length: 14 }, (_, i) => (i === 11 ? "z".repeat(590) : `${i}`.padEnd(590, "x")));
 		const hugeFit = fitLines(huge);
 		assert.ok(hugeFit[11].startsWith("zzzz") && hugeFit[11].endsWith("and 2 more lines") && hugeFit[11].length <= 600);
+		// One line left: singular
+		const one = Array.from({ length: 13 }, (_, i) => (i >= 11 ? "q".repeat(590) : `${i}`.padEnd(590, "x")));
+		assert.ok(fitLines(one)[11].endsWith("and 1 more line"));
 		assert.deepEqual(fitLines(["a"]), ["a"]);
 		assert.throws(() => confirmRequest(1, [], "Go"));
 		assert.throws(() => confirmRequest("T", "a", "Go"));

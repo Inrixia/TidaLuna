@@ -206,7 +206,7 @@ export const fitLines = (lines: string[]) => {
 	}
 	if (taken === 0) {
 		// Even the first line doesn't fit with the count: its start, then the count
-		const suffix = ` \u2026 and ${rest.length - 1} more lines`;
+		const suffix = ` \u2026 and ${rest.length - 1} more line${rest.length - 1 === 1 ? "" : "s"}`;
 		return [...packed.slice(0, MAX_LINES - 1), `${rest[0].slice(0, MAX_TEXT - suffix.length)}${suffix}`];
 	}
 	return [...packed.slice(0, MAX_LINES - 1), counted(last, rest.length - taken)];

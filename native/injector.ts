@@ -21,6 +21,7 @@ import { isInside } from "./isInside";
 import { recordIsolation } from "./isolatedContents";
 import { tidalMainHosts } from "./tidalHosts";
 
+let warnedOwnCsp = false;
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 
 /** tidal-hifi's settings (Linux), read synchronously so they can be used before the app is ready */
@@ -175,8 +176,10 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		// fetches to it through luna.fetch
 		// Appended: a policy TIDAL's own response sends stays enforced next to Luna's (each one applies), and pageAllows only
 		// knows Luna's connect list: say so
-		if (headers.has("Content-Security-Policy"))
+		if (headers.has("Content-Security-Policy") && !warnedOwnCsp) {
+			warnedOwnCsp = true;
 			console.warn("[Luna.core] TIDAL sends a Content-Security-Policy header of its own: page requests it blocks are not reported as Luna's");
+		}
 		headers.append("Content-Security-Policy", enforcedPolicy(pluginSources));
 		setPageConnect([...baselineEntries, ...pluginHosts]);
 		setPageStores(storeOrigins);
