@@ -533,6 +533,20 @@ describe("luna.fetch prompts", () => {
 		assert.equal(again.questions.length, 1);
 	});
 
+	it("drops an answer whose grant was still being saved when the plugin was forgotten", async () => {
+		let finish: (kept: boolean) => void = () => {};
+		const saving = new Promise<boolean>((resolve) => (finish = resolve));
+		const { net } = fakeNet({ "https://store/u": unlisted }, { "https://api.new.example/x": () => new Response("ok") }, { grant: () => saving });
+		const pending = net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, asker(["always"]).ask);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		net.forget("https://store/u");
+		finish(false);
+		await pending.catch(() => undefined);
+		const again = asker([undefined]);
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, again.ask), /didn't allow it/);
+		assert.equal(again.questions.length, 1);
+	});
+
 	it("asks with the redirect reason about a host a redirect leads to", async () => {
 		const { net } = fakeNet(
 			{ "https://store/u": { ...unlisted, allow: ["https://api.new.example"] } },

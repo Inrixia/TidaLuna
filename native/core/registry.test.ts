@@ -1241,6 +1241,27 @@ describe("core registry network modes", () => {
 		assert.deepStrictEqual(registry.hostsOf(URL)?.deny, []);
 	});
 
+	it("keeps no answer in memory that couldn't be saved", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		const write = deps.write;
+		deps.write = () => {
+			throw new Error("disk full");
+		};
+		assert.strictEqual(await registry.grantHost(URL, "https://b.com", "always"), false);
+		assert.deepStrictEqual(registry.hostsOf(URL)?.allow, []);
+		assert.strictEqual(registry.info(URL)?.grants === undefined || Object.keys(registry.info(URL)!.grants!).length === 0, true);
+		deps.write = write;
+		await registry.grantHost(URL, "https://b.com", "always");
+		deps.write = () => {
+			throw new Error("disk full");
+		};
+		await assert.rejects(registry.forgetGrant(URL, "https://b.com", asker(false)), /Couldn't save/);
+		assert.deepStrictEqual(registry.hostsOf(URL)?.allow, ["https://b.com"]);
+	});
+
 	it("asks the hosts of a plugin from before the core one by one: it never saw them", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", {}, { hosts: ["a.com"] });

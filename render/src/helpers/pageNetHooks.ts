@@ -93,8 +93,8 @@ export const installPageNet = (page: PageNetTarget, deps: PageNetDeps) => {
 			// Mixed content: TIDAL's https page can't reach plain http/ws but on loopback, whatever the user answers
 			if ((url.protocol === "http:" || url.protocol === "ws:") && !isLoopback(url.hostname))
 				return deps.blocked(plugin.name, url.host, `the page can't reach plain ${url.protocol.slice(0, -1)} hosts: its ${kind} needs luna.fetch`);
-			const { allowed, reason, answer, notKept, fetchOnly } = await deps
-				.askHost(plugin.url, url.href, await deps.settingsFor(plugin))
+			const { allowed, reason, answer, notKept, fetchOnly } = await Promise.resolve()
+				.then(async () => deps.askHost(plugin.url, url.href, await deps.settingsFor(plugin)))
 				.catch((err): AskResult => ({ allowed: false, reason: String(err?.message ?? err) }));
 			// This attempt was blocked by the page's CSP either way; an "always" answer, or a host accepted after the page
 			// loaded (no answer: a plugin enabled or updated since), is in it from the next load

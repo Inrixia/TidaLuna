@@ -339,6 +339,18 @@ export const createRegistry = (deps: RegistryDeps) => {
 	delete (state as { legacy?: unknown }).legacy;
 	let saving: Promise<unknown> = Promise.resolve();
 	const save = () => (saving = saving.then(() => deps.write(state)).catch((err) => deps.log?.(`[Luna.core] Failed to save: ${err}`)));
+	/** Saves and says whether the write went through (save() logs a failure and goes on) */
+	const saveChecked = async () => {
+		let ok = true;
+		saving = saving
+			.then(() => deps.write(state))
+			.catch((err) => {
+				ok = false;
+				deps.log?.(`[Luna.core] Failed to save: ${err}`);
+			});
+		await saving;
+		return ok;
+	};
 
 	// One operation per plugin url at a time
 	const queues = new Map<string, Promise<unknown>>();
@@ -830,12 +842,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 			if (state.plugins[url] === undefined || parseHostEntry(entry) === undefined) return false;
 			const before = netGrants[url]?.[entry];
 			(netGrants[url] ??= {})[entry] = grant;
-			try {
-				await save();
-			} catch (err) {
+			if (!(await saveChecked())) {
 				// Not kept: net.ts keeps the answer until restart, Settings → Network and the page's CSP don't list it
 				restoreGrant(url, entry, before);
-				throw err;
+				return false;
 			}
 			return true;
 		},
@@ -858,11 +868,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 			const before = netGrants[checked]?.[entry];
 			if (before === undefined) return false;
 			restoreGrant(checked, entry, undefined);
-			try {
-				await save();
-			} catch (err) {
+			if (!(await saveChecked())) {
 				restoreGrant(checked, entry, before);
-				throw err;
+				throw new Error("[Luna.core] Couldn't save, the answer stays");
 			}
 			return true;
 		},

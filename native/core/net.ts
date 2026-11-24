@@ -194,6 +194,8 @@ export const createNet = (deps: NetDeps) => {
 							console.error("[Luna.core] Can't keep the answer for", entry, err);
 							return false;
 						});
+					// Forgotten while it was saved: nothing is left of the answer
+					if ((generations.get(pluginUrl) ?? 0) !== generation) return undefined;
 					if (!kept && got === "always") (onceAllowed.add(key), alwaysNotKept.add(key));
 					else if (!kept) onceDenied.add(key);
 				}
