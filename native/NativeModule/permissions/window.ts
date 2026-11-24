@@ -1,7 +1,8 @@
 import type { BrowserWindow } from "electron";
 
+import { NativeConfirm } from "../../NativeConfirm/NativeConfirm";
+import { escapeHtml, FIT, promptPage } from "../../NativeConfirm/page";
 import { groupModules } from "./categories";
-import { createPromptWindow, escapeHtml, inPromptQueue, visibleOwner } from "./promptWindow";
 import type { PermissionAnswer } from "./store";
 
 export type PermissionRequest = {
@@ -13,9 +14,6 @@ export type PermissionRequest = {
 	/** Modules the file's source names, shown for information */
 	modules: string[];
 };
-
-const SUBMIT = "luna-permissions:";
-const FIT = "luna-permissions-fit:";
 
 /** Shown before "All versions" is taken */
 const ALL_VERSIONS_WARNING =
@@ -62,7 +60,8 @@ const buildHtml = ({ fileName, url, claimedUrl, modules }: PermissionRequest) =>
 
 	// What the source names, by category. For information: the answer is for the file as a whole
 	const groups = groupModules(modules);
-	const namesSummary = modules.length === 0 ? "Its code names no Node modules" : `Its code names ${modules.length} module${modules.length === 1 ? "" : "s"}`;
+	const namesSummary =
+		modules.length === 0 ? "Its code names no Node modules" : `Its code names ${modules.length} module${modules.length === 1 ? "" : "s"}`;
 	const namesHtml = `<details class="names"><summary>${icon(icons.list)}<span>${namesSummary}<span class="muted"> · for information, not a limit</span></span>${icon(icons.chevron, "icon chevron")}</summary>
 	<div class="note">Read from the text of the file. This list does not limit the plugin: native code that runs in the main process can do more than it shows.</div>
 	<ul>${groups
@@ -76,34 +75,28 @@ const buildHtml = ({ fileName, url, claimedUrl, modules }: PermissionRequest) =>
 	// How long an answer holds. Answers of a file without a url are kept for its code, an uninstall can't find them
 	const help = [
 		"This version: until an update changes this file.",
-		url !== undefined ? "All versions: also later updates from this source. Deny: this and later versions from this source." : "Deny: this version.",
-		url !== undefined || claimedUrl !== undefined ? "Until the plugin is reinstalled; revoke any time in Luna Settings." : "Revoke any time in Luna Settings.",
+		url !== undefined
+			? "All versions: also later updates from this source. Deny: this and later versions from this source."
+			: "Deny: this version.",
+		url !== undefined || claimedUrl !== undefined
+			? "Until the plugin is reinstalled; revoke any time in Luna Settings."
+			: "Revoke any time in Luna Settings.",
 	].join(" ");
 
-	return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<title>Plugin Permission</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-html, body { height:100%; }
-:root { color-scheme:dark; }
+	return promptPage({
+		title: "Plugin Permission",
+		style: `html, body { height:100%; }
 ::-webkit-scrollbar { width:8px; }
 ::-webkit-scrollbar-thumb { background:#3a3a3a; border-radius:4px; }
 ::-webkit-scrollbar-track { background:transparent; }
-body { background:#0a0a0a; color:#f4f4f5; font-family:system-ui,"Segoe UI",sans-serif; font-size:14px; padding:24px 28px 22px; user-select:none; display:flex; flex-direction:column; }
+body { display:flex; flex-direction:column; }
 .mono { font-family:ui-monospace,Consolas,monospace; }
 .muted { color:#8b8b93; }
 .icon { width:18px; height:18px; flex:none; }
-button { font:inherit; border:none; cursor:pointer; }
-:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
 header { display:flex; gap:14px; align-items:flex-start; }
 header .plug { color:#5eead4; margin-top:30px; }
 header .plug .icon { width:30px; height:30px; }
 header .titles { flex:1; min-width:0; }
-.eyebrow { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#8b8b93; font-weight:600; }
 h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 .sub { color:#a1a1aa; font-size:15px; }
 .x { background:none; color:#a1a1aa; padding:4px; border-radius:4px; }
@@ -140,11 +133,8 @@ h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 #confirm.open { display:flex; }
 #confirm .box { background:#1a0f10; border:1px solid #7f1d1d; border-radius:8px; padding:20px 22px; color:#e4e4e7; line-height:1.5; max-width:500px; }
 #confirm h3 { color:#f87171; font-size:18px; margin-bottom:10px; }
-#confirm .actions { margin-top:18px; }
-</style>
-</head>
-<body>
-<div id="main">
+#confirm .actions { margin-top:18px; }`,
+		body: `<div id="main">
 <header>
 	<span class="plug">${icon(icons.plug)}</span>
 	<div class="titles">
@@ -162,21 +152,19 @@ h1 { font-size:24px; font-weight:700; margin:4px 0 2px; word-break:break-word; }
 <div class="help">${help}</div>
 <div class="actions">
 	<button class="pill dark" id="deny">Deny</button>
-	${url !== undefined ? '<button class="pill risky" id="all" title="Also allow future versions from this source, after a confirmation">All versions...</button>' : ""}
-	<button class="pill light" id="allow">Allow this version</button>
+	${url !== undefined ? '<button class="pill risky" id="all" data-arm title="Also allow future versions from this source, after a confirmation">All versions...</button>' : ""}
+	<button class="pill light" id="allow" data-arm>Allow this version</button>
 </div>
 ${namesHtml}
 </div>
 <div id="confirm"><div class="box">
 	<h3>Allow all versions of this file?</h3>
 	<div>${escapeHtml(ALL_VERSIONS_WARNING)}</div>
-	<div class="actions"><button class="pill dark" id="confirm-no">Cancel</button><button class="pill red" id="confirm-yes">Allow all versions</button></div>
-</div></div>
-<script>
-const confirmBox = document.getElementById("confirm");
+	<div class="actions"><button class="pill dark" id="confirm-no">Cancel</button><button class="pill red" id="confirm-yes" data-arm>Allow all versions</button></div>
+</div></div>`,
+		script: `const confirmBox = document.getElementById("confirm");
 const main = document.getElementById("main");
 const all = document.getElementById("all");
-const submit = (answer) => (document.title = "${SUBMIT}" + answer);
 // "All versions" must be confirmed: nothing behind the question can be clicked until it is answered
 const confirm = (open) => {
 	confirmBox.classList.toggle("open", open);
@@ -190,15 +178,11 @@ document.getElementById("confirm-yes").addEventListener("click", () => submit("a
 document.getElementById("confirm-no").addEventListener("click", () => confirm(false));
 document.addEventListener("keydown", (event) => event.key === "Escape" && confirmBox.classList.contains("open") && confirm(false));
 document.getElementById("close").addEventListener("click", () => window.close());
-// Main fits the window to the opened or closed list (the title must change to be seen)
-document.querySelector("details.names").addEventListener("toggle", () => (document.title = "${FIT}" + Date.now()));
-</script>
-</body>
-</html>`;
+// Main fits the window to the opened or closed list
+document.querySelector("details.names").addEventListener("toggle", () => note("${FIT}"));`,
+	});
 };
 
-const MIN_HEIGHT = 320;
-const MAX_HEIGHT = 860;
 // Height the page needs: the body's padding plus each block
 const MEASURE = `(() => {
 	const body = getComputedStyle(document.body);
@@ -210,67 +194,35 @@ const MEASURE = `(() => {
 	return Math.ceil(height);
 })()`;
 
-const answerValues = new Set<string>(["deny", "allow", "allowUpdates"]);
+const permissionWindow = new NativeConfirm<PermissionAnswer>({
+	partition: "luna-permissions",
+	title: "Plugin Permission",
+	width: 620,
+	minHeight: 320,
+	maxHeight: 860,
+	resizable: true,
+	// With TIDAL hidden or minimized it shows on its own: owned by that window it would be hidden too, and the plugin would wait unseen
+	showUnowned: true,
+	measure: MEASURE,
+});
 
 /**
  * Asks whether a native file may run in TIDAL's main process and resolves with the answer (none if the window was closed).
- * A window of its own (own session, no preload), so the TIDAL page and its plugins cannot see or click it.
+ * A NativeConfirm window, so the TIDAL page and its plugins cannot see or click it.
  *
  * @param getRequest Called when the window's turn comes: a window before it may have answered what this one was to ask.
  * Returns undefined if nothing is left to ask, and no window is shown.
  */
-export const askPermission = (
+export const askPermission = async (
 	getRequest: () => PermissionRequest | undefined,
 	parent?: BrowserWindow,
 ): Promise<{ answer: PermissionAnswer | undefined } | undefined> => {
-	const show = (request: PermissionRequest) =>
-		new Promise<PermissionAnswer | undefined>((resolve) => {
-			// Not owned by a minimized or hidden TIDAL window: it would be hidden with it, and the plugin would wait unseen
-			const owner = visibleOwner(parent);
-			const win = createPromptWindow({
-				parent: owner,
-				modal: owner !== undefined,
-				width: 620,
-				height: 480,
-				resizable: true,
-				title: "Plugin Permission",
-				partition: "luna-permissions",
-			});
-			// Fits the window to its content, also once the list of modules is opened
-			const fit = (first: boolean) =>
-				win.webContents
-					.executeJavaScript(MEASURE)
-					.then((height: unknown) => {
-						if (win.isDestroyed() || typeof height !== "number" || !Number.isFinite(height)) return;
-						const [width] = win.getContentSize();
-						win.setContentSize(width, Math.round(Math.min(Math.max(height, MIN_HEIGHT), MAX_HEIGHT)));
-						if (first) win.center();
-					})
-					.catch(() => {});
-			let answered: PermissionAnswer | undefined;
-			win.on("page-title-updated", (event, title) => {
-				// The list of modules was opened or closed: only a size to fit, nothing else is read from it
-				if (title.startsWith(FIT)) {
-					event.preventDefault();
-					void fit(false);
-					return;
-				}
-				if (!title.startsWith(SUBMIT)) return;
-				event.preventDefault();
-				const chosen = title.slice(SUBMIT.length);
-				if (answerValues.has(chosen) && (chosen !== "allowUpdates" || request.url !== undefined)) answered = chosen as PermissionAnswer;
-				win.close();
-			});
-			win.once("ready-to-show", () => void fit(true).finally(() => !win.isDestroyed() && win.show()));
-			win.once("closed", () => resolve(answered));
-			win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildHtml(request))}`).catch((err) => {
-				console.error("[🛑Security🛑] Failed to show the permission window", err);
-				if (!win.isDestroyed()) win.close();
-			});
-		});
-	const ask = async () => {
+	const asked = await permissionWindow.ask(parent, () => {
 		const request = getRequest();
-		return request === undefined ? undefined : { answer: await show(request) };
-	};
-	return inPromptQueue(ask);
+		if (request === undefined) return undefined;
+		// "All versions" is only offered for a checked url
+		const answers: PermissionAnswer[] = request.url !== undefined ? ["deny", "allow", "allowUpdates"] : ["deny", "allow"];
+		return { html: buildHtml(request), answers };
+	});
+	return asked === undefined ? undefined : { answer: asked.shown ? asked.answer : undefined };
 };

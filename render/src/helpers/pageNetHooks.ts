@@ -1,4 +1,4 @@
-// The page's network hooks (pageNet.ts), with the page's globals and Luna core passed in so node:test can drive them
+// The page's network hooks (pageNet.ts), with the page's globals and Luna core passed in so tests can drive them
 import { toNetRequest, toResponse } from "./netMessages";
 import { isLoopback, pageAllowsUrl } from "./pageNetRules";
 

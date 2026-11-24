@@ -4,9 +4,30 @@ import { defaultBuildOptions, TidalNodeVersion } from "../index";
 import { dynamicExternalsPlugin } from "./dynamicExternals";
 import { fileUrlPlugin } from "./fileUrl";
 
+/**
+ * A native file's name as Luna knows it: `pkgName` for the plugin's entry point, else its path with the entry point's
+ * folder replaced by `pkgName`. `entryPoint` is esbuild's (relative to `cwd`); `pluginEntryPoint` may be relative or
+ * absolute: both are compared relative to `cwd`, with `/`.
+ */
+export const nativeFileName = (entryPoint: string, pluginEntryPoint: string, pkgName: string, cwd = process.cwd(), p = path) => {
+	const rel = (file: string) => p.relative(cwd, p.resolve(cwd, file)).replaceAll("\\", "/");
+	const entry = rel(entryPoint);
+	if (entry === rel(pluginEntryPoint)) return pkgName;
+	const dir = rel(p.dirname(pluginEntryPoint));
+	return entry.startsWith(`${dir}/`) ? `${pkgName}${entry.slice(dir.length)}` : entry;
+};
+
+/**
+ * The files of an esbuild metafile's inputs (relative to `cwd`), absolute, as watchFiles needs them; not virtual ones
+ * like "lunaWorldRuntime:@luna/world" or "file-url:..." (a one-letter drive is kept: "C:/...")
+ */
+export const inputFiles = (inputs: Record<string, unknown>, cwd = process.cwd(), p = path) =>
+	Object.keys(inputs)
+		.filter((input) => !/^[\w-]{2,}:/.test(input))
+		.map((input) => p.resolve(cwd, input));
+
 /** Builds one `*.native.*` file for the main process: its name as Luna knows it, its code and its export names */
 export const buildNativeFile = async (nativePath: string, pluginEntryPoint: string, pkgName: string) => {
-	pluginEntryPoint = pluginEntryPoint.replaceAll("\\", "/");
 	const { outputFiles, metafile } = await esBuild({
 		...defaultBuildOptions,
 		entryPoints: [nativePath],
@@ -50,13 +71,9 @@ export const buildNativeFile = async (nativePath: string, pluginEntryPoint: stri
 
 	const output = Object.values(metafile!.outputs)[0];
 
-	// If the plugin entryPoint is this, then use the pkgName as the entryPoint for native module resolution
-	const nativeEntry = pluginEntryPoint === output.entryPoint;
+	const fileName = nativeFileName(output.entryPoint!, pluginEntryPoint, pkgName);
 
-	// sanitize output.entryPoint by removing pluginEntryPoint path from it making it relative
-	const fileName = nativeEntry ? pkgName : output.entryPoint?.replaceAll(path.dirname(pluginEntryPoint), pkgName);
-
-	return { fileName, code: outputFiles![0].text, exportNames, watchFiles: Object.keys(output.inputs) };
+	return { fileName, code: outputFiles![0].text, exportNames, watchFiles: inputFiles(output.inputs) };
 };
 
 /**

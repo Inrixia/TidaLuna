@@ -35,6 +35,8 @@ export type PluginPackage = {
 	};
 	description?: React.ReactNode;
 	version?: string;
+	/** The commit the plugin was built from, when its CI set it (build/plugins/buildSource.ts) */
+	commit?: string;
 	dependencies?: string[];
 	devDependencies?: string[];
 	/** Entry of the plugin's isolated world, built to `<plugin>.world.json` (see build/plugins/lunaWorldPlugin.ts) */
@@ -630,7 +632,11 @@ export class LunaPlugin {
 	 */
 	public async acceptUpdate(): Promise<boolean> {
 		if (this.pendingUpdate._ === undefined) return false;
-		if (!(await this.askCore(() => __LunaCore.acceptUpdate(this.url)))) return false;
+		// Throws when what the user chose in the window failed ("Ask again" couldn't revoke): said here, the card's button stays
+		const accepted = await this.askCore(() => __LunaCore.acceptUpdate(this.url)).catch(
+			this.trace.msg.err.withContext(`Not updating ${this.name}`).throw,
+		);
+		if (!accepted) return false;
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${this.pendingUpdate._?.version ?? ""}`);
 		this.pendingUpdate._ = undefined;
 		if (this.enabled) await this.loadExports(true);

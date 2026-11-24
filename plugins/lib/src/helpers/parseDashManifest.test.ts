@@ -1,13 +1,8 @@
-// Run: pnpm exec tsx --test plugins/lib/src/helpers/parseDashManifest.test.ts
-import assert from "node:assert/strict";
-import { test } from "node:test";
-
-import { Window } from "happy-dom";
+import { describe, expect, test } from "vitest";
 
 import { parseDashManifest } from "./parseDashManifest";
 
-// The parser runs in the renderer, which has DOMParser; node doesn't
-globalThis.DOMParser = new Window().DOMParser as unknown as typeof DOMParser;
+// The dom project runs in happy-dom, so DOMParser (which the parser needs, as it runs in TIDAL's renderer) is global
 
 const manifestUrl = "https://sp-ad-cf.audio.tidal.com";
 const cdn = "https://sp-ad-fa.audio.tidal.com/mediatracks/FAKEID";
@@ -22,85 +17,86 @@ const flac = `<?xml version="1.0" encoding="UTF-8"?><MPD xmlns="urn:mpeg:dash:sc
 const timeline = /<SegmentTimeline>.*<\/SegmentTimeline>/;
 const urls = (text: string) => parseDashManifest(text, manifestUrl).tracks.audios[0].segments.map(({ url }) => url);
 
-test("real AAC manifest", () => {
-	const { duration, tracks } = parseDashManifest(aac, manifestUrl);
-	assert.equal(duration, 320.403);
-	assert.equal(tracks.audios.length, 1);
-	const [track] = tracks.audios;
-	assert.equal(track.codec, "AAC");
-	assert.equal(track.bitrate.bps, 321702);
-	assert.equal(track.size.b, 321702 * 320.403);
-	// init + 80 from r="79" + 1
-	assert.equal(track.segments.length, 82);
-	assert.deepEqual(track.segments[0], { url: `${cdn}/0.mp4?${token}`, init: true });
-	assert.deepEqual(track.segments[1], { url: `${cdn}/1.mp4?${token}` });
-	assert.deepEqual(track.segments[81], { url: `${cdn}/81.mp4?${token}` });
-});
+describe("parseDashManifest", () => {
+	test("real AAC manifest", () => {
+		const { duration, tracks } = parseDashManifest(aac, manifestUrl);
+		expect(duration).toBe(320.403);
+		expect(tracks.audios.length).toBe(1);
+		const [track] = tracks.audios;
+		expect(track.codec).toBe("AAC");
+		expect(track.bitrate.bps).toBe(321702);
+		expect(track.size.b).toBe(321702 * 320.403);
+		// init + 80 from r="79" + 1
+		expect(track.segments.length).toBe(82);
+		expect(track.segments[0]).toEqual({ url: `${cdn}/0.mp4?${token}`, init: true });
+		expect(track.segments[1]).toEqual({ url: `${cdn}/1.mp4?${token}` });
+		expect(track.segments[81]).toEqual({ url: `${cdn}/81.mp4?${token}` });
+	});
 
-test("real FLAC manifest keeps the token and &amp; as written", () => {
-	const [track] = parseDashManifest(flac, manifestUrl).tracks.audios;
-	assert.equal(track.codec, "FLAC");
-	assert.equal(track.bitrate.bps, 1004121);
-	assert.equal(track.segments.length, 82);
-	assert.equal(track.segments[0].url, `${cdn}/0.mp4?${token}&info=ZmFrZQ`);
-	assert.equal(track.segments[81].url, `${cdn}/81.mp4?${token}&info=ZmFrZQ`);
-});
+	test("real FLAC manifest keeps the token and &amp; as written", () => {
+		const [track] = parseDashManifest(flac, manifestUrl).tracks.audios;
+		expect(track.codec).toBe("FLAC");
+		expect(track.bitrate.bps).toBe(1004121);
+		expect(track.segments.length).toBe(82);
+		expect(track.segments[0].url).toBe(`${cdn}/0.mp4?${token}&info=ZmFrZQ`);
+		expect(track.segments[81].url).toBe(`${cdn}/81.mp4?${token}&info=ZmFrZQ`);
+	});
 
-test("template variables, padding and $$", () => {
-	const text = aac
-		.replace(timeline, "")
-		.replace('timescale="44100"', 'timescale="1" duration="100"')
-		.replace(`${cdn}/$Number$.mp4?${token}`, "$RepresentationID$/$Bandwidth$/$Number%05d$-$Time$-$$-$Unknown$.mp4");
-	const segments = urls(text);
-	// ceil(320.403 / 100) = 4 segments after init
-	assert.equal(segments.length, 5);
-	assert.equal(segments[1], "https://sp-ad-cf.audio.tidal.com/AACLC/321702/00001-1-$-$Unknown$.mp4");
-	assert.equal(segments[4], "https://sp-ad-cf.audio.tidal.com/AACLC/321702/00004-4-$-$Unknown$.mp4");
-});
+	test("template variables, padding and $$", () => {
+		const text = aac
+			.replace(timeline, "")
+			.replace('timescale="44100"', 'timescale="1" duration="100"')
+			.replace(`${cdn}/$Number$.mp4?${token}`, "$RepresentationID$/$Bandwidth$/$Number%05d$-$Time$-$$-$Unknown$.mp4");
+		const segments = urls(text);
+		// ceil(320.403 / 100) = 4 segments after init
+		expect(segments.length).toBe(5);
+		expect(segments[1]).toBe("https://sp-ad-cf.audio.tidal.com/AACLC/321702/00001-1-$-$Unknown$.mp4");
+		expect(segments[4]).toBe("https://sp-ad-cf.audio.tidal.com/AACLC/321702/00004-4-$-$Unknown$.mp4");
+	});
 
-test("timeline t and r give $Time$", () => {
-	const text = aac
-		.replace(timeline, '<SegmentTimeline><S t="100" d="10" r="1"/><S d="5"/><S t="1000" d="1"/></SegmentTimeline>')
-		.replace("$Number$", "$Number$-$Time$");
-	assert.deepEqual(
-		urls(text)
-			.slice(1)
-			.map((url) => url.split("/").pop()!.split(".")[0]),
-		["1-100", "2-110", "3-120", "4-1000"],
-	);
-});
+	test("timeline t and r give $Time$", () => {
+		const text = aac
+			.replace(timeline, '<SegmentTimeline><S t="100" d="10" r="1"/><S d="5"/><S t="1000" d="1"/></SegmentTimeline>')
+			.replace("$Number$", "$Number$-$Time$");
+		expect(
+			urls(text)
+				.slice(1)
+				.map((url) => url.split("/").pop()!.split(".")[0]),
+		).toEqual(["1-100", "2-110", "3-120", "4-1000"]);
+	});
 
-test("BaseURLs resolve down the tree", () => {
-	const text = aac
-		.replace('<Period id="0">', '<BaseURL>https://example.com/a/</BaseURL><Period id="0"><BaseURL>b/</BaseURL>')
-		.replace("<Role", "<BaseURL>c/</BaseURL><Role")
-		.replace(`${cdn}/$Number$.mp4?${token}`, "$Number$.mp4")
-		.replace(`${cdn}/0.mp4?${token}`, "init.mp4");
-	assert.deepEqual(urls(text).slice(0, 2), ["https://example.com/a/b/c/init.mp4", "https://example.com/a/b/c/1.mp4"]);
-});
+	test("BaseURLs resolve down the tree", () => {
+		const text = aac
+			.replace('<Period id="0">', '<BaseURL>https://example.com/a/</BaseURL><Period id="0"><BaseURL>b/</BaseURL>')
+			.replace("<Role", "<BaseURL>c/</BaseURL><Role")
+			.replace(`${cdn}/$Number$.mp4?${token}`, "$Number$.mp4")
+			.replace(`${cdn}/0.mp4?${token}`, "init.mp4");
+		expect(urls(text).slice(0, 2)).toEqual(["https://example.com/a/b/c/init.mp4", "https://example.com/a/b/c/1.mp4"]);
+	});
 
-test("audio is found by codec when no type is declared, and video is skipped", () => {
-	const untyped = aac.replace(' contentType="audio" mimeType="audio/mp4"', "");
-	assert.equal(parseDashManifest(untyped, manifestUrl).tracks.audios[0].codec, "AAC");
-	const withVideo = aac.replace(
-		"<AdaptationSet",
-		'<AdaptationSet contentType="video"><Representation id="v" codecs="avc1.64001f,mp4a.40.2" bandwidth="1"><SegmentTemplate media="v$Number$.mp4" duration="1"/></Representation></AdaptationSet><AdaptationSet',
-	);
-	assert.equal(parseDashManifest(withVideo, manifestUrl).tracks.audios.length, 1);
-});
+	test("audio is found by codec when no type is declared, and video is skipped", () => {
+		const untyped = aac.replace(' contentType="audio" mimeType="audio/mp4"', "");
+		expect(parseDashManifest(untyped, manifestUrl).tracks.audios[0].codec).toBe("AAC");
+		const withVideo = aac.replace(
+			"<AdaptationSet",
+			'<AdaptationSet contentType="video"><Representation id="v" codecs="avc1.64001f,mp4a.40.2" bandwidth="1"><SegmentTemplate media="v$Number$.mp4" duration="1"/></Representation></AdaptationSet><AdaptationSet',
+		);
+		expect(parseDashManifest(withVideo, manifestUrl).tracks.audios.length).toBe(1);
+	});
 
-test("hostile or unsupported input throws", () => {
-	const throws = (text: string, message: RegExp) => assert.throws(() => parseDashManifest(text, manifestUrl), message);
-	throws('#EXTM3U\n#EXT-X-DATERANGE:ID="__proto__",START-DATE="2020-01-01T00:00:00Z"', /Invalid DASH manifest/);
-	throws(aac.replace("</MPD>", ""), /Invalid DASH manifest/);
-	throws(aac.replace(/<Period[^>]*>.*<\/Period>/, ""), /no Period/);
-	throws(aac.replace('codecs="mp4a.40.2"', 'codecs="constructor"'), /Unsupported DASH audio codecs/);
-	throws(aac.replace('contentType="audio"', 'contentType="video"'), /no audio track/);
-	throws(aac.replace(/<SegmentTemplate.*<\/SegmentTemplate>/, ""), /no SegmentTemplate/);
-	throws(aac.replace(timeline, '<SegmentTimeline><S d="10" r="-1"/></SegmentTimeline>'), /Unsupported DASH SegmentTimeline/);
-	throws(aac.replace(timeline, '<SegmentTimeline><S d="0"/></SegmentTimeline>'), /Unsupported DASH SegmentTimeline/);
-	// Millions of segments, from a huge r or a tiny segment duration, stop at the cap
-	throws(aac.replace(timeline, '<SegmentTimeline><S d="1" r="1000000000"/></SegmentTimeline>'), /too many segments/);
-	throws(aac.replace(timeline, "").replace('timescale="44100"', 'timescale="1000000000" duration="1"'), /too many segments/);
-	assert.equal(Object.hasOwn(Object.prototype, "startDate"), false);
+	test("hostile or unsupported input throws", () => {
+		const throws = (text: string, message: RegExp) => expect(() => parseDashManifest(text, manifestUrl)).toThrow(message);
+		throws('#EXTM3U\n#EXT-X-DATERANGE:ID="__proto__",START-DATE="2020-01-01T00:00:00Z"', /Invalid DASH manifest/);
+		throws(aac.replace("</MPD>", ""), /Invalid DASH manifest/);
+		throws(aac.replace(/<Period[^>]*>.*<\/Period>/, ""), /no Period/);
+		throws(aac.replace('codecs="mp4a.40.2"', 'codecs="constructor"'), /Unsupported DASH audio codecs/);
+		throws(aac.replace('contentType="audio"', 'contentType="video"'), /no audio track/);
+		throws(aac.replace(/<SegmentTemplate.*<\/SegmentTemplate>/, ""), /no SegmentTemplate/);
+		throws(aac.replace(timeline, '<SegmentTimeline><S d="10" r="-1"/></SegmentTimeline>'), /Unsupported DASH SegmentTimeline/);
+		throws(aac.replace(timeline, '<SegmentTimeline><S d="0"/></SegmentTimeline>'), /Unsupported DASH SegmentTimeline/);
+		// Millions of segments, from a huge r or a tiny segment duration, stop at the cap
+		throws(aac.replace(timeline, '<SegmentTimeline><S d="1" r="1000000000"/></SegmentTimeline>'), /too many segments/);
+		throws(aac.replace(timeline, "").replace('timescale="44100"', 'timescale="1000000000" duration="1"'), /too many segments/);
+		expect(Object.hasOwn(Object.prototype, "startDate")).toBe(false);
+	});
 });

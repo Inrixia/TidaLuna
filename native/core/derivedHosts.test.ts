@@ -1,5 +1,4 @@
-import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 
 import { generateKeyPairSync, sign } from "node:crypto";
 
@@ -36,26 +35,26 @@ describe("registry derived hosts", () => {
 				short: { name: "C", hosts: [] },
 			}),
 		);
-		assert.strictEqual(list.serial, 3);
-		assert.deepStrictEqual(list.entries.get(SHA_A), { name: "A", hosts: ["api.a.com", "*.cdn.net/covers/*", "{setting:server}"] });
+		expect(list.serial).toBe(3);
+		expect(list.entries.get(SHA_A)).toStrictEqual({ name: "A", hosts: ["api.a.com", "*.cdn.net/covers/*", "{setting:server}"] });
 		// No hosts field: unknown, not "no network"
-		assert.strictEqual(list.entries.has(SHA_B), false);
-		assert.strictEqual(list.entries.size, 1);
+		expect(list.entries.has(SHA_B)).toBe(false);
+		expect(list.entries.size).toBe(1);
 	});
 
 	it("refuses another key, another kind, another schema and a bad serial", () => {
-		assert.throws(() => parse(doc(1, {}), other), /signature/);
-		assert.throws(() => parse(doc(1, {}, { kind: "legacy" })), /kind "legacy"/);
-		assert.throws(() => parse(doc(1, {}, { schema: 2 })), /schema/);
-		assert.throws(() => parse(doc(0, {})), /serial/);
+		expect(() => parse(doc(1, {}), other)).toThrow(/signature/);
+		expect(() => parse(doc(1, {}, { kind: "legacy" }))).toThrow(/kind "legacy"/);
+		expect(() => parse(doc(1, {}, { schema: 2 }))).toThrow(/schema/);
+		expect(() => parse(doc(0, {}))).toThrow(/serial/);
 	});
 
 	it("finds hosts only for the exact code under the plugin's own name", () => {
 		const list = parse(doc(1, { [SHA_A]: { name: "A", hosts: ["api.a.com"] } }));
-		assert.deepStrictEqual(lookupDerived(list, SHA_A, "A"), ["api.a.com"]);
-		assert.strictEqual(lookupDerived(list, SHA_A, "Other"), undefined);
-		assert.strictEqual(lookupDerived(list, SHA_B, "A"), undefined);
-		assert.strictEqual(lookupDerived(undefined, SHA_A, "A"), undefined);
+		expect(lookupDerived(list, SHA_A, "A")).toStrictEqual(["api.a.com"]);
+		expect(lookupDerived(list, SHA_A, "Other")).toBe(undefined);
+		expect(lookupDerived(list, SHA_B, "A")).toBe(undefined);
+		expect(lookupDerived(undefined, SHA_A, "A")).toBe(undefined);
 	});
 
 	it("caches a fetched list, checks the cache, and refuses a lower serial", async () => {
@@ -70,26 +69,26 @@ describe("registry derived hosts", () => {
 			log: (message: string) => void logs.push(message),
 		};
 		const store = createDerivedStore(deps);
-		assert.strictEqual(store.loaded(), false);
+		expect(store.loaded()).toBe(false);
 		await store.refresh();
-		assert.deepStrictEqual(store.lookup(SHA_A, "A"), ["api.a.com"]);
-		assert.ok(cache !== undefined);
+		expect(store.lookup(SHA_A, "A")).toStrictEqual(["api.a.com"]);
+		expect(cache !== undefined).toBeTruthy();
 
 		// A new start reads the cache; an older list replayed is refused and the cached one stays
 		const restarted = createDerivedStore(deps);
-		assert.strictEqual(restarted.loaded(), true);
+		expect(restarted.loaded()).toBe(true);
 		served = signed(doc(1, {}));
-		await assert.rejects(restarted.refresh(), /rollback/);
-		assert.deepStrictEqual(restarted.lookup(SHA_A, "A"), ["api.a.com"]);
+		await expect(restarted.refresh()).rejects.toThrow(/rollback/);
+		expect(restarted.lookup(SHA_A, "A")).toStrictEqual(["api.a.com"]);
 
 		// A cache that fails its check is ignored
 		cache = JSON.stringify({ list: Buffer.from("{}").toString("base64"), sig: "x" });
 		const broken = createDerivedStore({ ...deps, fetchList: () => new Promise<never>(() => {}) });
-		assert.strictEqual(broken.loaded(), false);
-		assert.ok(logs.some((line) => line.includes("fails its check")));
+		expect(broken.loaded()).toBe(false);
+		expect(logs.some((line) => line.includes("fails its check"))).toBeTruthy();
 		// …and with its serial unknown, no fetched list replaces it
 		const brokenFetch = createDerivedStore({ ...deps, fetchList: async () => signed(doc(1, {})) });
-		await assert.rejects(brokenFetch.refresh(), /fails its check: not replaced/);
+		await expect(brokenFetch.refresh()).rejects.toThrow(/fails its check: not replaced/);
 
 		// A cache that can't be read now (a locked file): no fetched list is taken until it is read
 		const locked = createDerivedStore({
@@ -98,8 +97,8 @@ describe("registry derived hosts", () => {
 				throw new Error("EBUSY");
 			},
 		});
-		await assert.rejects(locked.refresh(), /can't be read yet/);
-		assert.strictEqual(locked.loaded(), false);
+		await expect(locked.refresh()).rejects.toThrow(/can't be read yet/);
+		expect(locked.loaded()).toBe(false);
 	});
 
 	it("logs a cache it can't read once per reason, and tries again on each use", async () => {
@@ -116,8 +115,8 @@ describe("registry derived hosts", () => {
 			log: (message: string) => void logs.push(message),
 		});
 		for (let i = 0; i < 3; i++) store.lookup(SHA_A, "A");
-		assert.ok(reads >= 3);
-		assert.strictEqual(logs.filter((line) => line.includes("EBUSY")).length, 1);
+		expect(reads >= 3).toBeTruthy();
+		expect(logs.filter((line) => line.includes("EBUSY")).length).toBe(1);
 	});
 
 	it("waits at most firstWaitMs for a first list before a confirmation", async () => {
@@ -132,11 +131,11 @@ describe("registry derived hosts", () => {
 		});
 		const started = Date.now();
 		await store.ready();
-		assert.ok(Date.now() - started < 1000);
+		expect(Date.now() - started < 1000).toBeTruthy();
 		// Past the wait: no more waiting
 		time = 100;
 		const again = Date.now();
 		await store.ready();
-		assert.ok(Date.now() - again < 15);
+		expect(Date.now() - again < 15).toBeTruthy();
 	});
 });

@@ -1,4 +1,4 @@
-// The rules page code's network goes by (pageNet.ts), apart from the page so node:test can check them
+// The rules page code's network goes by (pageNet.ts), apart from the page so tests can check them
 import { hostAllowed } from "../../../native/core/hosts";
 
 /** Loopback: the only plain http/ws a https page may reach (Chromium's mixed content rule, "potentially trustworthy") */

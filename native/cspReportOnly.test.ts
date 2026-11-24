@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 
 import { hostAllowed, parseHostEntry } from "./core/hosts";
 import { baselineEntries, enforcedPolicy, networkBaseline, reportOnlyHeader, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
@@ -14,114 +13,110 @@ const parse = (policy: string) => new Map(policy.split("; ").map((d) => [d.split
 
 describe("tidalMetaPolicy", () => {
 	it("reads the meta tag's content", () => {
-		assert.equal(tidalMetaPolicy(`<head><meta http-equiv="Content-Security-Policy" content="${tidal}" /></head>`), tidal);
+		expect(tidalMetaPolicy(`<head><meta http-equiv="Content-Security-Policy" content="${tidal}" /></head>`)).toBe(tidal);
 	});
 	it("decodes html entities", () => {
-		assert.equal(
-			tidalMetaPolicy(`<meta http-equiv="Content-Security-Policy" content="script-src &#39;self&#39; a.com?x=1&amp;y=2">`),
+		expect(tidalMetaPolicy(`<meta http-equiv="Content-Security-Policy" content="script-src &#39;self&#39; a.com?x=1&amp;y=2">`)).toBe(
 			"script-src 'self' a.com?x=1&y=2",
 		);
 	});
 	it("finds the tag whatever the attribute order", () => {
-		assert.equal(tidalMetaPolicy(`<meta content="object-src 'none'" http-equiv="Content-Security-Policy">`), "object-src 'none'");
+		expect(tidalMetaPolicy(`<meta content="object-src 'none'" http-equiv="Content-Security-Policy">`)).toBe("object-src 'none'");
 	});
 	it("is undefined without a policy", () => {
-		assert.equal(tidalMetaPolicy("<head><meta charset=utf-8></head>"), undefined);
-		assert.equal(tidalMetaPolicy(`<meta http-equiv="Content-Security-Policy">`), undefined);
+		expect(tidalMetaPolicy("<head><meta charset=utf-8></head>")).toBeUndefined();
+		expect(tidalMetaPolicy(`<meta http-equiv="Content-Security-Policy">`)).toBeUndefined();
 	});
 });
 
 describe("reportOnlyPolicy", () => {
 	const policy = parse(reportOnlyPolicy(tidal));
 	it("keeps TIDAL's directives", () => {
-		assert.deepEqual(policy.get("object-src"), ["'none'"]);
-		assert.deepEqual(policy.get("font-src"), ["data:", "*.squarecdn.com"]);
-		assert.ok(policy.get("style-src")?.includes("sha256-0hAheEzaMe6uXIKV4EehS9pu1am1lj/KnnzrOYqckXk="));
+		expect(policy.get("object-src")).toEqual(["'none'"]);
+		expect(policy.get("font-src")).toEqual(["data:", "*.squarecdn.com"]);
+		expect(policy.get("style-src")?.includes("sha256-0hAheEzaMe6uXIKV4EehS9pu1am1lj/KnnzrOYqckXk=")).toBeTruthy();
 	});
 	it("adds Luna's script sources once", () => {
 		const script = policy.get("script-src")!;
-		assert.ok(script.includes("https://luna") && script.includes("luna-module:") && script.includes("blob:"));
+		expect(script.includes("https://luna") && script.includes("luna-module:") && script.includes("blob:")).toBeTruthy();
 		const twice = parse(reportOnlyPolicy(reportOnlyPolicy(tidal))).get("script-src")!;
-		assert.equal(twice.filter((s) => s === "https://luna").length, 1);
+		expect(twice.filter((s) => s === "https://luna").length).toBe(1);
 	});
 	it("fills the network directives TIDAL leaves open", () => {
-		for (const directive of ["connect-src", "img-src", "media-src", "frame-src"]) assert.deepEqual(policy.get(directive), networkBaseline);
+		for (const directive of ["connect-src", "img-src", "media-src", "frame-src"]) expect(policy.get(directive)).toEqual(networkBaseline);
 	});
 	it("doesn't override directives TIDAL sets, nor add any under default-src", () => {
-		assert.deepEqual(parse(reportOnlyPolicy("connect-src 'self'")).get("connect-src"), ["'self'"]);
-		assert.deepEqual([...parse(reportOnlyPolicy("default-src 'self'")).keys()], ["default-src"]);
+		expect(parse(reportOnlyPolicy("connect-src 'self'")).get("connect-src")).toEqual(["'self'"]);
+		expect([...parse(reportOnlyPolicy("default-src 'self'")).keys()]).toEqual(["default-src"]);
 	});
 	it("lists the hosts plugins declare where plugins fetch and show media, not in frame-src", () => {
 		const withPlugins = parse(reportOnlyPolicy(tidal, ["https://api.last.fm", "wss://api.last.fm", "https://luna"]));
 		for (const directive of ["connect-src", "img-src", "media-src"]) {
 			const sources = withPlugins.get(directive)!;
-			assert.ok(sources.includes("https://api.last.fm") && sources.includes("wss://api.last.fm"), directive);
-			assert.equal(sources.filter((s) => s === "https://luna").length, 1);
+			expect(sources.includes("https://api.last.fm") && sources.includes("wss://api.last.fm"), directive).toBeTruthy();
+			expect(sources.filter((s) => s === "https://luna").length).toBe(1);
 		}
-		assert.deepEqual(withPlugins.get("frame-src"), networkBaseline);
-		assert.deepEqual(parse(reportOnlyPolicy("connect-src 'self'", ["https://a.com"])).get("connect-src"), ["'self'"]);
+		expect(withPlugins.get("frame-src")).toEqual(networkBaseline);
+		expect(parse(reportOnlyPolicy("connect-src 'self'", ["https://a.com"])).get("connect-src")).toEqual(["'self'"]);
 	});
 	it("keeps the first of repeated directives, as browsers do", () => {
-		assert.deepEqual(parse(reportOnlyPolicy("object-src 'none'; object-src *")).get("object-src"), ["'none'"]);
+		expect(parse(reportOnlyPolicy("object-src 'none'; object-src *")).get("object-src")).toEqual(["'none'"]);
 	});
 	it("leaves script-src out when TIDAL has none", () => {
-		assert.equal(parse(reportOnlyPolicy("object-src 'none'")).has("script-src"), false);
+		expect(parse(reportOnlyPolicy("object-src 'none'")).has("script-src")).toBe(false);
 	});
 	it("drops directives a meta tag ignores but a header would apply", () => {
 		const policy = parse(reportOnlyPolicy("object-src 'none'; report-uri https://csp.example/r; Report-To csp; frame-ancestors 'none'; sandbox"));
-		assert.deepEqual(
-			[...policy.keys()].filter((d) => !["connect-src", "img-src", "media-src", "frame-src"].includes(d)),
-			["object-src"],
-		);
+		expect([...policy.keys()].filter((d) => !["connect-src", "img-src", "media-src", "frame-src"].includes(d))).toEqual(["object-src"]);
 	});
 
 	it("reads only the policy's own tag, whatever comes before and after it", () => {
 		const page = `<head>${"<script>x>1</script>".repeat(50)}<meta name="a" content="b"><meta http-equiv="Content-Security-Policy" content="object-src 'none'" /><meta content="c"></head>`;
-		assert.equal(tidalMetaPolicy(page), "object-src 'none'");
-		assert.equal(tidalMetaPolicy(`<meta http-equiv="Content-Security-Policy" content="object-src 'none'"`), undefined);
+		expect(tidalMetaPolicy(page)).toBe("object-src 'none'");
+		expect(tidalMetaPolicy(`<meta http-equiv="Content-Security-Policy" content="object-src 'none'"`)).toBeUndefined();
 		const markerInText = `<meta name="x" content="y"><script>const m = 'http-equiv="Content-Security-Policy"'</script><meta http-equiv="Content-Security-Policy" content="object-src 'none'">`;
-		assert.equal(tidalMetaPolicy(markerInText), "object-src 'none'");
+		expect(tidalMetaPolicy(markerInText)).toBe("object-src 'none'");
 	});
 
 	it("normalizes spaces and keeps directives without sources", () => {
-		assert.equal(reportOnlyPolicy("default-src  'self'\t;  upgrade-insecure-requests ;"), "default-src 'self'; upgrade-insecure-requests");
+		expect(reportOnlyPolicy("default-src  'self'\t;  upgrade-insecure-requests ;")).toBe("default-src 'self'; upgrade-insecure-requests");
 	});
 
 	it("builds the header again only when TIDAL's policy changes", () => {
 		const first = reportOnlyHeader(tidal);
-		assert.equal(first, reportOnlyPolicy(tidal));
-		assert.strictEqual(reportOnlyHeader(tidal), first);
-		assert.equal(reportOnlyHeader("object-src 'none'"), reportOnlyPolicy("object-src 'none'"));
+		expect(first).toBe(reportOnlyPolicy(tidal));
+		expect(reportOnlyHeader(tidal)).toBe(first);
+		expect(reportOnlyHeader("object-src 'none'")).toBe(reportOnlyPolicy("object-src 'none'"));
 		// Another set of plugin sources is another header, not the cached one
 		const withPlugin = reportOnlyHeader("object-src 'none'", ["https://api.example.com"]);
-		assert.equal(withPlugin, reportOnlyPolicy("object-src 'none'", ["https://api.example.com"]));
-		assert.ok(withPlugin.includes("https://api.example.com"));
-		assert.equal(reportOnlyHeader("object-src 'none'"), reportOnlyPolicy("object-src 'none'"));
+		expect(withPlugin).toBe(reportOnlyPolicy("object-src 'none'", ["https://api.example.com"]));
+		expect(withPlugin.includes("https://api.example.com")).toBeTruthy();
+		expect(reportOnlyHeader("object-src 'none'")).toBe(reportOnlyPolicy("object-src 'none'"));
 	});
 });
 
 describe("enforcedPolicy", () => {
 	it("limits connect-src to the baseline and the plugins' hosts, and leaves media open by default", () => {
 		const policy = enforcedPolicy(["https://api.example.com", "*.tidal.com"]);
-		assert.equal(policy, `connect-src ${[...networkBaseline, "https://api.example.com"].join(" ")}`);
-		assert.equal(policy.includes("img-src"), false);
+		expect(policy).toBe(`connect-src ${[...networkBaseline, "https://api.example.com"].join(" ")}`);
+		expect(policy.includes("img-src")).toBe(false);
 	});
 	it("gives page code the baseline's host entries only", () => {
-		assert.ok(baselineEntries.includes("*.tidal.com"));
-		assert.ok(baselineEntries.includes("api.github.com"));
+		expect(baselineEntries.includes("*.tidal.com")).toBeTruthy();
+		expect(baselineEntries.includes("api.github.com")).toBeTruthy();
 		// Luna's own Supporters tab
-		assert.ok(baselineEntries.includes("sponsors.hug.rip"));
-		assert.equal(baselineEntries.includes("'self'"), false);
-		assert.equal(baselineEntries.includes("blob:"), false);
-		assert.equal(baselineEntries.includes("https://luna"), false);
-		assert.equal(baselineEntries.includes("wss://*.tidal.com"), false);
+		expect(baselineEntries.includes("sponsors.hug.rip")).toBeTruthy();
+		expect(baselineEntries.includes("'self'")).toBe(false);
+		expect(baselineEntries.includes("blob:")).toBe(false);
+		expect(baselineEntries.includes("https://luna")).toBe(false);
+		expect(baselineEntries.includes("wss://*.tidal.com")).toBe(false);
 		// Every one is a host entry Luna takes: a public-suffix wildcard would match nothing
-		for (const entry of baselineEntries) assert.ok(parseHostEntry(entry), entry);
-		assert.ok(hostAllowed(baselineEntries, new URL("https://raw.githubusercontent.com/a/b/main/store.json")));
+		for (const entry of baselineEntries) expect(parseHostEntry(entry), entry).toBeTruthy();
+		expect(hostAllowed(baselineEntries, new URL("https://raw.githubusercontent.com/a/b/main/store.json"))).toBeTruthy();
 	});
 	it("lets TIDAL's push socket and Luna's MusicBrainz lookups through (seen blocked on a live slot)", () => {
 		const sources = enforcedPolicy([]).split(" ");
-		assert.ok(sources.includes("wss://*.tidal.com"));
-		assert.ok(sources.includes("musicbrainz.org"));
+		expect(sources.includes("wss://*.tidal.com")).toBeTruthy();
+		expect(sources.includes("musicbrainz.org")).toBeTruthy();
 	});
 });

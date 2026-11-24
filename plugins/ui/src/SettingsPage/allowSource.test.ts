@@ -1,5 +1,4 @@
-import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 
 import { allowSource } from "./allowSource";
 
@@ -17,19 +16,19 @@ const core = (pageStores: string[], allows: boolean, storeOrigins: string[]) => 
 describe("allowSource", () => {
 	it("reads at once from an origin the page's CSP has, without asking", async () => {
 		const asked = core(["https://store.example"], true, ["https://store.example"]);
-		assert.equal(await allowSource("https://store.example/theme.css"), "ready");
-		assert.deepEqual(asked, []);
+		expect(await allowSource("https://store.example/theme.css")).toBe("ready");
+		expect(asked).toEqual([]);
 	});
 
 	it("asks for any other origin: denied, or readable once TIDAL reloads", async () => {
-		assert.equal(await allowSource((core([], false, []), "https://new.example/theme.css")), "denied");
+		expect(await allowSource((core([], false, []), "https://new.example/theme.css"))).toBe("denied");
 		const asked = core([], true, ["https://new.example"]);
-		assert.equal(await allowSource("https://new.example/theme.css"), "reload");
-		assert.deepEqual(asked, ["https://new.example/theme.css"]);
+		expect(await allowSource("https://new.example/theme.css")).toBe("reload");
+		expect(asked).toEqual(["https://new.example/theme.css"]);
 	});
 
 	it("reads at once from an origin allowed but never listed (GitHub, TIDAL's hosts)", async () => {
 		core([], true, []);
-		assert.equal(await allowSource("https://raw.githubusercontent.com/a/b/theme.css"), "ready");
+		expect(await allowSource("https://raw.githubusercontent.com/a/b/theme.css")).toBe("ready");
 	});
 });

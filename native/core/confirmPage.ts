@@ -1,10 +1,25 @@
-// The page of Luna's confirmation window (confirmWindow.ts), kept apart so it can be tested without Electron.
-import { escapeHtml } from "../NativeModule/permissions/escapeHtml";
+// The page of Luna's confirmation window (confirmWindow.ts) and when it may open, kept apart so it can be tested without Electron.
+import { escapeHtml, promptPage } from "../NativeConfirm/page";
 
+/** A link in a confirmation: main opens its http(s) url in the browser (confirmWindow.ts) */
+export type ConfirmLink = { text: string; href: string };
+/** A line of text, or of text and links */
+export type ConfirmLine = string | (string | ConfirmLink)[];
+/**
+ * A warning above the buttons with a button of its own (revoke an answer, say). Clicking it chooses the action: `done`
+ * replaces the warning, and main calls `run` only if the user then confirms, before the answer counts. If `run` throws,
+ * the confirmation fails (rejects).
+ */
+export type ConfirmWarning = { text: string; action: string; done: string; run: () => void | Promise<void> };
+/**
+ * `warning` may be a function: the window calls it when it shows, so a request that waited behind other prompts warns
+ * about the state then (an answer given in one of them, say)
+ */
 export type ConfirmRequest = {
 	title: string;
-	lines: string[];
+	lines: ConfirmLine[];
 	confirmText: string;
+	warning?: ConfirmWarning | (() => ConfirmWarning | undefined);
 	/**
 	 * Answers instead of Cancel/confirm, in order (the last one is drawn as the main button). All of them are armed like
 	 * the confirm button (none answers before the window was seen). Closing the window answers none of them
@@ -12,13 +27,6 @@ export type ConfirmRequest = {
 	choices?: { id: string; label: string }[];
 };
 
-export const TITLE = "Luna";
-export const SUBMIT = "luna-core-confirm:";
-/**
- * The confirm button stays disabled this long after the window shows or gets the focus back: a click meant for TIDAL or
- * another window can't land on it
- */
-export const ARM_DELAY_MS = 700;
 const MAX_LINES = 12;
 const MAX_TEXT = 600;
 /** Confirmations open or waiting at once; more are cancelled */
@@ -212,84 +220,134 @@ export const fitLines = (lines: string[]) => {
 	return [...packed.slice(0, MAX_LINES - 1), counted(last, rest.length - taken)];
 };
 
-/** Checks a request that came over IPC: strings only, long texts are cut */
-export const confirmRequest = (title: unknown, lines: unknown, confirmText: unknown): ConfirmRequest => {
+/** An http(s) url, normalized (`new URL`), else undefined: the only links a confirmation opens */
+export const httpLink = (href: unknown): string | undefined => {
+	if (typeof href !== "string") return undefined;
+	try {
+		const url = new URL(href);
+		return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+/** Checks a request: texts are strings (long ones cut), links http(s), a warning's run a function */
+export const confirmRequest = (title: unknown, lines: unknown, confirmText: unknown, warning?: unknown): ConfirmRequest => {
 	const text = (value: unknown) => {
 		if (typeof value !== "string") throw new Error("[Luna.core] Confirmation texts must be strings");
 		return value.length > MAX_TEXT ? `${value.slice(0, MAX_TEXT)}…` : value;
 	};
+	const part = (value: unknown): string | ConfirmLink => {
+		if (typeof value === "string") return text(value);
+		const { text: linkText, href } = (value ?? {}) as Partial<ConfirmLink>;
+		const link = httpLink(href);
+		if (link === undefined) throw new Error("[Luna.core] Confirmation links must be http(s)");
+		return { text: text(linkText), href: link };
+	};
+	const line = (value: unknown): ConfirmLine => (Array.isArray(value) ? value.map(part) : text(value));
 	if (!Array.isArray(lines) || lines.length > MAX_LINES) throw new Error("[Luna.core] Bad confirmation lines");
-	const request = { title: text(title), lines: lines.map(text), confirmText: text(confirmText) };
+	const request: ConfirmRequest = { title: text(title), lines: lines.map(line), confirmText: text(confirmText) };
 	if (request.title === "" || request.confirmText === "") throw new Error("[Luna.core] A confirmation needs a title and a button");
+	const checked = (value: unknown): ConfirmWarning | undefined => {
+		if (value === undefined) return undefined;
+		const { text: warningText, action, done, run } = value as Partial<ConfirmWarning>;
+		if (typeof run !== "function") throw new Error("[Luna.core] A confirmation warning needs an action");
+		return { text: text(warningText), action: text(action), done: text(done), run };
+	};
+	if (typeof warning === "function") request.warning = () => checked(warning());
+	else if (warning !== undefined) request.warning = checked(warning);
 	return request;
 };
 
+/** The warning a window shows: a function's is taken now */
+export const shownWarning = ({ warning }: Pick<ConfirmRequest, "warning">): ConfirmWarning | undefined =>
+	typeof warning === "function" ? warning() : warning;
+
+/** What runs when the window closes: the warning's action, only if the user chose it and then confirmed */
+export const actionToRun = (answer: boolean | undefined, chosen: boolean, warning: ConfirmWarning | undefined) =>
+	answer === true && chosen ? warning?.run : undefined;
+
+/** The links of a request in the order the page numbers them (`link:<index>`) */
+export const confirmLinks = ({ lines }: Pick<ConfirmRequest, "lines">): string[] =>
+	lines.flatMap((line) => (typeof line === "string" ? [] : line.flatMap((part) => (typeof part === "string" ? [] : [part.href]))));
+
+const lineHtml = (line: ConfirmLine, next: () => number) =>
+	typeof line === "string"
+		? escapeHtml(line)
+		: line
+				.map((part) =>
+					typeof part === "string"
+						? escapeHtml(part)
+						: `<a href="#" data-link="${next()}" title="${escapeHtml(part.href)}">${escapeHtml(part.text)}</a>`,
+				)
+				.join("");
+
+// The confirm button is armed by the window (data-arm, see promptPage). Clicks on links and the warning's action are
+// notes (`link:<index>`, `action`) that confirmWindow.ts acts on
 const choiceId = /^[a-z]{1,16}$/;
 
-export const buildChoiceHtml = ({ title, lines, choices = [] }: ConfirmRequest) => {
-	if (choices.length < 2 || choices.some((choice) => !choiceId.test(choice.id))) throw new Error("[Luna.core] Bad choices");
-	const actions = `<div class="actions">${choices
-		.map(
-			(choice, index) =>
-				`<button class="choice" data-id="${choice.id}"${index === choices.length - 1 ? ' id="confirm"' : ""}${index === 0 ? ' id="cancel"' : ""} disabled>${escapeHtml(choice.label)}</button>`,
-		)
-		.join("")}</div>
-<script>
-const submit = (answer) => (document.title = "${SUBMIT}" + answer);
-// Every choice is kept (the first, deny, too), so all wait to be armed, and the focus is on none: Enter typed into TIDAL
-// as the window shows picks nothing. Escape closes it, which keeps nothing
-const armed = [...document.querySelectorAll("button.choice")];
-for (const button of document.querySelectorAll("button.choice")) button.addEventListener("click", () => submit("choice:" + button.dataset.id));
-document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
-document.body.tabIndex = -1;
-document.body.focus();
-window.arm = () => armed.forEach((button) => (button.disabled = false));
-window.disarm = () => armed.forEach((button) => (button.disabled = true));
-</script>`;
-	return buildConfirmHtml({ title, lines, confirmText: "-" })
-		.replace("</style>", () => ".choice { background:#2a2a2a; color:#f4f4f5; }\n.choice:disabled { opacity:.4; cursor:default; }\n</style>")
-		.replace(/<div class="actions">[\s\S]*<\/script>/, () => actions);
-};
-
-export const buildConfirmHtml = ({ title, lines, confirmText }: ConfirmRequest) => `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<title>${TITLE}</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-:root { color-scheme:dark; }
-body { background:#0a0a0a; color:#f4f4f5; font-family:system-ui,"Segoe UI",sans-serif; font-size:14px; padding:24px 28px 22px; user-select:none; }
-.eyebrow { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:#8b8b93; font-weight:600; }
-h1 { font-size:22px; font-weight:700; margin:4px 0 14px; overflow-wrap:anywhere; }
+export const buildConfirmHtml = ({
+	title,
+	lines,
+	confirmText,
+	warning,
+	choices,
+}: Omit<ConfirmRequest, "warning"> & { warning?: ConfirmWarning }) => {
+	if (choices !== undefined && (choices.length < 2 || choices.some((choice) => !choiceId.test(choice.id))))
+		throw new Error("[Luna.core] Bad choices");
+	let links = 0;
+	const next = () => links++;
+	return promptPage({
+		title: "Luna",
+		style: `h1 { font-size:22px; font-weight:700; margin:4px 0 14px; overflow-wrap:anywhere; }
 p { color:#c4c4cc; line-height:1.45; margin-bottom:8px; overflow-wrap:anywhere; }
 .by { color:#5eead4; font-size:12px; margin-top:12px; }
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
-button { font:inherit; border:none; cursor:pointer; padding:10px 20px; border-radius:6px; font-size:15px; font-weight:700; }
-#cancel { background:#2a2a2a; color:#f4f4f5; }
+.actions button { padding:10px 20px; border-radius:6px; font-size:15px; font-weight:700; }
+#cancel, .choice { background:#2a2a2a; color:#f4f4f5; }
 #cancel:hover { background:#353535; }
 #confirm { background:#f4f4f5; color:#0a0a0a; }
-#confirm:disabled { opacity:.4; cursor:default; }
-:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
-</style>
-</head>
-<body>
-<div class="eyebrow">Luna</div>
+a { color:#5eead4; }
+.warning { display:flex; align-items:center; gap:12px; background:#3a2a08; color:#fcd34d; border-radius:6px; padding:10px 12px; margin-top:10px; overflow-wrap:anywhere; }
+.warning span { flex:1; }
+#warning-action { background:transparent; color:#fcd34d; border:1px solid #fcd34d; border-radius:6px; padding:6px 12px; font-size:13px; font-weight:700; white-space:nowrap; }`,
+		body: `<div class="eyebrow">Luna</div>
 <h1>${escapeHtml(title)}</h1>
-${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("\n")}
+${lines.map((line) => `<p>${lineHtml(line, next)}</p>`).join("\n")}
+${warning === undefined ? "" : `<div class="warning"><span id="warning-text">${escapeHtml(warning.text)}</span><button id="warning-action">${escapeHtml(warning.action)}</button></div>`}
 <p class="by">Asked by Luna in its own window. Plugins and page scripts can't see or answer it.</p>
-<div class="actions"><button id="cancel">Cancel</button><button id="confirm" disabled>${escapeHtml(confirmText)}</button></div>
-<script>
-const submit = (answer) => (document.title = "${SUBMIT}" + answer);
-const confirmButton = document.getElementById("confirm");
-document.getElementById("cancel").addEventListener("click", () => submit("no"));
-confirmButton.addEventListener("click", () => submit("yes"));
+${
+	choices === undefined
+		? `<div class="actions"><button id="cancel">Cancel</button><button id="confirm" data-arm disabled>${escapeHtml(confirmText)}</button></div>`
+		: `<div class="actions">${choices
+				.map(
+					(choice, index) =>
+						`<button class="choice" data-id="${choice.id}"${index === choices.length - 1 ? ' id="confirm"' : ""}${index === 0 ? ' id="cancel"' : ""} data-arm disabled>${escapeHtml(choice.label)}</button>`,
+				)
+				.join("")}</div>`
+}`,
+		script:
+			choices !== undefined
+				? // Every choice is kept (the first, deny, too), so all wait to be armed, and the focus is on none: Enter typed into TIDAL
+					// as the window shows picks nothing. Escape closes it, which keeps nothing
+					`for (const button of document.querySelectorAll("button.choice")) button.addEventListener("click", () => submit("choice:" + button.dataset.id));
 document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
-document.getElementById("cancel").focus();
-// Armed by main once the window shows or gets the focus back, disarmed when it loses it (see ARM_DELAY_MS)
-window.arm = () => (confirmButton.disabled = false);
-window.disarm = () => (confirmButton.disabled = true);
-</script>
-</body>
-</html>`;
+document.body.tabIndex = -1;
+document.body.focus();`
+				: `for (const link of document.querySelectorAll("a[data-link]"))
+	link.addEventListener("click", (event) => (event.preventDefault(), note("link:" + link.dataset.link)));
+document.getElementById("warning-action")?.addEventListener("click", () => note("action"));
+// The user chose the warning's action: its text replaces the warning
+window.warningDone = (text) => {
+	document.getElementById("warning-text").textContent = text;
+	document.getElementById("warning-action").remove();
+};
+document.getElementById("cancel").addEventListener("click", () => submit("no"));
+document.getElementById("confirm").addEventListener("click", () => submit("yes"));
+document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
+document.getElementById("cancel").focus();`,
+	});
+};
+
+/** The page of a host question: only its choices answer (see askChoice) */
+export const buildChoiceHtml = (request: ConfirmRequest) => buildConfirmHtml({ ...request, warning: undefined });

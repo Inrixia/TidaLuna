@@ -32,6 +32,10 @@ jobs:
    - name: Install dependencies 📥
      run: pnpm install
 
+   # Nothing downstream runs unless the tests pass: this step failing stops the build, the zip and the release
+   - name: Test
+     run: pnpm test
+
    - name: Refuse old-native lists signed before this build
      # Sets native/core/legacyMinSerial.ts to the serial of the signed legacy.json (luna-registry) for pushes, which
      # are what gets released; any failure fails the build. --allow-404 only while the registry hasn't published the

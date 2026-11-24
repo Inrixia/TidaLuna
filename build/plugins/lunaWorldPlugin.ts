@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 
 import { defaultBuildOptions, TidalChromeVersion } from "../index";
-import { buildNativeFile } from "./lunaNativePlugin";
+import { buildNativeFile, inputFiles } from "./lunaNativePlugin";
 
 /**
  * What a plugin's world (`"lunaWorld"` entry in its package.json) is built to: `<plugin>.world.json`, which the main
@@ -98,13 +98,8 @@ export const buildWorld = async (
 			},
 		],
 	});
-	// The world's own files (metafile inputs are relative to the working directory) and its natives' files
-	// (not virtual ones like "lunaWorldRuntime:@luna/world")
-	watchFiles.push(
-		...Object.keys(metafile!.inputs)
-			.filter((input) => !/^\w+:(?![\\/])/.test(input))
-			.map((input) => path.resolve(input)),
-	);
+	// The world's own files and its natives' files
+	watchFiles.push(...inputFiles(metafile!.inputs));
 	return { code: outputFiles![0].text, natives, watchFiles };
 };
 

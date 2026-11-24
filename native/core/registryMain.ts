@@ -12,7 +12,7 @@ import path from "path";
 
 import { ipcHandle } from "../ipc";
 import { nativeSourcesOf } from "../NativeModule/permissions/verifySource";
-import { forgetAnswers } from "../NativeModule/trust";
+import { allVersionsAnswers, forgetAnswers, revokeAllVersions } from "../NativeModule/trust";
 import { askerFor, choiceAskerFor } from "./confirmWindow";
 import { derivedHosts, derivedHostsReady } from "./derivedHostsMain";
 import { legacyAllows, legacyHosts, legacyListLoaded, legacyListReady } from "./legacyListMain";
@@ -94,6 +94,8 @@ export const registry = () =>
 			return sources;
 		},
 		forgetAnswers,
+		allVersionsAnswers,
+		revokeAllVersions,
 		log: (message) => console.log(message),
 	}));
 

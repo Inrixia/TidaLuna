@@ -8,12 +8,13 @@
 // Kept apart from Electron (its IO comes in as RegistryDeps) so it can be tested.
 import { createHash } from "crypto";
 
-import type { ConfirmRequest } from "./confirmPage";
+import type { ConfirmLine, ConfirmLink, ConfirmRequest, ConfirmWarning } from "./confirmPage";
 import { parseBundle, worldFilePrefix } from "../worldBundle";
 import { declaredHosts, hostsDiff, isLocalEntry, parseHostEntry, sameHosts, settingKeyOf } from "./hosts";
 import { isCoreUrl, isDevUrl, nativesDiff } from "./policy";
 import { pluginIdOf, servedSha256 } from "./legacyList";
 import { defaultStoreOrigins, storeOriginOf, storeUrlAllowed } from "./stores";
+import { updateLinks } from "./updateLinks";
 
 // #region Types
 export type PluginPackage = {
@@ -176,6 +177,10 @@ export type RegistryDeps = {
 	nativeSources(code: string): Record<string, string>;
 	/** Forgets the native permission answers given for a plugin (a reinstall asks again) */
 	forgetAnswers(url: string): void;
+	/** The plugin's native files allowed for all versions (an update's code for them runs without asking) */
+	allVersionsAnswers(url: string): string[];
+	/** Revokes those answers, so the files ask again */
+	revokeAllVersions(url: string): void;
 	log?: (message: string) => void;
 };
 // #endregion
@@ -248,18 +253,10 @@ const legacyNativesOf = (version: Version) => version.natives.filter((fileName) 
 export const legacyFormatMessage = (name: string) =>
 	`${name} uses the old native format, without isolation: its native code doesn't run. The author must move it to the new format (lunaWorld).`;
 
-/**
- * What the confirmation says about a version. `legacyRuns`: its old-format natives would run (see CoreRecord legacyOff);
- * "unknown": they would if this version is on the list, which isn't loaded yet
- */
-export const describe = (url: string, version: Version, legacyRuns: boolean | "unknown" = false, legacyNet = false): string[] => {
-	const lines = [`${version.package.name} ${version.package.version ?? ""} from ${url}${isDevUrl(url) ? " (this computer)" : ""}`];
+/** What a version's old-format native code means: whether it runs and who can call it (`legacyRuns`) */
+export const legacyLines = (url: string, version: Version, legacyRuns: boolean | "unknown"): string[] => {
+	const lines: string[] = [];
 	const legacy = legacyNativesOf(version);
-	const world = version.natives.filter(isWorldNative).map((fileName) => fileName.slice(worldFilePrefix.length));
-	if (world.length !== 0)
-		lines.push(
-			`Native code (runs in TIDAL's main process): ${world.join(", ")}. Only the plugin's own isolated world can call it, other plugins can't reach it. TIDAL asks for each native file.`,
-		);
 	if (legacy.length !== 0 && legacyRuns === "unknown")
 		lines.push(
 			`Native code (runs in TIDAL's main process): ${legacy.join(", ")}. TIDAL asks for each native file.`,
@@ -277,6 +274,21 @@ export const describe = (url: string, version: Version, legacyRuns: boolean | "u
 		lines.push(
 			`Old native format, without isolation: ${legacy.join(", ")} won't run. The author must move the plugin to the new format (lunaWorld).`,
 		);
+	return lines;
+};
+
+/**
+ * What the confirmation says about a version. `legacyRuns`: its old-format natives would run (see CoreRecord legacyOff);
+ * "unknown": they would if this version is on the list, which isn't loaded yet
+ */
+export const describe = (url: string, version: Version, legacyRuns: boolean | "unknown" = false, legacyNet = false): string[] => {
+	const lines = [`${version.package.name} ${version.package.version ?? ""} from ${url}${isDevUrl(url) ? " (this computer)" : ""}`];
+	const world = version.natives.filter(isWorldNative).map((fileName) => fileName.slice(worldFilePrefix.length));
+	if (world.length !== 0)
+		lines.push(
+			`Native code (runs in TIDAL's main process): ${world.join(", ")}. Only the plugin's own isolated world can call it, other plugins can't reach it. TIDAL asks for each native file.`,
+		);
+	lines.push(...legacyLines(url, version, legacyRuns));
 	if (!isNative(version)) lines.push("No native code: it runs in the page like other plugins.");
 	lines.push(...describeHosts(version, legacyNet));
 	lines.push("Plugin code can read and change everything in TIDAL: only allow plugins you trust.");
@@ -288,6 +300,49 @@ export const describe = (url: string, version: Version, legacyRuns: boolean | "u
  * line break (also U+2028/U+2029, which end a line in JavaScript) would turn the rest of the url into code that runs
  */
 const isPluginUrl = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url) && !/[\p{Cc}\u2028\u2029]/u.test(url);
+
+const link = (text: string, href: string | undefined): string | ConfirmLink => (href === undefined ? text : { text, href });
+
+/**
+ * What the update confirmation says: the versions and code hashes, linked to their source and what changed where the
+ * packages say (updateLinks), `notes` (the world's hash, the old native format), whom to trust, and a warning with "Ask
+ * again" if the plugin's native files that would run (`runs`: old-format ones that won't are left out) were allowed for
+ * all versions
+ */
+export const updateQuestion = (
+	url: string,
+	name: string,
+	accepted: Version,
+	pending: Version,
+	deps: Pick<RegistryDeps, "allVersionsAnswers" | "revokeAllVersions">,
+	notes: string[] = [],
+	runs: string[] = pending.natives,
+): ConfirmRequest => {
+	const links = updateLinks(url, accepted.package, pending.package);
+	const versions: ConfirmLine = [link(accepted.package.version ?? "?", links.from), " -> ", link(pending.package.version ?? "?", links.to)];
+	if (links.release !== undefined) versions.push(" (", { text: `release ${links.release.tag}`, href: links.release.page }, ")");
+	const hashes: ConfirmLine = [`Code sha256: ${shortHash(accepted.codeSha256)} -> ${shortHash(pending.codeSha256)}`];
+	if (links.compare !== undefined) hashes.push(" (", { text: "changes", href: links.compare }, ")");
+	// The url names the plugin's files (`.json`, `.mjs`), nothing at the url itself: the link opens its package
+	const lines: ConfirmLine[] = [versions, hashes, ...notes, ["Update only if you trust the author and ", link(url, `${url}.json`)]];
+	// When the window shows (it may wait behind other prompts), of the update's native files
+	const warning = (): ConfirmWarning | undefined => {
+		const files = deps
+			.allVersionsAnswers(url)
+			.filter((fileName) => runs.includes(fileName))
+			// As describe() names them
+			.map((fileName) => (isWorldNative(fileName) ? fileName.slice(worldFilePrefix.length) : fileName));
+		if (files.length === 0) return undefined;
+		return {
+			text: `Native code allowed for all versions (${files.join(", ")}): the update's runs without asking.`,
+			action: "Ask again",
+			done: `If you update, ${files.join(", ")} will ask for permission again.`,
+			run: () => deps.revokeAllVersions(url),
+		};
+	};
+	return { title: `Update ${name}?`, lines, confirmText: "Update", warning };
+};
+
 export const pluginUrl = (url: unknown): string => {
 	if (!isPluginUrl(url)) throw new Error(`[Luna.core] Not a plugin url: ${String(url).slice(0, 200)}`);
 	return url;
@@ -633,31 +688,31 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (record === undefined || accepted === undefined || pending === undefined) return false;
 		withDerived(pending);
 		const changes = info(url)!.pending!;
-		const lines = [
-			`${accepted.package.version ?? "?"} -> ${pending.package.version ?? "?"}`,
-			`Code sha256: ${shortHash(accepted.codeSha256)} -> ${shortHash(pending.codeSha256)}`,
-			// The world drives the plugin's natives: a change to it alone is shown too
-			...(accepted.package.worldHash !== pending.package.worldHash
-				? [`World sha256: ${shortHash(accepted.package.worldHash ?? "none")} -> ${shortHash(pending.package.worldHash ?? "none")}`]
-				: []),
-			"Until you update, the version you have keeps running.",
-			...describe(url, pending, legacyWouldRun(url, accepted, pending), legacyNetWouldRun(url, accepted, pending)),
-		];
+		const notes: string[] = [];
+		// The world drives the plugin's natives: a change to it alone is shown too
+		if (accepted.package.worldHash !== pending.package.worldHash)
+			notes.push(`World sha256: ${shortHash(accepted.package.worldHash ?? "none")} -> ${shortHash(pending.package.worldHash ?? "none")}`);
+		const legacyRunsAfter = legacyWouldRun(url, accepted, pending);
+		notes.push(...legacyLines(url, pending, legacyRunsAfter));
 		if (!isDevUrl(url) && legacyRuns(url, accepted) && legacyNativesOf(accepted).length !== 0)
-			lines.push("This plugin uses the old native format. After this update it can't any more, even if you go back to this version.");
-		if (changes.added.length !== 0) lines.push(`New native files: ${changes.added.join(", ")}`);
-		if (changes.removed.length !== 0) lines.push(`Removed native files: ${changes.removed.join(", ")}`);
+			notes.push("This plugin uses the old native format. After this update it can't any more, even if you go back to this version.");
+		if (changes.added.length !== 0) notes.push(`New native files: ${changes.added.join(", ")}`);
+		if (changes.removed.length !== 0) notes.push(`Removed native files: ${changes.removed.join(", ")}`);
 		const acceptedHosts = hostsOfVersion(accepted);
 		if (acceptedHosts === undefined && changes.hosts !== undefined)
-			lines.push("Now lists its network hosts: Luna asks you before any other host.");
+			notes.push("Now lists its network hosts: Luna asks you before any other host.");
 		else if (acceptedHosts !== undefined && changes.hosts === undefined)
-			lines.push("No longer lists its network hosts: Luna asks you for each host it uses.");
+			notes.push("No longer lists its network hosts: Luna asks you for each host it uses.");
 		else {
-			if (changes.hostsAdded.length !== 0) lines.push(`New network hosts: ${showEntries(changes.hostsAdded)}`);
-			if (changes.hostsRemoved.length !== 0) lines.push(`Removed network hosts: ${showEntries(changes.hostsRemoved)}`);
+			if (changes.hostsAdded.length !== 0) notes.push(`New network hosts: ${showEntries(changes.hostsAdded)}`);
+			if (changes.hostsRemoved.length !== 0) notes.push(`Removed network hosts: ${showEntries(changes.hostsRemoved)}`);
 		}
+		// What the hosts policy is after the update (a plugin leaving the old list asks again, say)
+		notes.push(...describeHosts(pending, legacyNetWouldRun(url, accepted, pending)));
 		// Operations on this url wait for the answer (serial): a newer update a load finds meanwhile waits for its own window
-		if (!(await ask({ title: `Update ${record.name}?`, lines, confirmText: "Update" }))) return false;
+		// Old-format files that won't run aren't named in the warning (legacyLines says they won't)
+		const runs = legacyRunsAfter === false ? pending.natives.filter(isWorldNative) : pending.natives;
+		if (!(await ask(updateQuestion(url, record.name, accepted, pending, deps, notes, runs)))) return false;
 		delete pending.hostsUnconfirmed;
 		accept(record, pending);
 		record.pending = undefined;

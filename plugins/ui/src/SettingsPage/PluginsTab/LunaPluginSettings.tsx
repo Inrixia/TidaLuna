@@ -133,15 +133,15 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 						>
 							{collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
 						</IconButton>
+						{!collapsed && !isCore && (
+							<Tooltip
+								title={enabled ? `Disable ${name}` : `Enable ${name}`}
+								children={<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />}
+							/>
+						)}
 						<PluginUpdateButton plugin={plugin} />
 						{!collapsed && (
 							<>
-								{!isCore && (
-									<Tooltip
-										title={enabled ? `Disable ${name}` : `Enable ${name}`}
-										children={<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />}
-									/>
-								)}
 								<SpinningButton title="Reload plugin" spin={loading} disabled={disabled} onClick={handleReload} />
 								{/* Luna core runs a new version of other urls only once the user accepts it: live reload is for dev urls */}
 								{(isCore || plugin.isDev) && <LiveReloadToggle plugin={plugin} disabled={disabled} sx={{ marginLeft: 1 }} />}

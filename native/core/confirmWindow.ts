@@ -1,29 +1,38 @@
 // Luna's confirmations (for now the core natives that need the user, see policy.ts), asked by the main process in a
-// window of its own. Page code can cover, restyle or remove anything in TIDAL's page, so a prompt drawn there can be
-// clickjacked; this window is a separate webContents (own session, no preload) that nothing in the page can see, cover or
-// click. Built like the native permission window (NativeModule/permissions/window.ts), and shares its queue.
-import { BrowserWindow, ipcMain } from "electron";
+// NativeConfirm window, like the native permission window: TIDAL's page can't see, cover or click it.
+import { BrowserWindow, ipcMain, shell } from "electron";
 
-import { createPromptWindow, inPromptQueue, visibleOwner } from "../NativeModule/permissions/promptWindow";
+import { NativeConfirm } from "../NativeConfirm/NativeConfirm";
 import {
-	ARM_DELAY_MS,
+	actionToRun,
 	buildChoiceHtml,
 	buildConfirmHtml,
 	confirmGate,
+	confirmLinks,
 	confirmRequest,
+	type ConfirmRequest,
+	type ConfirmWarning,
 	fitLines,
-	SUBMIT,
-	TITLE,
-	USER_INPUT_MS,
-	NOT_IN_USE,
 	focusedWithin,
+	httpLink,
 	isHostAnswer,
 	isHostDeny,
 	limitedWait,
+	NOT_IN_USE,
 	oneAtATime,
-	type ConfirmRequest,
+	shownWarning,
+	USER_INPUT_MS,
 } from "./confirmPage";
 import { notAsked } from "./notAsked";
+
+const confirmWindow = new NativeConfirm<string>({
+	partition: "luna-confirm",
+	title: "Luna",
+	width: 560,
+	minHeight: 180,
+	maxHeight: 700,
+	showUnowned: false,
+});
 
 // Page code can ask for confirmations: it must not flood the user with windows
 const gate = confirmGate();
@@ -40,50 +49,92 @@ const waitForTidal = limitedWait(MAX_WAITING);
 /** TIDAL windows whose blur ends the user's last answer counting as use (see confirmGate) */
 const watched = new WeakSet<BrowserWindow>();
 
+/** Watches `owner`: our own window taking the focus comes before the answer; going to another app after it ends it */
+const watch = (owner: BrowserWindow | undefined) => {
+	if (owner === undefined || watched.has(owner)) return;
+	watched.add(owner);
+	owner.on("blur", () => (gate.left(), hostGate.left()));
+};
+
 /**
  * Asks the user. `answer` is true only if they clicked the confirm button; closing the window is a cancel.
  * `refused` says why no window opened: TIDAL is not in use (the request came from page code), too many are waiting, or
  * the last ones were all cancelled (see confirmGate), or TIDAL was hidden before its turn came.
+ * Rejects if the warning's action the user chose failed: what they confirmed was with it done.
  *
  * @param recentUserInput See TidalState
  */
-export const askConfirm = async (
+const askConfirm = async (
 	request: ConfirmRequest,
 	parent: BrowserWindow | undefined,
 	recentUserInput: boolean,
 ): Promise<{ answer: boolean; refused?: string }> => {
-	const { answer, refused } = await askRaw(request, parent, recentUserInput);
-	return { answer: answer === "yes", refused };
+	const owner = NativeConfirm.visibleOwner(parent);
+	watch(owner);
+	const refused = gate.refuse({
+		tidal: { visible: owner !== undefined, focused: owner?.isFocused() === true, recentUserInput },
+		now: Date.now(),
+	});
+	if (refused !== undefined) {
+		console.warn(`[🛑Security🛑] Did not ask "${request.title}": ${refused}`);
+		return { answer: false, refused };
+	}
+	let answer: boolean | undefined;
+	try {
+		let warning: ConfirmWarning | undefined;
+		// The user chose the warning's action: it runs if they confirm (closing or cancelling drops it)
+		let warningChosen = false;
+		const asked = await confirmWindow.ask(parent, () => {
+			// Taken when the window's turn comes: prompts before it may have changed what it warns about
+			warning = shownWarning(request);
+			const links = confirmLinks(request);
+			return {
+				html: buildConfirmHtml({ ...request, warning }),
+				answers: ["yes", "no"],
+				onNote: (what, run) => {
+					const link = what.startsWith("link:") ? httpLink(links[Number(what.slice(5))]) : undefined;
+					if (link !== undefined) void shell.openExternal(link).catch(() => {});
+					if (what === "action" && warning !== undefined && !warningChosen) {
+						warningChosen = true;
+						run(`window.warningDone(${JSON.stringify(warning.done)})`);
+					}
+				},
+			};
+		});
+		// Not the user's cancel: TIDAL was hidden or the window failed before it showed
+		if (!asked?.shown) return { answer: false, refused: "its window could not be shown over TIDAL" };
+		// Closing the window is a cancel
+		const confirmed = asked.answer === "yes";
+		const action = actionToRun(confirmed, warningChosen, warning);
+		// Runs after the window's turn: revokeAllVersions is synchronous, so it is done before the next prompt reads its warning.
+		// Before the answer counts: what it confirms (an update, say) must find the action done. If it fails, the
+		// confirmation fails: the asker (registry.ts) does nothing, and the renderer shows why
+		if (action !== undefined)
+			try {
+				await action();
+			} catch (err: any) {
+				console.error("[🛑Security🛑] The confirmation's warning action failed", err);
+				throw new Error(`[Luna.core] "${warning?.action}" failed, so "${request.title}" is not confirmed: ${err?.message ?? err}`);
+			}
+		answer = confirmed;
+		return { answer };
+	} finally {
+		gate.answered(answer, Date.now());
+	}
 };
 
 /**
  * Asks the user to pick one of `request.choices`: `choice` is its id, undefined if they closed the window. `refused`
  * as in askConfirm, from the host questions' own gate. Any pick (Deny too) is an answer for the gate, a close a cancel
  */
-export const askChoice = async (
+const askChoice = async (
 	request: ConfirmRequest,
 	parent: BrowserWindow | undefined,
 	recentUserInput: boolean,
 ): Promise<{ choice?: string; refused?: string }> => {
-	const { answer, refused } = await askRaw(request, parent, recentUserInput, isHostAnswer, hostGate, isHostDeny);
-	return { choice: answer?.startsWith("choice:") ? answer.slice("choice:".length) : undefined, refused };
-};
-
-const askRaw = async (
-	request: ConfirmRequest,
-	parent: BrowserWindow | undefined,
-	recentUserInput: boolean,
-	confirms: (raw: string) => boolean = (raw) => raw === "yes",
-	asking = gate,
-	denies: (raw: string) => boolean = () => false,
-): Promise<{ answer?: string; refused?: string }> => {
-	const owner = visibleOwner(parent);
-	if (owner !== undefined && !watched.has(owner)) {
-		watched.add(owner);
-		// Our own window taking the focus comes before the answer; going to another app after it ends it
-		owner.on("blur", () => (gate.left(), hostGate.left()));
-	}
-	const refused = asking.refuse({
+	const owner = NativeConfirm.visibleOwner(parent);
+	watch(owner);
+	const refused = hostGate.refuse({
 		tidal: { visible: owner !== undefined, focused: owner?.isFocused() === true, recentUserInput },
 		now: Date.now(),
 	});
@@ -93,84 +144,19 @@ const askRaw = async (
 	}
 	let answer: string | undefined;
 	try {
-		answer = await inPromptQueue(() => show(request, parent));
+		const asked = await confirmWindow.ask(parent, () => ({
+			html: buildChoiceHtml(request),
+			answers: ["no", ...(request.choices ?? []).map((choice) => `choice:${choice.id}`)],
+		}));
 		// Not the user's cancel: TIDAL was hidden or the window failed before it showed
-		if (answer === undefined) return { refused: "its window could not be shown over TIDAL" };
-		return { answer };
+		if (!asked?.shown) return { refused: "its window could not be shown over TIDAL" };
+		// Closed without an answer (or Escape): a cancel
+		answer = asked.answer ?? "no";
+		return { choice: isHostAnswer(answer) ? answer.slice("choice:".length) : undefined };
 	} finally {
-		asking.answered(answer === undefined ? undefined : confirms(answer), Date.now(), answer !== undefined && denies(answer));
+		hostGate.answered(answer === undefined ? undefined : isHostAnswer(answer), Date.now(), answer !== undefined && isHostDeny(answer));
 	}
 };
-
-/** Resolves with the user's raw answer ("yes", "no", "choice:<id>"), or undefined if no window could be shown */
-const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
-	new Promise<string | undefined>((resolve) => {
-		// TIDAL may have been hidden while earlier prompts were answered
-		const owner = visibleOwner(parent);
-		if (owner === undefined) return resolve(undefined);
-		const win = createPromptWindow({
-			parent: owner,
-			modal: true,
-			width: 560,
-			height: 200,
-			useContentSize: true,
-			resizable: false,
-			title: TITLE,
-			partition: "luna-confirm",
-		});
-		let answer: string | undefined;
-		let submitted = false;
-		const choiceIds = new Set((request.choices ?? []).map((choice) => `choice:${choice.id}`));
-		win.on("page-title-updated", (event, title) => {
-			if (!title.startsWith(SUBMIT)) return;
-			event.preventDefault();
-			// The first answer stands: a second title change before the window closes doesn't replace it
-			if (submitted) return;
-			submitted = true;
-			const raw = title.slice(SUBMIT.length);
-			answer = raw === "yes" && choiceIds.size === 0 ? "yes" : choiceIds.has(raw) ? raw : "no";
-			win.close();
-		});
-		// The button is armed ARM_DELAY_MS after the window shows and after every time it gets the focus back: another
-		// window (a dialog of an allowed core native, say) can cover it, and a click meant for that one must not confirm
-		// Not isFocused(): some Linux window managers never report the focus, and the button must still arm there
-		let armTimer: ReturnType<typeof setTimeout> | undefined;
-		let blurred = false;
-		const run = (script: string) => !win.isDestroyed() && void win.webContents.executeJavaScript(script).catch(() => {});
-		const armLater = () => {
-			clearTimeout(armTimer);
-			armTimer = setTimeout(() => !blurred && run("window.arm()"), ARM_DELAY_MS);
-		};
-		win.on("blur", () => {
-			blurred = true;
-			clearTimeout(armTimer);
-			run("window.disarm()");
-		});
-		win.on("focus", () => {
-			blurred = false;
-			if (win.isVisible()) armLater();
-		});
-		// Shown: closing it from here on is the user's cancel
-		win.once("show", () => (answer ??= "no"));
-		win.once("ready-to-show", async () => {
-			const height = await win.webContents.executeJavaScript("document.body.scrollHeight").catch(() => undefined);
-			if (win.isDestroyed()) return;
-			if (typeof height === "number" && Number.isFinite(height)) win.setContentSize(560, Math.min(Math.max(Math.ceil(height), 180), 700));
-			win.center();
-			win.show();
-			// A click meant for TIDAL that lands on the new window doesn't confirm
-			armLater();
-		});
-		win.once("closed", () => {
-			clearTimeout(armTimer);
-			resolve(answer);
-		});
-		const html = request.choices === undefined ? buildConfirmHtml(request) : buildChoiceHtml(request);
-		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch((err) => {
-			console.error("[🛑Security🛑] Failed to show the Luna confirmation", err);
-			if (!win.isDestroyed()) win.close();
-		});
-	});
 
 // #region Who asks
 /** When the preload last saw a trusted click or key in a renderer: webContents id -> Date.now() */
@@ -211,8 +197,10 @@ ipcMain.on("__Luna.userInput", (event, active: unknown) => {
 export const askerFor = (sender: Electron.WebContents) => {
 	const parent = BrowserWindow.fromWebContents(sender) ?? undefined;
 	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
-	return async ({ title, lines, confirmText }: ConfirmRequest): Promise<boolean> => {
-		const request = confirmRequest(title, Array.isArray(lines) ? fitLines(lines) : lines, confirmText);
+	return async ({ title, lines, confirmText, warning }: ConfirmRequest): Promise<boolean> => {
+		// Luna's own text lines past the limit are packed (lines with links stay as they are)
+		const fitted = Array.isArray(lines) && lines.every((line) => typeof line === "string") ? fitLines(lines) : lines;
+		const request = confirmRequest(title, fitted, confirmText, warning);
 		const { answer, refused } = await askConfirm(request, parent, recentUserInput);
 		if (refused === undefined) return answer;
 		throw notAsked(request.title, refused);

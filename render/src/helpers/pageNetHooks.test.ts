@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 
 import { installPageNet, type PageNetDeps } from "./pageNetHooks";
 
@@ -52,28 +51,28 @@ describe("pageNetHooks", () => {
 		await net.ready;
 		await page.fetch("https://api.tidal.com/v1/x");
 		await page.fetch("https://api.allowed.example/y");
-		assert.deepEqual(calls.native, ["https://api.tidal.com/v1/x", "https://api.allowed.example/y"]);
-		assert.equal(calls.stacks, 0);
-		assert.deepEqual(calls.luna, []);
+		expect(calls.native).toEqual(["https://api.tidal.com/v1/x", "https://api.allowed.example/y"]);
+		expect(calls.stacks).toBe(0);
+		expect(calls.luna).toEqual([]);
 	});
 
 	it("a plugin's fetch outside the connect-src goes through luna.fetch; a non-plugin one stays native (and the CSP blocks it)", async () => {
 		const { page, calls, net } = setup();
 		await net.ready;
 		const res = await page.fetch("https://other.example/z");
-		assert.equal(await res.text(), "luna");
-		assert.deepEqual(calls.luna, ["https://other.example/z"]);
+		expect(await res.text()).toBe("luna");
+		expect(calls.luna).toEqual(["https://other.example/z"]);
 		const tidal = setup({ caller: undefined });
 		await tidal.net.ready;
 		await tidal.page.fetch("https://other.example/z");
-		assert.deepEqual(tidal.calls.native, ["https://other.example/z"]);
+		expect(tidal.calls.native).toEqual(["https://other.example/z"]);
 	});
 
 	it("a refused luna.fetch is toasted and thrown", async () => {
 		const { page, calls, net } = setup({ lunaFetch: async () => Promise.reject(new Error("[Luna.net] refused")) });
 		await net.ready;
-		await assert.rejects(page.fetch("https://other.example/z"), /refused/);
-		assert.deepEqual(calls.blocked, ["P other.example refused"]);
+		await expect(page.fetch("https://other.example/z")).rejects.toThrow(/refused/);
+		expect(calls.blocked).toEqual(["P other.example refused"]);
 	});
 
 	it("a socket, XHR, EventSource or beacon to a new host asks, and says what the answer means", async () => {
@@ -81,21 +80,21 @@ describe("pageNetHooks", () => {
 		await always.net.ready;
 		new always.page.WebSocket("wss://live.example/s");
 		await always.net.lastAsk();
-		assert.deepEqual(always.calls.asked, ["wss://live.example/s"]);
-		assert.match(always.calls.warned[0], /works once TIDAL reloads/);
+		expect(always.calls.asked).toEqual(["wss://live.example/s"]);
+		expect(always.calls.warned[0]).toMatch(/works once TIDAL reloads/);
 
 		const once = setup({ askHost: async () => ({ allowed: true, answer: "once" }) });
 		await once.net.ready;
 		once.page.XMLHttpRequest.prototype.open("GET", "https://x.example/a");
 		await once.net.lastAsk();
-		assert.match(once.calls.blocked[0], /needs "Always allow"/);
+		expect(once.calls.blocked[0]).toMatch(/needs "Always allow"/);
 
 		const notKept = setup({ askHost: async () => ({ allowed: true, answer: "always", notKept: true }) });
 		await notKept.net.ready;
 		new notKept.page.EventSource("https://nas:8096/events");
 		await notKept.net.lastAsk();
-		assert.match(notKept.calls.blocked[0], /can't keep an answer/);
-		assert.deepEqual(notKept.calls.warned, []);
+		expect(notKept.calls.blocked[0]).toMatch(/can't keep an answer/);
+		expect(notKept.calls.warned).toEqual([]);
 
 		// Plain http/ws but to loopback: mixed content, not asked whatever the answer would be
 		let asked = 0;
@@ -103,26 +102,26 @@ describe("pageNetHooks", () => {
 		await plain.net.ready;
 		new plain.page.WebSocket("ws://nas.lan:8096/socket");
 		await plain.net.lastAsk();
-		assert.equal(asked, 0);
-		assert.match(plain.calls.blocked[0], /can't reach plain ws hosts/);
+		expect(asked).toBe(0);
+		expect(plain.calls.blocked[0]).toMatch(/can't reach plain ws hosts/);
 
 		const denied = setup({ askHost: async () => ({ allowed: false, reason: "you denied x.example" }) });
 		await denied.net.ready;
 		denied.page.navigator.sendBeacon("https://x.example/b");
 		await denied.net.lastAsk();
-		assert.deepEqual(denied.calls.blocked, ["P x.example you denied x.example"]);
+		expect(denied.calls.blocked).toEqual(["P x.example you denied x.example"]);
 
 		// Allowed by the page's CSP, or the page's own origin: nothing asked
 		new always.page.WebSocket("wss://api.allowed.example/s");
 		new always.page.WebSocket("wss://desktop.tidal.com/s");
-		assert.equal(always.calls.asked.length, 1);
+		expect(always.calls.asked.length).toBe(1);
 	});
 
 	it("an enforced CSP block is toasted with its directive; report-only ones aren't", () => {
 		const { calls, violation } = setup();
 		violation({ disposition: "report", blockedURI: "https://r.example/x", effectiveDirective: "connect-src" });
 		violation({ disposition: "enforce", blockedURI: "https://e.example/x", effectiveDirective: "connect-src" });
-		assert.deepEqual(calls.blocked, ["connect-src e.example"]);
+		expect(calls.blocked).toEqual(["connect-src e.example"]);
 	});
 
 	it("one toast for a plugin's blocked request: its own, not the CSP report's too", async () => {
@@ -131,7 +130,7 @@ describe("pageNetHooks", () => {
 		new page.WebSocket("wss://x.example/s");
 		violation({ disposition: "enforce", blockedURI: "wss://x.example/s", effectiveDirective: "connect-src" });
 		await net.lastAsk();
-		assert.deepEqual(calls.blocked, ["P x.example you denied x.example"]);
+		expect(calls.blocked).toEqual(["P x.example you denied x.example"]);
 	});
 
 	it("a request the page allows leaves no toast mark: a later real block of the host is toasted", async () => {
@@ -140,7 +139,7 @@ describe("pageNetHooks", () => {
 		new page.WebSocket("wss://api.allowed.example/s");
 		await net.lastAsk();
 		violation({ disposition: "enforce", blockedURI: "wss://api.allowed.example/s", effectiveDirective: "connect-src" });
-		assert.deepEqual(calls.blocked, ["connect-src api.allowed.example"]);
+		expect(calls.blocked).toEqual(["connect-src api.allowed.example"]);
 	});
 
 	it("says a host only luna.fetch reaches won't work after a reload", async () => {
@@ -152,8 +151,8 @@ describe("pageNetHooks", () => {
 			await net.ready;
 			new page.WebSocket("wss://jf.example.com/s");
 			await net.lastAsk();
-			assert.match(calls.blocked[0], text);
-			assert.deepEqual(calls.warned, []);
+			expect(calls.blocked[0]).toMatch(text);
+			expect(calls.warned).toEqual([]);
 		}
 	});
 
@@ -166,6 +165,6 @@ describe("pageNetHooks", () => {
 		await net.ready;
 		new page.WebSocket("wss://jf.example.com/s");
 		await net.lastAsk();
-		assert.deepEqual(seen, [{ server: "https://jf.example.com" }]);
+		expect(seen).toEqual([{ server: "https://jf.example.com" }]);
 	});
 });
