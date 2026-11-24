@@ -478,8 +478,13 @@ export class LunaPlugin {
 	 * Store the update and run it if the plugin is enabled.
 	 * @param update The update the user was shown. If the url has served a newer one since, that one becomes the pending update.
 	 */
-	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._): Promise<void> {
+	/**
+	 * @param beforeLoad Runs right before the update is applied (the dialog's "Ask again" revokes there). If it throws,
+	 * the update is not applied
+	 */
+	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._, beforeLoad?: () => Promise<void>): Promise<void> {
 		if (update?.code === undefined) return;
+		await beforeLoad?.();
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
 		if (this.enabled) return this.loadExports(true, update);
 		const release = await this.loadSemaphore.obtain();
