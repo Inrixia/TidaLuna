@@ -2,10 +2,22 @@
 // window of its own. Page code can cover, restyle or remove anything in TIDAL's page, so a prompt drawn there can be
 // clickjacked; this window is a separate webContents (own session, no preload) that nothing in the page can see, cover or
 // click. Built like the native permission window (NativeModule/permissions/window.ts), and shares its queue.
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow, ipcMain, shell } from "electron";
 
 import { createPromptWindow, inPromptQueue, visibleOwner } from "../NativeModule/permissions/promptWindow";
-import { ARM_DELAY_MS, buildConfirmHtml, confirmGate, confirmRequest, SUBMIT, TITLE, USER_INPUT_MS, type ConfirmRequest } from "./confirmPage";
+import {
+	ARM_DELAY_MS,
+	buildConfirmHtml,
+	confirmGate,
+	confirmLinks,
+	confirmRequest,
+	httpLink,
+	NOTE,
+	SUBMIT,
+	TITLE,
+	USER_INPUT_MS,
+	type ConfirmRequest,
+} from "./confirmPage";
 import { notAsked } from "./notAsked";
 
 // Page code can ask for confirmations: it must not flood the user with windows
@@ -68,7 +80,22 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 		});
 		let answer: boolean | undefined;
 		let submitted = false;
+		const links = confirmLinks(request);
+		const run = (script: string) => !win.isDestroyed() && void win.webContents.executeJavaScript(script).catch(() => {});
+		// The user chose the warning's action: it runs if they confirm (closing or cancelling drops it)
+		let warningChosen = false;
 		win.on("page-title-updated", (event, title) => {
+			if (title.startsWith(NOTE)) {
+				event.preventDefault();
+				const what = title.slice(NOTE.length).replace(/#\d+$/, "");
+				const link = what.startsWith("link:") ? httpLink(links[Number(what.slice(5))]) : undefined;
+				if (link !== undefined) void shell.openExternal(link).catch(() => {});
+				if (what === "action" && request.warning !== undefined && !warningChosen) {
+					warningChosen = true;
+					run(`window.warningDone(${JSON.stringify(request.warning.done)})`);
+				}
+				return;
+			}
 			if (!title.startsWith(SUBMIT)) return;
 			event.preventDefault();
 			// The first answer stands: a second title change before the window closes doesn't replace it
@@ -82,7 +109,6 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 		// Not isFocused(): some Linux window managers never report the focus, and the button must still arm there
 		let armTimer: ReturnType<typeof setTimeout> | undefined;
 		let blurred = false;
-		const run = (script: string) => !win.isDestroyed() && void win.webContents.executeJavaScript(script).catch(() => {});
 		const armLater = () => {
 			clearTimeout(armTimer);
 			armTimer = setTimeout(() => !blurred && run("window.arm()"), ARM_DELAY_MS);
@@ -109,7 +135,12 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 		});
 		win.once("closed", () => {
 			clearTimeout(armTimer);
-			resolve(answer);
+			if (answer !== true || !warningChosen || request.warning === undefined) return resolve(answer);
+			// Before the answer counts: what it confirms (an update, say) must find the action done
+			Promise.resolve()
+				.then(request.warning.run)
+				.catch((err) => console.error("[Luna.core] The confirmation's warning action failed", err))
+				.finally(() => resolve(answer));
 		});
 		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildConfirmHtml(request))}`).catch((err) => {
 			console.error("[🛑Security🛑] Failed to show the Luna confirmation", err);
@@ -141,8 +172,8 @@ ipcMain.on("__Luna.userInput", (event, active: unknown) => {
 export const askerFor = (sender: Electron.WebContents) => {
 	const parent = BrowserWindow.fromWebContents(sender) ?? undefined;
 	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
-	return async ({ title, lines, confirmText }: ConfirmRequest): Promise<boolean> => {
-		const request = confirmRequest(title, lines, confirmText);
+	return async ({ title, lines, confirmText, warning }: ConfirmRequest): Promise<boolean> => {
+		const request = confirmRequest(title, lines, confirmText, warning);
 		const { answer, refused } = await askConfirm(request, parent, recentUserInput);
 		if (refused === undefined) return answer;
 		throw notAsked(request.title, refused);

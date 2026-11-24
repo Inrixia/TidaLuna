@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { createHash } from "node:crypto";
 
-import type { ConfirmRequest } from "./confirmPage";
+import type { ConfirmLine, ConfirmRequest } from "./confirmPage";
 import { pluginIdOf, servedSha256 } from "./legacyList";
 import { createRegistry, type CoreState, type PluginPackage } from "./registry";
 
@@ -26,6 +26,8 @@ const fakeDeps = (state: CoreState | null = null) => {
 		return world;
 	};
 	const forgotten: string[] = [];
+	/** url -> native files allowed for all versions */
+	const allVersions = new Map<string, string[]>();
 	const writes: CoreState[] = [];
 	const nativesOf = new Map<string, Record<string, string>>();
 	const reads = { count: 0 };
@@ -60,8 +62,10 @@ const fakeDeps = (state: CoreState | null = null) => {
 			return nativesOf.get(code) ?? {};
 		},
 		forgetAnswers: (url: string) => void forgotten.push(url),
+		allVersionsAnswers: (url: string) => allVersions.get(url) ?? [],
+		revokeAllVersions: (url: string) => void allVersions.delete(url),
 	};
-	return { deps, serve, serveWorld, served, forgotten, writes, reads, list };
+	return { deps, serve, serveWorld, served, forgotten, writes, reads, list, allVersions };
 };
 
 /**
@@ -79,6 +83,10 @@ const installLegacy = async (
 	await registry.load(url).catch(() => {});
 	assert.strictEqual(await registry.enable(url, asker(true)), true);
 };
+
+/** A confirmation line as the page shows it */
+const lineText = (line: ConfirmLine) =>
+	typeof line === "string" ? line : line.map((part) => (typeof part === "string" ? part : part.text)).join("");
 
 /** An asker that answers `answer` and records what it was asked */
 const asker = (answer: boolean) => {
@@ -164,8 +172,9 @@ describe("core registry", () => {
 
 		const no = asker(false);
 		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
-		assert.ok(no.asked[0].lines.some((line) => line.includes("New native files: b.native.ts")));
-		assert.ok(no.asked[0].lines.some((line) => line.includes("After this update it can't any more")));
+		assert.ok(no.asked[0].lines.map(lineText).includes(`Update only if you trust the author and ${URL}`));
+		assert.strictEqual(no.asked[0].warning, undefined);
+		assert.ok(no.asked[0].lines.map(lineText).some((line) => line.includes("After this update it can't any more")));
 		assert.strictEqual(registry.info(URL)?.hash, "v1");
 
 		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
@@ -192,8 +201,10 @@ describe("core registry", () => {
 		assert.strictEqual(loaded.pending?.codeSha256, sha256("code changed"));
 		const no = asker(false);
 		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
-		assert.ok(no.asked[0].lines.includes("1.2.0 -> 1.2.0"));
-		assert.ok(no.asked[0].lines.includes(`Code sha256: ${sha256("code v1").slice(0, 12)} -> ${sha256("code changed").slice(0, 12)}`));
+		assert.ok(no.asked[0].lines.map(lineText).includes("1.2.0 -> 1.2.0"));
+		assert.ok(
+			no.asked[0].lines.map(lineText).includes(`Code sha256: ${sha256("code v1").slice(0, 12)} -> ${sha256("code changed").slice(0, 12)}`),
+		);
 		assert.strictEqual((await registry.load(URL)).code, "code v1");
 
 		// A new hash at a lower version number: an update too, asked about like any other
@@ -514,7 +525,55 @@ describe("core registry", () => {
 		assert.strictEqual((await registry.load(URL)).pending?.codeSha256, v2);
 		const ask = asker(false);
 		await registry.acceptUpdate(URL, ask);
-		assert.ok(ask.asked[0].lines.includes(`Code sha256: ${v1.slice(0, 12)} -> ${v2.slice(0, 12)}`));
+		assert.ok(ask.asked[0].lines.map(lineText).includes(`Code sha256: ${v1.slice(0, 12)} -> ${v2.slice(0, 12)}`));
+	});
+
+	it("links the update's versions, release and changes, and the plugin url", async () => {
+		const RELEASE = "https://github.com/owner/repo/releases/download/latest/plugin";
+		const [A, B] = ["a".repeat(40), "b".repeat(40)];
+		const { deps, serve } = fakeDeps();
+		serve(RELEASE, "v1", {}, { commit: A });
+		const registry = createRegistry(deps);
+		await registry.install(RELEASE, asker(true));
+		serve(RELEASE, "v2", {}, { commit: B });
+		await registry.load(RELEASE);
+		const ask = asker(false);
+		await registry.acceptUpdate(RELEASE, ask);
+		const [versions, hashes, trust] = ask.asked[0].lines;
+		assert.deepStrictEqual(versions, [
+			{ text: "v1", href: `https://github.com/owner/repo/commit/${A}` },
+			" -> ",
+			{ text: "v2", href: `https://github.com/owner/repo/commit/${B}` },
+			" (",
+			{ text: "release latest", href: "https://github.com/owner/repo/releases/tag/latest" },
+			")",
+		]);
+		assert.deepStrictEqual((hashes as Exclude<ConfirmLine, string>).slice(1), [
+			" (",
+			{ text: "changes", href: `https://github.com/owner/repo/compare/${A}...${B}` },
+			")",
+		]);
+		assert.deepStrictEqual(trust, ["Update only if you trust the author and ", { text: RELEASE, href: RELEASE }]);
+	});
+
+	it("warns when the plugin's native files are allowed for all versions, and asks again only if the user updates", async () => {
+		const { deps, serve, allVersions } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.load(URL);
+		allVersions.set(URL, ["a.native.ts"]);
+
+		const no = asker(false);
+		await registry.acceptUpdate(URL, no);
+		const warning = no.asked[0].warning;
+		assert.ok(warning?.text.includes("a.native.ts"));
+		assert.strictEqual(warning?.action, "Ask again");
+		// The window runs it only when the user chose it and then confirmed (confirmWindow.ts)
+		assert.deepStrictEqual(allVersions.get(URL), ["a.native.ts"]);
+		await warning!.run();
+		assert.strictEqual(allVersions.get(URL), undefined);
 	});
 
 	it("does nothing for Luna's own plugins and refuses non-plugin urls", async () => {
@@ -534,7 +593,7 @@ describe("core registry", () => {
 		await registry.install(URL, install);
 		assert.deepStrictEqual(registry.info(URL)?.natives, ["world:w.native.ts"]);
 		assert.strictEqual(registry.acceptedWorld(URL), world1);
-		const lines = install.asked[0].lines.join(" ");
+		const lines = install.asked[0].lines.map(lineText).join(" ");
 		assert.match(lines, /w\.native\.ts\. Only the plugin's own isolated world can call it/);
 		assert.doesNotMatch(lines, /Legacy native plugin/);
 		// Page code can't register a world's natives as its own
@@ -572,10 +631,10 @@ describe("core registry", () => {
 		const ask = asker(true);
 		await registry.enable(URL, ask);
 		assert.match(
-			ask.asked[0].lines.join(" "),
+			ask.asked[0].lines.map(lineText).join(" "),
 			/Legacy native plugin: while it is enabled, any plugin or script in the page can call its native functions/,
 		);
-		assert.match(ask.asked[0].lines.join(" "), /on Luna's list of plugins from before isolated worlds\. An update takes it off/);
+		assert.match(ask.asked[0].lines.map(lineText).join(" "), /on Luna's list of plugins from before isolated worlds\. An update takes it off/);
 		assert.strictEqual(registry.info(URL)?.legacyNatives, "allowed");
 
 		// A new plugin in the old format installs after a warning, but its natives don't run
@@ -583,7 +642,7 @@ describe("core registry", () => {
 		serve(NEW_URL, "n1", { "n.native.ts": "native n" });
 		const install = asker(true);
 		assert.strictEqual(await registry.install(NEW_URL, install), true);
-		assert.match(install.asked[0].lines.join(" "), /Old native format, without isolation: n\.native\.ts won't run/);
+		assert.match(install.asked[0].lines.map(lineText).join(" "), /Old native format, without isolation: n\.native\.ts won't run/);
 		assert.strictEqual(registry.info(NEW_URL)?.legacyNatives, "refused");
 		assert.strictEqual(registry.nativeOwner("n.native.ts", "native n"), undefined);
 		assert.match(registry.legacyRefusal("n.native.ts", "native n") ?? "", /plugin n1 uses the old native format/);
@@ -601,15 +660,15 @@ describe("core registry", () => {
 		const registry = createRegistry(deps);
 		const ask = asker(true);
 		await registry.install(URL, ask);
-		assert.match(ask.asked[0].lines.join(" "), /any plugin or script in the page can call its native functions/);
-		assert.doesNotMatch(ask.asked[0].lines.join(" "), /won't run/);
+		assert.match(ask.asked[0].lines.map(lineText).join(" "), /any plugin or script in the page can call its native functions/);
+		assert.doesNotMatch(ask.asked[0].lines.map(lineText).join(" "), /won't run/);
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
 		// An update to unlisted code says it won't run
 		serve(URL, "v2", { "a.native.ts": "native a2" });
 		await registry.load(URL);
 		const update = asker(true);
 		await registry.acceptUpdate(URL, update);
-		assert.match(update.asked[0].lines.join(" "), /won't run/);
+		assert.match(update.asked[0].lines.map(lineText).join(" "), /won't run/);
 	});
 
 	it("takes a url off the old format once other code moves onto it where old-format code ran", async () => {
@@ -726,7 +785,7 @@ describe("core registry", () => {
 		});
 		const ask = asker(true);
 		assert.strictEqual(await registry.install(URL, ask), true);
-		assert.match(ask.asked[0].lines.join("\n"), /any plugin or script in the page can call its native functions/);
+		assert.match(ask.asked[0].lines.map(lineText).join("\n"), /any plugin or script in the page can call its native functions/);
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
 	});
 
@@ -736,7 +795,7 @@ describe("core registry", () => {
 		const registry = createRegistry({ ...deps, legacyLoaded: () => false });
 		const ask = asker(false);
 		await registry.install(URL, ask);
-		const text = ask.asked[0].lines.join("\n");
+		const text = ask.asked[0].lines.map(lineText).join("\n");
 		assert.match(text, /isn't loaded yet/);
 		assert.match(text, /any plugin or script in the page can call its native functions/);
 		assert.doesNotMatch(text, /won't run/);
@@ -753,7 +812,7 @@ describe("core registry", () => {
 		left.serve(URL, "v1", { "a.native.ts": "native a" });
 		const again = asker(false);
 		await restarted.install(URL, again);
-		assert.match(again.asked[0].lines.join("\n"), /won't run/);
+		assert.match(again.asked[0].lines.map(lineText).join("\n"), /won't run/);
 	});
 
 	it("takes a plugin off the old format when an update changes only its world", async () => {
@@ -894,7 +953,7 @@ describe("core registry", () => {
 		await registry.load(URL).catch(() => {});
 		const ask = asker(true);
 		assert.strictEqual(await registry.enable(URL, ask), true);
-		assert.match(ask.asked[0].lines.join(" "), /Old native format, without isolation/);
+		assert.match(ask.asked[0].lines.map(lineText).join(" "), /Old native format, without isolation/);
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a2"), undefined);
 		assert.strictEqual(registry.info(URL)?.legacyNatives, "refused");
 	});
@@ -931,7 +990,7 @@ describe("core registry", () => {
 		await registry.load(URL);
 		const ask = asker(false);
 		await registry.acceptUpdate(URL, ask);
-		assert.match(ask.asked[0].lines.join("\n"), /World sha256: \w{12} -> \w{12}/);
+		assert.match(ask.asked[0].lines.map(lineText).join("\n"), /World sha256: \w{12} -> \w{12}/);
 	});
 
 	it("moves a world plugin silently only when the new url serves the same world", async () => {

@@ -3,6 +3,8 @@ import type { Plugin } from "esbuild";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { basename, dirname } from "path";
 
+import { buildSource } from "./buildSource";
+
 /**
  * @param manifestFields More fields for the plugin's `.json` manifest (lunaWorldPlugin's worldHash), asked once the
  * build ends: the manifest is written once, complete
@@ -27,6 +29,7 @@ export const writeBundlePlugin = (pluginPackagePath?: string, manifestFields?: (
 						outputFile.path.replace(/\.mjs$/, ".json"),
 						JSON.stringify({
 							...pluginPackage,
+							...buildSource(process.env, pluginPackage),
 							hash: outputFile.hash,
 							...extraFields,
 						}),
