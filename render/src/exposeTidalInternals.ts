@@ -7,9 +7,10 @@ import { resolveAbsolutePath } from "./helpers/resolvePath";
 
 import { getOrCreateLoadingContainer } from "./loadingContainer";
 import "./nativeScrollbars";
+import { tidalModules } from "./tidalModules";
 import { transformTidalModule } from "./tidalTransform";
 
-export const tidalModules: Record<string, object> = {};
+export { tidalModules };
 
 // TIDAL's modules load natively from native/injector.ts's luna-module scheme, which gives them V8's code cache, and register themselves here.
 // Quartz is the fallback if that fails.

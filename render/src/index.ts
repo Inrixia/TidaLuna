@@ -1,6 +1,8 @@
 /// <reference path="../../luna.d.ts" />
 // Hook fetch before TIDAL runs so its requests fill the cache
 export { requestCache, type RequestCacheRule } from "./requestCache";
+// Listen before TIDAL runs so its own reports are logged too
+export { cspReports, cspReportsDropped, type CspReport } from "./cspReports";
 // Always expose internals first
 export { tidalModules } from "./exposeTidalInternals";
 export { buildActions, interceptors } from "./exposeTidalInternals.patchAction";
