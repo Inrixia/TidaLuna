@@ -320,7 +320,8 @@ describe("core registry", () => {
 		assert.strictEqual(await registry.moveUrl(NEW_URL, OTHER_URL), true);
 		assert.strictEqual(registry.info(OTHER_URL)?.hash, "v1");
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
-		assert.deepStrictEqual(writes.at(-1)?.legacyOff, [NEW_URL, OTHER_URL]);
+		// The url it moved from leaves with it
+		assert.deepStrictEqual(writes.at(-1)?.legacyOff, [NEW_URL, URL, OTHER_URL]);
 	});
 
 	it("reads an accepted bundle's native files once, however often they are checked", async () => {
@@ -494,6 +495,64 @@ describe("core registry", () => {
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		await registry.install(URL, asker(true));
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
+	it("takes a plugin off the old format when it goes back to listed code from code without natives", async () => {
+		const { deps, serve, list } = fakeDeps();
+		list(URL, "v1");
+		// Installed at the version without natives, then the store goes back to the listed code
+		serve(URL, "v2");
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		// The same after an uninstall: the first code accepted here was v2
+		const fresh = fakeDeps();
+		fresh.list(URL, "v1");
+		fresh.serve(URL, "v2");
+		const again = createRegistry(fresh.deps);
+		await again.install(URL, asker(true));
+		await again.uninstall(URL);
+		fresh.serve(URL, "v1", { "a.native.ts": "native a" });
+		await again.install(URL, asker(true));
+		assert.strictEqual(again.nativeOwner("a.native.ts", "native a"), undefined);
+		// Records accepted before first versions were noted for all code count from their accepted version
+		const old = fakeDeps({ version: 1, plugins: {} });
+		old.serve(URL, "v2");
+		const first = createRegistry(old.deps);
+		await first.install(URL, asker(true));
+		const saved = old.writes.at(-1)!;
+		delete saved.legacyRan;
+		old.list(URL, "v1");
+		const restarted = createRegistry({ ...old.deps, read: () => saved });
+		old.serve(URL, "v1", { "a.native.ts": "native a" });
+		await restarted.load(URL);
+		assert.strictEqual(await restarted.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(restarted.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
+	it("takes the url a plugin moved from off the old format once it leaves at the new one", async () => {
+		const NEW_URL = "https://example.org/plugin";
+		const { deps, serve, served, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await installLegacy(registry, deps, URL, "v1");
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+		// The new url serves an update: it waits, then is accepted
+		serve(NEW_URL, "v2", { "a.native.ts": "native a2" });
+		assert.strictEqual(await registry.moveUrl(URL, NEW_URL), true);
+		assert.strictEqual(await registry.acceptUpdate(NEW_URL, asker(true)), true);
+		await registry.uninstall(NEW_URL);
+		// The old url still serves the listed code
+		assert.strictEqual(served.get(URL)?.pkg.hash, "v1");
+		await registry.install(URL, asker(true));
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		assert.deepStrictEqual(writes.at(-1)?.legacyOff, [NEW_URL, URL]);
+		// Also after a restart
+		const restarted = createRegistry({ ...deps, read: () => writes.at(-1)! });
+		assert.strictEqual(restarted.nativeOwner("a.native.ts", "native a"), undefined);
 	});
 
 	it("runs the old format for no code off the list: a new plugin, one of the same name elsewhere, a second migrate", async () => {
