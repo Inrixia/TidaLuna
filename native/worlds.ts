@@ -14,7 +14,7 @@ import { BrowserWindow } from "electron";
 
 import { createHash } from "crypto";
 
-import { lunaNet, onPluginChanged, registry } from "./core/registryMain";
+import { hostAskerFor, lunaNet, onPluginChanged, registry } from "./core/registryMain";
 import { ipcHandle } from "./ipc";
 import { isIsolated } from "./isolatedContents";
 import { secureLoad } from "./NativeModule/secureLoad";
@@ -156,13 +156,14 @@ ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
 
 // luna.fetch from a plugin world: the url is the one the preload fixed in the world's bridge, so the plugin's accepted
 // hosts hold for its world code (core/net.ts). Disabled, or an update accepted since its world loaded: refused until the
-// new world loads, as invoke is
+// new world loads, as invoke is. A host outside them is asked in Luna's window over TIDAL's (the world runs in its page).
+// `{setting:<key>}` entries need the page's settings, which a world doesn't send: those hosts are asked too
 ipcHandle("__LunaWorld.fetch", async (event, url: unknown, request: unknown) => {
 	checkIsolated(event.sender);
 	const loaded = typeof url === "string" ? loadedWorlds.get(url) : undefined;
 	if (loaded === undefined || registry().acceptedWorld(url as string) !== loaded)
 		throw new Error(`[🛑Security🛑] ${String(url)} has no world loaded at its accepted version`);
-	return lunaNet.fetch(url, "world", request);
+	return lunaNet.fetch(url, "world", request, hostAskerFor(event.sender));
 });
 
 ipcHandle("__LunaWorld.invoke", async (event, url: unknown, fileName: unknown, exportName: unknown, ...args: unknown[]) => {

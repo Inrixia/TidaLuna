@@ -9,7 +9,9 @@
 // - `http://127.0.0.1:8080`: only that scheme and port. http and ws need the scheme written out;
 // - `*.fastly.net/covers/*`: a path, where `*` stands for any characters (`/` too). No other pattern: no regex;
 // - `{setting:serverUrl}`: the host in the plugin's setting `serverUrl` at the moment (a server the user types in),
-//   nothing while it is empty. Resolved by net.ts, never put into the page's CSP (page code can write any setting).
+//   nothing while it is empty. Plugins name their storage themselves: `{setting:Jellyfin.serverUrl}` reads `serverUrl`
+//   in the storage `Jellyfin` when the one named like the package has no `Jellyfin.serverUrl`. Resolved by net.ts, never
+//   put into the page's CSP (page code can write any setting).
 // Kept apart from Electron so it can be tested.
 
 export type HostRule = {
@@ -78,11 +80,13 @@ export const settingKeyOf = (entry: unknown): string | undefined =>
 /** The rule an entry stands for, or undefined if it isn't a valid host entry (a `{setting:}` entry isn't one) */
 export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	if (typeof entry !== "string" || entry.length > 260) return undefined;
-	const match = /^(?:([a-z]+):\/\/)?(\*\.)?([^:/?#@\s*]+)(?::(\d{1,5}))?(\/[^?#\s\\]*)?$/.exec(entry.trim().toLowerCase());
+	// A path of URL path characters only (RFC 3986), without `;`, `,` and `'`: it goes into the CSP header as it is, where
+	// those would start another directive or policy
+	const match = /^(?:([a-z]+):\/\/)?(\*\.)?([^:/?#@\s*]+)(?::(\d{1,5}))?(\/[a-z0-9\-._~!$&()*+=:@%/]*)?$/.exec(entry.trim().toLowerCase());
 	if (match === null) return undefined;
 	const [, scheme, star, host, port, rawPath] = match;
 	// A path as the URL parser writes it: no dot segments, no `%2e` that it would turn into one
-	if (rawPath !== undefined && (/(^|\/)\.{1,2}(\/|$)/.test(rawPath) || /%2e/i.test(rawPath) || rawPath.includes("//"))) return undefined;
+	if (rawPath !== undefined && (/(^|\/)\.{1,2}(\/|$)/.test(rawPath) || /%2e/i.test(rawPath) || /%(?![0-9a-f]{2})/.test(rawPath) || rawPath.includes("//"))) return undefined;
 	// `/` alone or `/*` is any path
 	const path = rawPath === undefined || rawPath === "/" || rawPath === "/*" ? "" : rawPath;
 	if (star !== undefined && publicSuffixes.has(host)) return undefined;
@@ -145,6 +149,16 @@ export const resolveSettings = (hosts: string[], valueOf: (key: string) => unkno
 		if (!resolved.includes(value)) resolved.push(value);
 	}
 	return { hosts: resolved, settings };
+};
+
+/**
+ * A `{setting:<key>}` entry's value: `<key>` in the plugin storage named like the package, or else, for `<store>.<key>`,
+ * `<key>` in the storage `<store>`
+ */
+export const settingValueOf = async (key: string, packageName: string, storage: (name: string) => Promise<Record<string, unknown> | undefined>) => {
+	const own = (await storage(packageName))?.[key];
+	const dot = key.indexOf(".");
+	return own !== undefined || dot <= 0 ? own : (await storage(key.slice(0, dot)))?.[key.slice(dot + 1)];
 };
 
 /** The setting keys a list names */

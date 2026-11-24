@@ -6,6 +6,7 @@ import {
 	resolveSettings,
 	settingKeys,
 	settingValueEntry,
+	settingValueOf,
 	declaredHosts,
 	hostAllowed,
 	hostsDiff,
@@ -228,6 +229,23 @@ describe("host patterns", () => {
 	it("refuses paths the URL parser would rewrite", () => {
 		for (const entry of ["a.com/../x", "a.com/./x", "a.com/%2e%2e/x", "a.com//x", "a.com/x?y", "a.com/x#y", "a.com/x\\y"])
 			assert.equal(parseHostEntry(entry), undefined, entry);
+	});
+
+	it("reads a setting in the package's storage, or in the storage a dotted key names", async () => {
+		const stores: Record<string, Record<string, unknown>> = { "@x/jelly": { url: "a.com" }, Jellyfin: { serverUrl: "b.com" } };
+		const storage = async (name: string) => stores[name];
+		assert.equal(await settingValueOf("url", "@x/jelly", storage), "a.com");
+		assert.equal(await settingValueOf("Jellyfin.serverUrl", "@x/jelly", storage), "b.com");
+		assert.equal(await settingValueOf("serverUrl", "@x/jelly", storage), undefined);
+		assert.equal(await settingValueOf(".serverUrl", "@x/jelly", storage), undefined);
+	});
+
+	it("refuses paths that would break out of the CSP source", () => {
+		for (const entry of ["a.com/x;script-src", "a.com/b,sandbox", "a.com/'unsafe-eval'", "a.com/caf\u00e9", "a.com/%zz", "a.com/x\"y"]) {
+			assert.equal(parseHostEntry(entry), undefined, entry);
+			assert.deepEqual(cspSources([entry]), [], entry);
+		}
+		assert.deepEqual(cspSources(["a.com/covers/%20x/*"]), ["https://a.com/covers/%20x/", "wss://a.com/covers/%20x/"]);
 	});
 
 	it("puts a path into the CSP as the prefix before its first `*`", () => {

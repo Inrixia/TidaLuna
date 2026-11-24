@@ -8,7 +8,7 @@
 // - every block is shown as a toast and in Luna Settings > Network.
 // The calling plugin is found from the stack, like lunaFetch: page code can get the page's fetch from elsewhere (an
 // iframe) and skip all this, and then the CSP blocks it.
-import { hostAllowed, settingKeys } from "../../native/core/hosts";
+import { hostAllowed, settingKeys, settingValueOf } from "../../native/core/hosts";
 import { toNetRequest, toResponse } from "./helpers/netMessages";
 import { LunaPlugin } from "./LunaPlugin";
 import { ReactiveStore } from "./ReactiveStore";
@@ -69,8 +69,10 @@ export const settingsFor = async (plugin: LunaPlugin): Promise<Record<string, un
 	}
 	const keys = await cached.keys;
 	if (keys.length === 0) return undefined;
-	const storage = await ReactiveStore.getPluginStorage<Record<string, unknown>>(plugin.name);
-	return Object.fromEntries(keys.map((key) => [key, storage[key]]));
+	// Read as stored (a change is written at once), without making an entry for a storage name the plugin doesn't use
+	const pluginStorage = ReactiveStore.getStore("@luna/pluginStorage");
+	const storage = (name: string) => pluginStorage.get<Record<string, unknown>>(name);
+	return Object.fromEntries(await Promise.all(keys.map(async (key) => [key, await settingValueOf(key, plugin.name, storage)])));
 };
 
 const nativeFetch = window.fetch;
