@@ -26,9 +26,22 @@ export const createDownloadFolders = (file: () => string, own: () => string[] = 
 		}
 	};
 	const samePath = (a: string, b: string) => path.relative(a, b) === "";
+	/**
+	 * The file the user named in a save dialog: that file, or it with an extension added (a Linux save dialog doesn't add
+	 * the filter's extension, so the plugin does)
+	 */
+	const isSaved = (target: string, picked: Picked) =>
+		picked.files.some((saved) => samePath(saved, target) || (path.extname(target) !== "" && samePath(saved + path.extname(target), target)));
+	/** `safe` is `name` with characters taken out (as sanitize-filename does: invalid characters, the end of a long name), same extension */
+	const madeSafe = (name: string, safe: string) => {
+		if (safe === "" || path.extname(safe).toLowerCase() !== path.extname(name).toLowerCase()) return false;
+		let at = 0;
+		for (const char of name) if (safe.startsWith(char, at)) at += char.length;
+		return at === safe.length;
+	};
 	/** A picked file is that file only, a picked folder anything in it */
 	const covered = (target: string, picked = read()) =>
-		[...picked.folders, ...own()].some((folder) => isInside(folder, target)) || picked.files.some((saved) => samePath(saved, target));
+		[...picked.folders, ...own()].some((folder) => isInside(folder, target)) || isSaved(target, picked);
 	const add = (kind: keyof Picked, entry: string) => {
 		const resolved = path.resolve(entry);
 		const picked = read();
@@ -56,7 +69,7 @@ export const createDownloadFolders = (file: () => string, own: () => string[] = 
 		 * Throws unless `target` is a picked file or in a picked folder (or Luna's own)
 		 *
 		 * @param requested The path as asked for, when `target` is that path with its file name made safe: the file the user
-		 *   named in a save dialog is then written under the safe name, next to it
+		 *   named in a save dialog is then written under the safe name (the name with characters taken out), next to it
 		 */
 		assertAllowed: (target: string, requested?: string): string => {
 			const resolved = path.resolve(target);
@@ -64,7 +77,12 @@ export const createDownloadFolders = (file: () => string, own: () => string[] = 
 			if (covered(resolved, picked)) return target;
 			if (requested !== undefined) {
 				const asked = path.resolve(requested);
-				if (picked.files.some((saved) => samePath(saved, asked)) && samePath(path.dirname(asked), path.dirname(resolved))) return target;
+				if (
+					isSaved(asked, picked) &&
+					samePath(path.dirname(asked), path.dirname(resolved)) &&
+					madeSafe(path.basename(asked), path.basename(resolved))
+				)
+					return target;
 			}
 			throw new Error(`[🛑Security🛑] download blocked: ${target} is not in a folder picked in a Luna dialog, pick the folder again`);
 		},

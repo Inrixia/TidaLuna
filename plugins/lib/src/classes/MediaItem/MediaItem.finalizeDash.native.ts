@@ -289,9 +289,9 @@ const writeTags = async (path: string, mimeType: string, { tags, coverUrl }: Met
 // #endregion
 
 /** Remux a raw DASH (fragmented MP4) download into a standard progressive MP4 (or native FLAC) and tag it */
-export const finalizeDashDownload = async (path: string, tags?: MetaTags): Promise<void> => {
-	// Page code can call this directly too: only a media file where the user picked (see download)
-	luna.assertDownloadPath(assertMediaFile(path));
+export const finalizeDashDownload = async (path: string, tags?: MetaTags, requested?: string): Promise<void> => {
+	// Exported from a native file: only a media file where the user picked, as download checks it (`requested` = its path as asked for)
+	luna.assertDownloadPath(assertMediaFile(path), requested);
 	const source = await readFile(path);
 
 	const input = new Input({ formats: ALL_FORMATS, source: new BufferSource(source) });
@@ -332,8 +332,8 @@ const toMetadataTags = async ({ tags, coverUrl }: MetaTags): Promise<MetadataTag
 };
 
 /** Remux a raw HLS (MPEG-TS) video download into a standard MP4 with tags */
-export const finalizeHlsDownload = async (path: string, tags?: MetaTags): Promise<void> => {
-	luna.assertDownloadPath(assertMediaFile(path));
+export const finalizeHlsDownload = async (path: string, tags?: MetaTags, requested?: string): Promise<void> => {
+	luna.assertDownloadPath(assertMediaFile(path), requested);
 	const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
 	// Native code has no WritableStream, so FilePathTarget can't be used here
 	const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });

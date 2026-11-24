@@ -92,6 +92,20 @@ describe("download folders", () => {
 		assert.throws(() => folders.assertAllowed(path.join(dir, "Live Paris.flac")));
 		assert.throws(() => folders.assertAllowed(path.join(dir, "Live Paris.flac"), path.join(dir, "other.flac")));
 		assert.throws(() => folders.assertAllowed(path.join(dir, "sub", "Live Paris.flac"), saved));
+		// Only the saved name with characters taken out, not another file next to it
+		assert.throws(() => folders.assertAllowed(path.join(dir, "Other.flac"), saved));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "Live Paris.m4a"), saved));
+	});
+
+	it("allows a saved name the plugin added the extension to, not other names", () => {
+		const { dir, folders } = setup();
+		const saved = path.join(dir, "song");
+		folders.pickedToSave({ canceled: false, filePath: saved });
+		assert.doesNotThrow(() => folders.assertAllowed(path.join(dir, "song.flac")));
+		assert.doesNotThrow(() => folders.assertAllowed(path.join(dir, "sng.flac"), path.join(dir, "song.flac")));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "other.flac"), path.join(dir, "song.flac")));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "songs.flac")));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "song", "a.flac")));
 	});
 
 	it("always allows Luna's own folders", () => {

@@ -64,9 +64,9 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 
 			// FLAC streams are tagged in-flight, but DASH streams are written as raw
 			// fragmented MP4: remux to a standard MP4 and write the tags post-download
-			if (playbackInfo.manifestMimeType === "application/dash+xml") await finalizeDashDownload(filePath, tags);
+			if (playbackInfo.manifestMimeType === "application/dash+xml") await finalizeDashDownload(filePath, tags, path);
 			// HLS video streams are MPEG-TS segments: remux to a standard MP4 and write the tags post-download
-			if (playbackInfo.manifestMimeType === "application/vnd.tidal.emu") await finalizeHlsDownload(filePath, tags);
+			if (playbackInfo.manifestMimeType === "application/vnd.tidal.emu") await finalizeHlsDownload(filePath, tags, path);
 			return filePath;
 		} finally {
 			delete downloads[itemId];
