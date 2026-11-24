@@ -9,7 +9,9 @@ Luna (TidaLuna) = client mod for TIDAL desktop app (Electron). Takes over TIDAL 
 - `pnpm i`: install.
 - `pnpm run build`: clean build into `dist/`. `pnpm run watch` rebuilds on change.
 - `pnpm exec tsc --noEmit -p .`: typecheck (few sec). master already has errors; judge only errors in touched code.
-- `pnpm test`: runs every `*.test.ts` under `native`, `render` and `plugins` (node:test via tsx; DOM tests use happy-dom). For runtime behaviour, run TIDAL test instance ([docs/test-instances.md](docs/test-instances.md)); `.claude/skills/tidal-test-instance/` has script that sets one up in `.tidal-test/` (Windows, Linux) and drives it: page + main-process eval, console logs, live reload, TIDAL render/native source dump to grep for hooks, screenshots.
+- `pnpm test`: unit tests (vitest). `native/**` + `build/**` run in the node project, `render/**`, `plugins/**` + `test/**` in happy-dom. `pnpm run coverage` adds a v8 report and enforces the floors in `test/coverageThresholds.ts`. Tests sit next to the code as `*.test.ts`.
+- Tests import `@luna/core` as usual but get `test/harness/core.ts` instead: it re-exports the real `requestCache`, `unloadSet`, `ReactiveStore`, `findModule` helpers, `buildActions`, `interceptors` and `Tracer`, and fakes only `reduxStore` (a real redux store shaped like TIDAL's, `test/harness/tidalStore.ts`), `LunaPlugin` and `modules`. `render/src/index.ts` boots TIDAL (top-level `await` on its scripts) so it can never be imported in a test. Anything importing `render/src/LunaPlugin.ts` (`SettingsTransfer`, `applySeedSettings`) must be `vi.mock`ed.
+- Verify with typecheck + tests + build. For runtime behaviour, run TIDAL test instance ([docs/test-instances.md](docs/test-instances.md)); `.claude/skills/tidal-test-instance/` has script that sets one up in `.tidal-test/` (Windows, Linux) and drives it: page + main-process eval, console logs, live reload, TIDAL render/native source dump to grep for hooks, screenshots. Writing tests is documented in [docs/testing.md](docs/testing.md).
 - `pnpm run format` broken (targets nonexistent `./src`). Run `pnpm exec prettier --write <file>` on files you create.
 
 ## Architecture
@@ -68,8 +70,9 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 
 ## Tests
 
-- Fixes + features come with test: `node:test` + `node:assert`, in `<file>.test.ts` beside code it tests.
+- Fixes + features come with a test: vitest, in `<file>.test.ts` beside the code it tests. Layout, the `@luna/core` harness and the coverage rules are in [docs/testing.md](docs/testing.md).
 - Run `pnpm test` before PR; CI runs it on every PR (`.github/workflows/test.yml`).
+- Coverage floors live in `test/coverageThresholds.ts` and only ever go up. When your PR raises coverage, `pnpm run coverage:thresholds` lifts them to just under what the suite now measures; CI runs the same thing on every push to `master`/`dev` and commits the result, so the file stays current without anyone remembering to bump it. Never lower a floor to make a build pass — add the test instead.
 
 ## Gotchas
 

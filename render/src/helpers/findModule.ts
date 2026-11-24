@@ -1,5 +1,5 @@
 import { memoize, type AnyRecord, type VoidLike } from "@inrixia/helpers";
-import { tidalModules } from "../exposeTidalInternals";
+import { tidalModules } from "../tidalModules";
 import { coreTrace } from "../trace/Tracer";
 
 export interface FoundProperty<T> {

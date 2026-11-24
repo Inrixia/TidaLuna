@@ -14,7 +14,8 @@ jobs:
  Test:
   runs-on: ubuntu-latest
   permissions:
-   contents: read
+   contents: write
+   pull-requests: write
   steps:
    - uses: actions/checkout@v7
 
@@ -33,4 +34,48 @@ jobs:
      run: pnpm install
 
    - name: Test
-     run: pnpm test
+     run: pnpm run coverage:ci
+
+   # Always, so a failing run still reports the coverage it managed. Writes coverage/comment.md and the run page summary.
+   - name: Coverage comment
+     if: always()
+     run: pnpm run coverage:comment
+     continue-on-error: true
+
+   # Posted by .github/workflows/coverage-comment.yml: a PR from a fork gets a read-only token here, so the comment has
+   # to come from a workflow_run, which runs in this repo with a write token and never touches the PR's code.
+   - name: Upload the coverage comment
+     if: always()
+     uses: actions/upload-artifact@v7
+     with:
+      name: coverage-comment
+      path: coverage/comment.md
+      if-no-files-found: ignore
+      retention-days: 7
+
+   # Badges are for the default branch only: a PR run has nothing to publish, and its badges would describe an
+   # unmerged branch. The coverage thresholds above still gate every PR.
+   - name: Coverage badges
+     if: github.event_name == 'push'
+     run: pnpm run coverage:badge
+
+   # Floors only go up, so raising them where the merge lands keeps them honest without asking every PR to touch the file
+   - name: Raise the coverage floors
+     if: github.event_name == 'push'
+     run: pnpm run coverage:thresholds
+
+   # shields.io reads these over raw.githubusercontent.com, so they have to live in the repo.
+   # Commits made with GITHUB_TOKEN don't start another workflow run, so this can't loop.
+   - name: Commit coverage badges
+     if: github.event_name == 'push'
+     uses: stefanzweifel/git-auto-commit-action@v7
+     with:
+      commit_message: "ci: update coverage badges"
+      file_pattern: .github/badges/*.json
+
+   - name: Commit the raised floors
+     if: github.event_name == 'push'
+     uses: stefanzweifel/git-auto-commit-action@v7
+     with:
+      commit_message: "ci: raise the coverage floors"
+      file_pattern: test/coverageThresholds.ts
