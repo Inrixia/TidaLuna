@@ -21,6 +21,7 @@ const setup = () => {
 		file,
 		folders: createDownloadFolders(
 			() => file,
+			() => [path.join(dir, "own")],
 			() => {},
 		),
 	};
@@ -38,6 +39,7 @@ describe("download folders", () => {
 		assert.equal(folders.assertAllowed(path.join(music, "Artist", "a.flac")), path.join(music, "Artist", "a.flac"));
 		const again = createDownloadFolders(
 			() => file,
+			() => [],
 			() => {},
 		);
 		assert.doesNotThrow(() => again.assertAllowed(path.join(music, "a.flac")));
@@ -66,11 +68,36 @@ describe("download folders", () => {
 	});
 
 	it("keeps each folder once, and no file already in a picked folder", () => {
-		const { music, file, folders } = setup();
+		const { dir, music, file, folders } = setup();
 		folders.pickedToOpen({ canceled: false, filePaths: [music] });
 		folders.pickedToOpen({ canceled: false, filePaths: [music + path.sep] });
 		folders.pickedToSave({ canceled: false, filePath: path.join(music, "a.flac") });
-		assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), [music]);
+		folders.pickedToSave({ canceled: false, filePath: path.join(dir, "b.flac") });
+		folders.pickedToSave({ canceled: false, filePath: path.join(dir, "b.flac") });
+		assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { folders: [music], files: [path.join(dir, "b.flac")] });
+	});
+
+	it("doesn't take a saved file for a folder", () => {
+		const { dir, folders } = setup();
+		const saved = path.join(dir, "song.flac");
+		folders.pickedToSave({ canceled: false, filePath: saved });
+		assert.throws(() => folders.assertAllowed(path.join(saved, "sub", "a.flac")), /download blocked/);
+	});
+
+	it("writes a saved file under its safe name next to it, nothing else", () => {
+		const { dir, folders } = setup();
+		const saved = path.join(dir, "Live: Paris.flac");
+		folders.pickedToSave({ canceled: false, filePath: saved });
+		assert.doesNotThrow(() => folders.assertAllowed(path.join(dir, "Live Paris.flac"), saved));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "Live Paris.flac")));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "Live Paris.flac"), path.join(dir, "other.flac")));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "sub", "Live Paris.flac"), saved));
+	});
+
+	it("always allows Luna's own folders", () => {
+		const { dir, folders } = setup();
+		assert.doesNotThrow(() => folders.assertAllowed(path.join(dir, "own", "Artist - Title [1].flac")));
+		assert.throws(() => folders.assertAllowed(path.join(dir, "own-old", "a.flac")));
 	});
 
 	it("allows nothing from a file that can't be used, or from entries that aren't absolute paths", () => {
@@ -78,7 +105,7 @@ describe("download folders", () => {
 		mkdirSync(path.dirname(file), { recursive: true });
 		writeFileSync(file, "{not json");
 		assert.throws(() => folders.assertAllowed(path.join(music, "a.flac")));
-		writeFileSync(file, JSON.stringify([".", "", 5, null]));
+		writeFileSync(file, JSON.stringify({ folders: [".", "", 5, null], files: "x" }));
 		assert.throws(() => folders.assertAllowed(path.resolve("a.flac")));
 		// Picking again replaces what couldn't be used
 		folders.pickedToOpen({ canceled: false, filePaths: [music] });
@@ -93,6 +120,7 @@ describe("download folders", () => {
 		const logs: string[] = [];
 		const folders = createDownloadFolders(
 			() => path.join(blocker, "folders.json"),
+			() => [],
 			(message) => void logs.push(message),
 		);
 		assert.doesNotThrow(() => folders.pickedToOpen({ canceled: false, filePaths: [music] }));

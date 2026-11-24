@@ -7,7 +7,11 @@ export const openExternal = (url: string) => {
 	return shell.openExternal(url);
 };
 // Download natives write only where the user picked in these dialogs (downloadFolders.ts)
-const downloadFolders = createDownloadFolders(() => path.join(app.getPath("userData"), "luna-core", "folders.json"));
+// and Luna's own audio cache folder (native/audioCache.ts), which saves its tracks through download
+const downloadFolders = createDownloadFolders(
+	() => path.join(app.getPath("userData"), "luna-core", "folders.json"),
+	() => [path.join(app.getPath("userData"), "luna-audio-cache")],
+);
 export const showOpenDialog = async (options: Electron.OpenDialogOptions) => {
 	const result = await dialog.showOpenDialog(options);
 	downloadFolders.pickedToOpen(result);
