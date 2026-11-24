@@ -272,18 +272,25 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	};
 	/** The first refresh of a start, and the tries after a failed one (on the next check once due) */
 	const start = () => (first !== undefined && (retryAt === undefined || now() < retryAt) ? first : tracked());
+	/**
+	 * Expired while running, after refreshes that went fine: due for a fetch now, not on the next scheduled refresh. One
+	 * fetch at a time: checks while it runs wait for it. Whether this made one due
+	 */
+	const dueOnExpiry = (): boolean => {
+		if (usable() || current === undefined || first === undefined || retryAt !== undefined || pending) return false;
+		retryAt = now();
+		return true;
+	};
 	let waitUntil: number | undefined;
 
 	return {
 		refresh,
 		/** The scheduled refresh: like refresh, but a failure is tried again soon and nothing is thrown */
-		refreshNow: (): Promise<void> => tracked(),
+		refreshNow: (): Promise<void> => (pending && first !== undefined ? first : tracked()),
 		/** Whether the current list has this plugin's code (see RegistryDeps.legacyAllows) */
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();
-			// Expired while running, after refreshes that went fine: fetch now, not on the next scheduled refresh
-			// (one fetch at a time: checks while it runs wait for it)
-			if (!usable() && current !== undefined && first !== undefined && retryAt === undefined && !pending) retryAt = now();
+			dueOnExpiry();
 			void start();
 			if (now() >= writeAt) writeCurrent();
 			if (!usable()) {
@@ -294,12 +301,14 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		},
 		/**
 		 * Before a check: with no list that grants yet (none, or one expired or older than this build), waits for the cache
-		 * to be readable and for a fetch, at most firstWaitMs after the first call of this start
+		 * to be readable and for a fetch, at most firstWaitMs after the first call of this start, or after the list ran out
+		 * while running (that fetch gets the same time)
 		 */
 		ready: async (): Promise<void> => {
 			waitUntil ??= now() + (deps.firstWaitMs ?? 10000);
 			for (;;) {
 				loadCache();
+				if (dueOnExpiry()) waitUntil = now() + (deps.firstWaitMs ?? 10000);
 				if (usable() || cache === "broken") return;
 				const left = waitUntil - now();
 				if (left <= 0) return;

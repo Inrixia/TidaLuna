@@ -465,6 +465,42 @@ describe("old native format list", () => {
 		assert.strictEqual(fetches, 2);
 	});
 
+	it("the scheduled refresh starts no second fetch while one runs", async () => {
+		const until = "2026-12-01T00:00:00.000Z";
+		const time = { now: at(until) - DAY };
+		let fetches = 0;
+		let slow = false;
+		const { store } = storeAt(time, undefined, async () => {
+			fetches++;
+			if (slow) await new Promise((resolve) => setTimeout(resolve, 50));
+			return doc(5 + fetches, [A], { validUntil: fetches === 1 ? until : "2027-01-01T00:00:00.000Z" });
+		});
+		await store.ready();
+		slow = true;
+		time.now = at(until) + 3 * DAY;
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		const scheduled = store.refreshNow();
+		assert.strictEqual(fetches, 2);
+		await scheduled;
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(fetches, 2);
+	});
+
+	it("ready waits for the fetch when the list ran out while running (the confirmations can say what runs)", async () => {
+		const until = "2026-12-01T00:00:00.000Z";
+		const time = { now: at(until) - DAY };
+		let fetches = 0;
+		let served: object = doc(5, [A], { validUntil: until });
+		const { store } = storeAt(time, undefined, () => (fetches++, served));
+		await store.ready();
+		assert.strictEqual(fetches, 1);
+		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
+		time.now = at(until) + 3 * DAY;
+		await store.ready();
+		assert.strictEqual(fetches, 2);
+		assert.strictEqual(store.usable(), true);
+	});
+
 	it("an expired cache stays the base: a fresh list must still be a subset of it", async () => {
 		const time = { now: at("2027-01-10T00:00:00.000Z") };
 		const C = entry("c.mjs", "code c");
