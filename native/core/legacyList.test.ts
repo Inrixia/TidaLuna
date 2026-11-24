@@ -507,7 +507,7 @@ describe("old native format list", () => {
 			let slow = false;
 			const { store } = storeAt(time, undefined, async () => {
 				fetches++;
-				if (slow) await new Promise((resolve) => setTimeout(resolve, 30));
+				if (slow) await new Promise((resolve) => setTimeout(resolve, 5));
 				return doc(5 + fetches, [A], { validUntil: fetches === 1 ? until : "2027-01-01T00:00:00.000Z" });
 			});
 			await store.ready();
