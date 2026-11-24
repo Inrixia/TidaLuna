@@ -61,11 +61,23 @@ describe("resolveAbsolutePath", () => {
 		expect(console.warn).toHaveBeenCalledWith("[Luna.resolveAbsolutePath] Invalid input:", { basePath: "/dir/page.js", relativePath: "" });
 	});
 
-	test("a base path directly in the root cannot be resolved against, so the relative path is returned", () => {
-		expect(resolveAbsolutePath("/", "a.js")).toBe("a.js");
-		expect(resolveAbsolutePath("/page.js", "a.js")).toBe("a.js");
+	test("resolves against a base path directly in the root", () => {
+		expect(resolveAbsolutePath("/a.js", "./b.js")).toBe("/b.js");
+		expect(resolveAbsolutePath("/a.js", "b.js")).toBe("/b.js");
+		expect(resolveAbsolutePath("/a.js", "./sub/b.js")).toBe("/sub/b.js");
+		expect(resolveAbsolutePath("/a.js", "/x.js")).toBe("/x.js");
+		// A base path that is the root directory itself
+		expect(resolveAbsolutePath("/", "b.js")).toBe("/b.js");
+		// .. from the root stays at the root
+		expect(resolveAbsolutePath("/a.js", "../b.js")).toBe("/b.js");
+		expect(resolveAbsolutePath("/a.js", "../../b.js")).toBe("/b.js");
 
-		expect(console.warn).toHaveBeenCalledTimes(2);
-		expect(console.warn).toHaveBeenCalledWith("[Luna.resolveAbsolutePath] Invalid baseDirectory:", "/");
+		expect(console.warn).not.toHaveBeenCalled();
+	});
+
+	test("nested modules still resolve against their own directory", () => {
+		expect(resolveAbsolutePath("/dir/a.js", "./b.js")).toBe("/dir/b.js");
+		expect(resolveAbsolutePath("/dir/a.js", "../b.js")).toBe("/b.js");
+		expect(resolveAbsolutePath("/dir/sub/a.js", "../b.js")).toBe("/dir/b.js");
 	});
 });
