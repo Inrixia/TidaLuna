@@ -32,6 +32,14 @@ jobs:
    - name: Install dependencies 📥
      run: pnpm install
 
+   - name: Refuse old-native lists signed before this build
+     # Sets native/core/legacyMinSerial.ts to the serial of the signed legacy.json (luna-registry) for pushes, which
+     # are what gets released; any failure fails the build. --allow-404 only while the registry hasn't published the
+     # list: drop it then. The list is checked with the key in legacyList.ts, still the TEST key: it must be replaced
+     # with the registry's before the registry publishes, or this step fails every push
+     if: github.event_name == 'push'
+     run: node scripts/legacyMinSerial.mjs --allow-404
+
    - name: Build
      run: pnpm run build
 

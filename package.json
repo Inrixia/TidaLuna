@@ -25,7 +25,8 @@
     "format": "prettier -wc ./src",
     "watch": "rimraf ./dist && tsx ./esbuild.config.ts --watch",
     "build": "rimraf ./dist && tsx ./esbuild.config.ts",
-    "test": "tsx --test \"{native,render,plugins}/**/*.test.ts\""
+    "test": "tsx --test \"{native,render,plugins}/**/*.test.ts\"",
+    "legacy-serial": "node scripts/legacyMinSerial.mjs"
   },
   "license": "MS-Pl",
   "devDependencies": {

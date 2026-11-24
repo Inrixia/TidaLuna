@@ -53,8 +53,8 @@ export const legacyAllows = (id: string, servedSha256: string): boolean => {
 	return store.allows(id, servedSha256);
 };
 
-/** Whether a list is loaded (cached or fetched) */
-export const legacyListLoaded = (): boolean => store.current() !== undefined;
+/** Whether a list that grants is loaded (cached or fetched; not expired, not older than this build) */
+export const legacyListLoaded = (): boolean => store.usable();
 
 /** Before the first check of a start with no stored copy: waits a little for the first fetch */
 export const legacyListReady = (): Promise<void> => {

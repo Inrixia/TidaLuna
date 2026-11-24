@@ -45,6 +45,7 @@ export type PluginPackage = {
 	/**
 	 * sha256 (hex) of the code Luna runs, set by Luna core (native/core/registry.ts).
 	 * To reproduce it: take the served `<url>.mjs` text, append `\n//# sourceURL=<url>.mjs`, and sha256 the result as UTF-8.
+	 * A plugin moved to another url with the same code keeps the url it was accepted from in that line until an update.
 	 */
 	codeSha256?: string;
 };
@@ -268,9 +269,7 @@ export class LunaPlugin {
 	 * @returns The plugins that failed to reload (each one also reports its own error), including dependants of a failed plugin, which are left unloaded
 	 */
 	public static async reloadAll(): Promise<LunaPlugin[]> {
-		const plugins = Object.values(LunaPlugin.plugins).filter(
-			(plugin) => plugin.installed && plugin.enabled && !plugin.isCore,
-		);
+		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => plugin.installed && plugin.enabled && !plugin.isCore);
 		const failed: LunaPlugin[] = [];
 		const dependants: LunaPlugin[] = [];
 		for (const plugin of plugins) {
@@ -297,17 +296,13 @@ export class LunaPlugin {
 	/**
 	 * Dump all plugin storage entries
 	 */
-	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>>
-	{
+	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>> {
 		const data = await this.pluginStorage.dump();
-		if (!stripCode) 
-			return data;
+		if (!stripCode) return data;
 
 		const stripped = structuredClone(data);
-		for (const value of Object.values(stripped))
-		{
-			if (value && typeof value === "object")
-				delete (value as any).package?.code;
+		for (const value of Object.values(stripped)) {
+			if (value && typeof value === "object") delete (value as any).package?.code;
 		}
 
 		return stripped;
@@ -430,16 +425,39 @@ export class LunaPlugin {
 	// #region Storage
 	/**
 	 * The non-core plugin whose bundle threw, found from the topmost stack frame that belongs to one.
-	 * Plugin code runs from a blob with `//# sourceURL=<url>.mjs`, so its frames carry that url.
+	 * Plugin code runs from a blob with `//# sourceURL=<url>.mjs`, so its frames carry that url: the one in its code's last
+	 * line, which after a move with the same code still names the url the code was accepted from.
 	 */
 	public static fromStack(stack?: string): LunaPlugin | undefined {
 		if (stack === undefined) return undefined;
-		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !plugin.isCore && plugin.url.length > 0);
+		const plugins = Object.values(LunaPlugin.plugins)
+			.filter((plugin) => !plugin.isCore && plugin.url.length > 0)
+			.map((plugin) => ({ plugin, name: plugin.sourceName, own: `${plugin.url}.mjs` }));
+		/** The longest name in the frame (`https://s/p.mjs.mjs` over `https://s/p.mjs`), then the one at its own url */
+		const best = (names: { name: string; own: string; plugin: LunaPlugin }[]) =>
+			names.reduce<(typeof names)[number] | undefined>(
+				(a, b) =>
+					a === undefined || b.name.length > a.name.length || (b.name.length === a.name.length && b.name === b.own && a.name !== a.own) ? b : a,
+				undefined,
+			)?.plugin;
 		for (const frame of stack.split("\n")) {
-			const plugin = plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
+			// The plugin whose code names this frame's url (of two that do, one moved off a url and one installed there
+			// since, the one at that url), else one at the url
+			const plugin =
+				best(plugins.filter(({ name }) => frame.includes(name))) ??
+				best(plugins.filter(({ own }) => frame.includes(own)).map((entry) => ({ ...entry, name: entry.own })));
 			if (plugin !== undefined) return plugin;
 		}
 		return undefined;
+	}
+
+	/** The name the plugin's frames carry: the url in its code's `//# sourceURL=` line (its last), else `<url>.mjs` */
+	private get sourceName(): string {
+		const code = this.code ?? "";
+		const marker = "\n//# sourceURL=";
+		const at = code.lastIndexOf(marker);
+		const name = at === -1 ? "" : code.slice(at + marker.length);
+		return name.length > 0 && !/[\n\r\u2028\u2029]/.test(name) ? name : `${this.url}.mjs`;
 	}
 
 	/** Show an error that happened after the plugin loaded (e.g. in one of its listeners) on its card */
@@ -597,9 +615,9 @@ export class LunaPlugin {
 	 */
 	public readonly pendingUpdate: Signal<PendingUpdate | undefined> = new Signal(undefined);
 	private setPendingUpdate(update: PendingUpdate | undefined) {
-		// The same update found again keeps its object. New hosts with the same code are another update
+		// The same update found again keeps its object. Other code under the same package hash, or new hosts, is another update
 		const current = this.pendingUpdate._;
-		if (update?.hash === current?.hash && JSON.stringify(update?.hosts) === JSON.stringify(current?.hosts)) return;
+		if (update?.hash === current?.hash && update?.codeSha256 === current?.codeSha256 && update?.worldHash === current?.worldHash && JSON.stringify(update?.hosts) === JSON.stringify(current?.hosts)) return;
 		this.pendingUpdate._ = update;
 		if (update !== undefined) LunaPlugin.announceUpdate(this.name);
 	}

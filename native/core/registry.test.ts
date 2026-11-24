@@ -179,6 +179,161 @@ describe("core registry", () => {
 		assert.strictEqual(registry.info(URL)?.legacyNatives, "refused");
 	});
 
+	it("takes any change of the served code as an update the user is asked about, whatever the package says", async () => {
+		const { deps, serve, served } = fakeDeps();
+		serve(URL, "v1", {}, { version: "1.2.0" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+
+		// Other code under the same hash and version: the accepted code keeps running, the new code waits
+		served.get(URL)!.code = "code changed";
+		let loaded = await registry.load(URL);
+		assert.strictEqual(loaded.code, "code v1");
+		assert.strictEqual(loaded.pending?.codeSha256, sha256("code changed"));
+		const no = asker(false);
+		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
+		assert.ok(no.asked[0].lines.includes("1.2.0 -> 1.2.0"));
+		assert.ok(no.asked[0].lines.includes(`Code sha256: ${sha256("code v1").slice(0, 12)} -> ${sha256("code changed").slice(0, 12)}`));
+		assert.strictEqual((await registry.load(URL)).code, "code v1");
+
+		// A new hash at a lower version number: an update too, asked about like any other
+		serve(URL, "v0", {}, { version: "1.0.0" });
+		loaded = await registry.load(URL);
+		assert.strictEqual(loaded.code, "code v1");
+		assert.strictEqual(loaded.pending?.version, "1.0.0");
+		const yes = asker(true);
+		assert.strictEqual(await registry.acceptUpdate(URL, yes), true);
+		assert.strictEqual(yes.asked.length, 1);
+		assert.strictEqual((await registry.load(URL)).code, "code v0");
+
+		// The url serves the accepted code again: no update
+		assert.strictEqual((await registry.load(URL)).pending, undefined);
+	});
+
+	it("takes other code of a world plugin under the same hashes as an update, and replaces a waiting one", async () => {
+		const { deps, serveWorld, served } = fakeDeps();
+		serveWorld(URL, "w1", {});
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		served.get(URL)!.code = "code a";
+		assert.strictEqual((await registry.load(URL)).pending?.codeSha256, sha256("code a"));
+		served.get(URL)!.code = "code b";
+		const loaded = await registry.load(URL);
+		assert.strictEqual(loaded.code, "code w1");
+		assert.strictEqual(loaded.pending?.codeSha256, sha256("code b"));
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual((await registry.load(URL)).code, "code b");
+	});
+
+	it("refuses plugin urls with control characters or line breaks, which would run as code in the sourceURL line", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		for (const bad of [
+			"https://evil.example/p\u2028globalThis.x=1//",
+			"https://evil.example/p\u2029x",
+			"https://evil.example/p\nx",
+			"https://evil.example/p\rx",
+			"https://evil.example/p\u0000",
+		]) {
+			serve(bad, "v1");
+			await assert.rejects(registry.moveUrl(URL, bad), /Not a plugin url/);
+			await assert.rejects(registry.install(bad, asker(true)), /Not a plugin url/);
+			await assert.rejects(registry.load(bad), /Not a plugin url/);
+		}
+		await registry.migrate([{ url: "https://evil.example/p\u2028x", name: "evil", enabled: true }]);
+		assert.deepStrictEqual(
+			registry.list().map((plugin) => plugin.url),
+			[URL],
+		);
+		// A space is no line break: a store path with one still works
+		serve("https://example.org/a b", "v1");
+		assert.strictEqual(await registry.install("https://example.org/a b", asker(true)), true);
+		// Code after a line break in the last line isn't taken for the sourceURL line
+		assert.notStrictEqual(servedSha256("code\n//# sourceURL=https://a/p\u2028evil()//.mjs"), servedSha256("code"));
+		assert.strictEqual(servedSha256("code\n//# sourceURL=https://a/p.mjs"), servedSha256("code"));
+	});
+
+	it("moves a plugin twice, offline then online, with no update for the same code", async () => {
+		const { deps, serve, served } = fakeDeps();
+		const B = "https://example.org/plugin";
+		const C = "https://example.net/plugin";
+		serve(URL, "v1");
+		served.get(URL)!.code = `code v1\n//# sourceURL=${URL}.mjs`;
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		assert.strictEqual(await registry.moveUrl(URL, B), true);
+		serve(C, "v1");
+		served.get(C)!.code = `code v1\n//# sourceURL=${C}.mjs`;
+		assert.strictEqual(await registry.moveUrl(B, C), true);
+		assert.strictEqual(registry.info(C)?.pending, undefined);
+		// The accepted text runs as it was accepted, with its first url's line
+		assert.strictEqual((await registry.load(C)).code, `code v1\n//# sourceURL=${URL}.mjs`);
+	});
+
+	it("keeps the accepted text on a move, so the new url's sourceURL line can't change what runs", async () => {
+		const { deps, serve, served } = fakeDeps();
+		const EVIL = "https://evil.example/p*/;globalThis.pwn=1//";
+		const open = "code v1 /*";
+		serve(URL, "v1");
+		served.get(URL)!.code = `${open}\n//# sourceURL=${URL}.mjs`;
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serve(EVIL, "v1");
+		served.get(EVIL)!.code = `${open}\n//# sourceURL=${EVIL}.mjs`;
+		assert.strictEqual(await registry.moveUrl(URL, EVIL), true);
+		assert.strictEqual(registry.info(EVIL)?.pending, undefined);
+		const loaded = await registry.load(EVIL);
+		assert.strictEqual(loaded.code, `${open}\n//# sourceURL=${URL}.mjs`);
+		assert.ok(!loaded.code.includes("pwn"));
+	});
+
+	it("can still disable and uninstall a plugin stored under a url that is refused now", async () => {
+		const BAD = "https://example.org/p\u2028x";
+		const { deps } = fakeDeps({
+			version: 1,
+			plugins: {
+				[BAD]: {
+					url: BAD,
+					name: "old",
+					enabled: true,
+					accepted: { package: { name: "old", hash: "h" }, code: "code", codeSha256: sha256("code"), natives: [] },
+				},
+			},
+		} as CoreState);
+		const registry = createRegistry(deps);
+		await assert.rejects(registry.load(BAD), /Not a plugin url/);
+		await registry.disable(BAD);
+		assert.strictEqual(registry.info(BAD)?.enabled, false);
+		await registry.uninstall(BAD);
+		assert.deepStrictEqual(registry.list(), []);
+		// Only urls stored as plugins, not names every object has
+		for (const name of ["constructor", "toString", "__proto__"]) {
+			assert.throws(() => registry.info(name), /Not a plugin url/);
+			await assert.rejects(async () => registry.disable(name), /Not a plugin url/);
+			await assert.rejects(async () => registry.uninstall(name), /Not a plugin url/);
+		}
+	});
+
+	it("sees no update for the same code under another sourceURL line (a store moved offline)", async () => {
+		const { deps, serve, served } = fakeDeps();
+		const NEW = "https://example.org/plugin";
+		serve(URL, "v1");
+		served.get(URL)!.code = `code v1\n//# sourceURL=${URL}.mjs`;
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		// Offline: the accepted code moves with its old line
+		served.delete(URL);
+		assert.strictEqual(await registry.moveUrl(URL, NEW), true);
+		serve(NEW, "v1");
+		served.get(NEW)!.code = `code v1\n//# sourceURL=${NEW}.mjs`;
+		assert.strictEqual((await registry.load(NEW)).pending, undefined);
+		// Other code at the new url is still an update
+		served.get(NEW)!.code = `code v2\n//# sourceURL=${NEW}.mjs`;
+		assert.strictEqual((await registry.load(NEW)).pending?.codeSha256, sha256(`code v2\n//# sourceURL=${NEW}.mjs`));
+	});
+
 	it("accepts the update the user was asked about, a newer one found meanwhile waits", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1");

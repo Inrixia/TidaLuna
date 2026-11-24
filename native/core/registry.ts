@@ -33,7 +33,10 @@ export type PluginPackage = {
 export type Version = {
 	package: PluginPackage;
 	code: string;
-	/** sha256 (hex) of `code` as UTF-8: the served `<url>.mjs` followed by `\n//# sourceURL=<url>.mjs`, exactly what the page runs */
+	/**
+	 * sha256 (hex) of `code` as UTF-8: the served `<url>.mjs` followed by `\n//# sourceURL=<url>.mjs`, exactly what the page
+	 * runs. After a move with the same code (moveUrl) the line keeps naming the url it was accepted from
+	 */
 	codeSha256: string;
 	/** Native files: the ones the page code registers, then the world's, named `world:<file>` */
 	natives: string[];
@@ -103,6 +106,7 @@ export type CoreState = {
 export type PendingUpdate = {
 	version?: string;
 	hash: string;
+	worldHash?: string;
 	codeSha256: string;
 	natives: string[];
 	added: string[];
@@ -143,7 +147,7 @@ export type RegistryDeps = {
 	legacyAllows?(id: string, servedSha256: string): boolean;
 	/** Resolves once the list is loaded, or no longer waited for (legacyList.ts ready): what the confirmations say needs it */
 	legacyReady?(): Promise<void>;
-	/** Whether a list is loaded (legacyAllows answers from one): without it the confirmations can't say what runs */
+	/** Whether a list that grants is loaded (not expired, not older than the build): without it the confirmations can't say what runs */
 	legacyLoaded?(): boolean;
 	/** The hosts the old native format list carries for this code (LegacyListEntry hosts) */
 	legacyHosts?(id: string, servedSha256: string): string[] | undefined;
@@ -177,20 +181,18 @@ const sha256 = (text: string) => createHash("sha256").update(text, "utf8").diges
 const shortHash = (hash: string) => hash.slice(0, 12);
 
 const isWorldNative = (fileName: string) => fileName.startsWith(worldFilePrefix);
-/** The served code, without the sourceURL line fetchCode adds (it names the url) */
-const withoutSource = (code: string, url: string) => {
-	const suffix = `\n//# sourceURL=${url}.mjs`;
-	return code.endsWith(suffix) ? code.slice(0, -suffix.length) : code;
-};
 const isNative = (version: Version) => version.natives.length !== 0;
 /**
- * A new hash of either the page code or the world is a new version, and so are new `hosts`: the build's hash covers only
- * the code, and the user accepts the hosts with the version
+ * Any change is a new version: a new hash of the page code or the world in the package, or other served code under the
+ * same hash (whatever the version number says). The code is compared without the sourceURL line fetchCode adds, which
+ * names the url (an accepted version moved offline keeps its old url's line). The world needs no own check: a world
+ * is only taken when it matches its worldHash. New `hosts` are a new version too: the user accepts the hosts with it
  */
-const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
+const sameVersion = (version: Version | undefined, pkg: PluginPackage, served: string) =>
 	version !== undefined &&
 	version.package.hash === pkg.hash &&
 	version.package.worldHash === pkg.worldHash &&
+	servedSha256(version.code) === served &&
 	sameHosts(version.package.hosts, pkg.hosts);
 /** The version's hosts: what its package declares, or else what the registry derived from its code */
 const hostsOfVersion = (version: Version | undefined) =>
@@ -266,8 +268,13 @@ export const describe = (url: string, version: Version, legacyRuns: boolean | "u
 	return lines;
 };
 
+/**
+ * An http(s) url with no control characters or line breaks: the url goes into the code's `//# sourceURL=` line, where a
+ * line break (also U+2028/U+2029, which end a line in JavaScript) would turn the rest of the url into code that runs
+ */
+const isPluginUrl = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url) && !/[\p{Cc}\u2028\u2029]/u.test(url);
 export const pluginUrl = (url: unknown): string => {
-	if (typeof url !== "string" || !/^https?:\/\//.test(url)) throw new Error(`[Luna.core] Not a plugin url: ${String(url)}`);
+	if (!isPluginUrl(url)) throw new Error(`[Luna.core] Not a plugin url: ${String(url).slice(0, 200)}`);
 	return url;
 };
 
@@ -323,9 +330,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 		return run;
 	};
 
-	const fetchVersion = async (url: string, pkg?: PluginPackage): Promise<Version> => {
+	const fetchVersion = async (url: string, pkg?: PluginPackage, code?: string): Promise<Version> => {
 		pkg ??= await deps.fetchPackage(url);
-		const code = await deps.fetchCode(url);
+		code ??= await deps.fetchCode(url);
 		const natives = Object.keys(deps.nativeSources(code));
 		if (typeof pkg.lunaWorld !== "string") return { package: pkg, code, codeSha256: sha256(code), natives };
 		// The world is pinned with the code: worlds.ts runs exactly this text, whatever the url serves later
@@ -475,6 +482,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 					: {
 							version: pending.package.version,
 							hash: pending.package.hash,
+							worldHash: pending.package.worldHash,
 							codeSha256: pending.codeSha256,
 							natives: pending.natives,
 							...nativesDiff(accepted?.natives ?? [], pending.natives),
@@ -492,8 +500,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (record === undefined || !record.enabled) throw new Error(`[Luna.core] ${url} is not enabled`);
 		try {
 			const pkg = await deps.fetchPackage(url);
-			if (!sameVersion(record.accepted, pkg)) {
-				const version = withDerived(sameVersion(record.pending, pkg) ? record.pending! : await fetchVersion(url, pkg));
+			// The code too, not only the package: code changed under the same hash is an update the user sees
+			const code = await deps.fetchCode(url);
+			const served = servedSha256(code);
+			if (!sameVersion(record.accepted, pkg, served)) {
+				const version = withDerived(sameVersion(record.pending, pkg, served) ? record.pending! : await fetchVersion(url, pkg, code));
 				if (record.accepted === undefined && record.unreviewed && (isNative(version) || hasLocalHosts(version))) {
 					// Migrated plugin with native code, or local hosts for luna.fetch (more than compatibility mode gives): it
 					// runs only once the user enables it
@@ -649,20 +660,13 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (state.plugins[from] !== record) return false;
 		const { accepted } = record;
 		const moved: CoreRecord = { ...record, url: to, pending: undefined };
-		// The same code, the same world (pinned with it) and the same hosts: nothing new to review
-		if (
-			found !== undefined &&
-			accepted !== undefined &&
-			withoutSource(found.code, to) === withoutSource(accepted.code, from) &&
-			found.world === accepted.world &&
-			sameHosts(found.package.hosts, accepted.package.hosts)
-		) {
-			// The same code: the same derived hosts, accepted (or not) the same way
-			if (accepted.derived !== undefined) found.derived = accepted.derived;
-			if (accepted.hostsUnconfirmed) found.hostsUnconfirmed = true;
-			moved.accepted = found;
-		}
-		else if (found !== undefined && accepted !== undefined) moved.pending = found;
+		// The same code, the same world (pinned with it) and the same hosts: nothing new to review. The accepted text keeps running as it
+		// is, with its sourceURL line naming the old url: the new url's line could close something the code leaves open
+		// (a trailing `/*`, a template literal) and run the rest of the url
+		const same =
+			found !== undefined && accepted !== undefined && servedSha256(found.code) === servedSha256(accepted.code) && found.world === accepted.world &&
+			sameHosts(found.package.hosts, accepted.package.hosts);
+		if (!same && found !== undefined && accepted !== undefined) moved.pending = found;
 		// One plugin at both urls: one that left the old format at either stays off it at both, and other code at `to`
 		// (now or later) leaves it at both
 		linkLegacy(from, to);
@@ -689,7 +693,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		fresh = false;
 		for (const entry of entries) {
 			const { url, name, enabled } = entry ?? {};
-			if (typeof url !== "string" || !/^https?:\/\//.test(url) || isCoreUrl(url) || typeof name !== "string") continue;
+			if (!isPluginUrl(url) || isCoreUrl(url) || typeof name !== "string") continue;
 			// Installed through the core already: not a plugin from before it
 			if (state.plugins[url] !== undefined) continue;
 			state.plugins[url] = { url, name, enabled: enabled === true, unreviewed: true };
@@ -727,7 +731,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 
 	return {
 		list: (): CorePluginInfo[] => Object.keys(state.plugins).map((url) => info(url)!),
-		info: (url: unknown) => info(pluginUrl(url)),
+		info: (url: unknown) => (typeof url === "string" && Object.hasOwn(state.plugins, url) ? info(url) : info(pluginUrl(url))),
 		needsMigration: () => fresh,
 		migrate,
 		load: async (url: unknown) => {
@@ -737,12 +741,15 @@ export const createRegistry = (deps: RegistryDeps) => {
 		install: (url: unknown, ask: Ask) => forPlugin(true, (checked) => install(checked, ask))(url),
 		enable: (url: unknown, ask: Ask) => forPlugin(true, (checked) => enable(checked, ask))(url),
 		acceptUpdate: (url: unknown, ask: Ask) => forPlugin(false, (checked) => acceptUpdate(checked, ask))(url),
-		moveUrl: (from: unknown, to: unknown): Promise<boolean> => {
+		moveUrl: async (from: unknown, to: unknown): Promise<boolean> => {
 			const target = pluginUrl(to);
 			return forPlugin(false, (source) => moveUrl(source, target))(from);
 		},
-		disable: forPlugin(undefined, disable),
-		uninstall: forPlugin(undefined, uninstall),
+		// Also a plugin stored under a url refused now (installed before urls were checked): it can still be taken off
+		disable: (url: unknown) =>
+			typeof url === "string" && Object.hasOwn(state.plugins, url) ? serial(url, () => disable(url)) : forPlugin(undefined, disable)(url),
+		uninstall: (url: unknown) =>
+			typeof url === "string" && Object.hasOwn(state.plugins, url) ? serial(url, () => uninstall(url)) : forPlugin(undefined, uninstall)(url),
 
 		// #region Checks (see the top of this file)
 		isEnabled: (url: string) => state.plugins[url]?.enabled === true,
