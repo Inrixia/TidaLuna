@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { nativeFileName } from "../build/plugins/lunaNativePlugin";
+import { inputFiles, nativeFileName } from "../build/plugins/lunaNativePlugin";
 import { buildWorld, pageNativeNames } from "../build/plugins/lunaWorldPlugin";
 import { isBundle, parseBundle } from "./worldBundle";
 
@@ -58,6 +58,18 @@ test("nativeFileName names a native file the same on POSIX and Windows, with a r
 		"Pkg/size.native.ts",
 	);
 	assert.equal(nativeFileName("plugins/x/src/a.native.ts", "plugins\\x\\src\\index.ts", "Pkg", "E:\\repo", win32), "Pkg/a.native.ts");
+});
+
+test("inputFiles makes esbuild's inputs absolute on POSIX and Windows and drops virtual ones", () => {
+	const inputs = (...keys: string[]) => Object.fromEntries(keys.map((k) => [k, {}]));
+	assert.deepEqual(
+		inputFiles(inputs("../../../tmp/w/src/a.native.ts", "src/b.ts", "lunaWorldRuntime:@luna/world", "file-url:x.css"), "/home/u/repo", path.posix),
+		["/tmp/w/src/a.native.ts", "/home/u/repo/src/b.ts"],
+	);
+	assert.deepEqual(inputFiles(inputs("C:/Temp/w/a.native.ts", "src/b.ts"), "E:\\repo", path.win32), [
+		"C:\\Temp\\w\\a.native.ts",
+		"E:\\repo\\src\\b.ts",
+	]);
 });
 
 test("buildWorld turns native imports into calls over the world bridge", async () => {

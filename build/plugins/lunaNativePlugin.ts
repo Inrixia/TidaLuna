@@ -17,6 +17,15 @@ export const nativeFileName = (entryPoint: string, pluginEntryPoint: string, pkg
 	return entry.startsWith(`${dir}/`) ? `${pkgName}${entry.slice(dir.length)}` : entry;
 };
 
+/**
+ * The files of an esbuild metafile's inputs (relative to `cwd`), absolute, as watchFiles needs them; not virtual ones
+ * like "lunaWorldRuntime:@luna/world" or "file-url:..." (a one-letter drive is kept: "C:/...")
+ */
+export const inputFiles = (inputs: Record<string, unknown>, cwd = process.cwd(), p = path) =>
+	Object.keys(inputs)
+		.filter((input) => !/^[\w-]{2,}:/.test(input))
+		.map((input) => p.resolve(cwd, input));
+
 /** Builds one `*.native.*` file for the main process: its name as Luna knows it, its code and its export names */
 export const buildNativeFile = async (nativePath: string, pluginEntryPoint: string, pkgName: string) => {
 	const { outputFiles, metafile } = await esBuild({
@@ -64,7 +73,7 @@ export const buildNativeFile = async (nativePath: string, pluginEntryPoint: stri
 
 	const fileName = nativeFileName(output.entryPoint!, pluginEntryPoint, pkgName);
 
-	return { fileName, code: outputFiles![0].text, exportNames, watchFiles: Object.keys(output.inputs) };
+	return { fileName, code: outputFiles![0].text, exportNames, watchFiles: inputFiles(output.inputs) };
 };
 
 /**
