@@ -77,7 +77,7 @@ export class ContentBase {
 		let type = opts?.type ?? "image";
 		if (type === "video" && !album.videoCover && !(opts?.fallback === false)) type = "image";
 		const uuid = type === "image" ? album.cover : album.videoCover;
-		if (uuid) return ContentBase.formatCoverUrl(uuid, opts);
+		if (uuid) return ContentBase.formatCoverUrl(uuid, { ...opts, type });
 	}
 
 	public static formatCoverUrl(uuid?: string, opts?: TCoverOpts) {

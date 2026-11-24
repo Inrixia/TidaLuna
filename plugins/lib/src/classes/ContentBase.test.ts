@@ -97,9 +97,9 @@ describe("getAlbumCoverUrl", () => {
 		expect(ContentBase.getAlbumCoverUrl(null)).toBeUndefined();
 	});
 
-	test("falls back to the image uuid for a video request without a video cover, still formatted as a video", () => {
-		// The fallback picks album.cover, but formatCoverUrl reads opts.type again, so the url stays under videos/
-		expect(ContentBase.getAlbumCoverUrl(imageOnly, { type: "video" })).toBe("https://resources.tidal.com/videos/img/a/b/1280x1280.mp4");
+	test("falls back to the image url, not an mp4, for a video request without a video cover", () => {
+		expect(ContentBase.getAlbumCoverUrl(imageOnly, { type: "video" })).toBe("https://resources.tidal.com/images/img/a/b/1280x1280.jpg");
+		expect(ContentBase.getAlbumCoverUrl(imageOnly, { type: "video", res: "640" })).toBe("https://resources.tidal.com/images/img/a/b/640x640.jpg");
 	});
 });
 
