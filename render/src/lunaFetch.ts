@@ -6,8 +6,7 @@
 // can call the page's own fetch. Plugins with an isolated world get the same function from "@luna/world", where the
 // check holds for the world's code.
 import { toNetRequest, toResponse } from "./helpers/netMessages";
-import { LunaPlugin } from "./LunaPlugin";
-import { settingsFor, toastIfRefused } from "./pageNet";
+import { callingPlugin, settingsFor, toastIfRefused } from "./pageNet";
 
 /**
  * fetch through Luna's main process, for the calling plugin: limited to the hosts the user accepted for it (its
@@ -17,8 +16,8 @@ import { settingsFor, toastIfRefused } from "./pageNet";
  * aborting doesn't stop the request in the main process
  */
 export const lunaFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-	// Before any await: the stack still holds the caller's frame
-	const plugin = LunaPlugin.fromStack(new Error().stack);
+	// Before any await: the stack still holds the caller's frame (read deeper than the default 10 frames)
+	const plugin = callingPlugin();
 	if (plugin === undefined) throw new Error("[Luna.net] lunaFetch: can't tell which plugin is calling. Call it from your plugin's code");
 	try {
 		return toResponse(await __LunaCore.fetch(plugin.url, await toNetRequest(input, init), await settingsFor(plugin)));

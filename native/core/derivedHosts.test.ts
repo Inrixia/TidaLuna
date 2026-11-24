@@ -11,7 +11,13 @@ const other = generateKeyPairSync("ed25519").privateKey;
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
-const doc = (serial: number, entries: Record<string, object>, extra: object = {}) => ({ kind: "verified", schema: 1, serial, entries, ...extra });
+const doc = (serial: number, entries: Record<string, object>, extra: object = {}) => ({
+	kind: "verified",
+	schema: 1,
+	serial,
+	entries,
+	...extra,
+});
 const signed = (value: object, key = privateKey) => {
 	const bytes = Buffer.from(JSON.stringify(value));
 	return { bytes, sig: sign(null, bytes, key).toString("base64") };

@@ -47,11 +47,18 @@ const decodeAttribute = (value: string) =>
 		.replace(/&gt;/g, ">")
 		.replace(/&amp;/g, "&");
 
+// The GitHub hosts plugins, stores and releases are served from: host entries refuse `*.githubusercontent.com` (a
+// public suffix: anyone's pages), which the CSP itself lists
+const githubContent = ["raw.githubusercontent.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "media.githubusercontent.com"];
 /**
  * The baseline's hosts as host entries (core/hosts.ts), for page code that checks a url before it sends it
- * (render/src/pageNet.ts). `'self'` is the TIDAL shell, under tidal.com
+ * (render/src/pageNet.ts) and for the store gate (core/stores.ts). `'self'` is the TIDAL shell, under tidal.com;
+ * `https://luna` is Luna's own origin, which pageNet lets through by itself
  */
-export const baselineEntries = networkBaseline.filter((source) => /^(\*\.)?[a-z0-9.-]+\.[a-z]+$/.test(source));
+export const baselineEntries = [
+	...networkBaseline.filter((source) => /^(\*\.)?[a-z0-9.-]+\.[a-z]+$/.test(source) && source !== "*.githubusercontent.com"),
+	...githubContent,
+];
 
 /**
  * The enforced policy sent with the TIDAL shell, next to the report-only one: page code (TIDAL, Luna and every page

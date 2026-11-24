@@ -2,6 +2,8 @@ import React from "react";
 
 import { LunaPlugin, type PluginPackage } from "@luna/core";
 
+import { hostAllowed } from "../../../../../native/core/hosts";
+
 import Grid from "@mui/material/Grid";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -39,8 +41,13 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 			// The local dev store is only up while developing plugins
 			if (url !== "http://127.0.0.1:3000") console.error("Error fetching package:", error);
 			setLoadError(error.message || "Unknown error occurred");
-			// A network error, not an answer: maybe the page's connect-src doesn't list the store
-			if (error instanceof TypeError) __LunaCore.pageStores().then((origins) => setBlocked(!origins.includes(new URL(url).origin)), () => {});
+			// A network error, not an answer: maybe the page's connect-src doesn't list the store. GitHub and the other
+			// baseline hosts are in it without being a store origin: for them it's the network
+			if (error instanceof TypeError)
+				Promise.all([__LunaCore.pageStores(), __LunaCore.pageConnect()]).then(([origins, connect]) => {
+					const at = new URL(url);
+					setBlocked(!origins.includes(at.origin) && !hostAllowed(connect, at));
+				}, () => {});
 			setPackage(undefined); // Clear package on error
 		} finally {
 			setLoading(false);

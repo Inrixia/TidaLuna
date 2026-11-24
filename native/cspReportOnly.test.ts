@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { hostAllowed, parseHostEntry } from "./core/hosts";
 import { baselineEntries, enforcedPolicy, networkBaseline, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 
 // TIDAL 2.48.0's meta policy (desktop.tidal.com, 2026-11-23)
@@ -86,6 +87,9 @@ describe("enforcedPolicy", () => {
 		assert.equal(baselineEntries.includes("blob:"), false);
 		assert.equal(baselineEntries.includes("https://luna"), false);
 		assert.equal(baselineEntries.includes("wss://*.tidal.com"), false);
+		// Every one is a host entry Luna takes: a public-suffix wildcard would match nothing
+		for (const entry of baselineEntries) assert.ok(parseHostEntry(entry), entry);
+		assert.ok(hostAllowed(baselineEntries, new URL("https://raw.githubusercontent.com/a/b/main/store.json")));
 	});
 	it("lets TIDAL's push socket and Luna's MusicBrainz lookups through (seen blocked on a live slot)", () => {
 		const sources = enforcedPolicy([]).split(" ");

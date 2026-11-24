@@ -203,7 +203,19 @@ describe("plugin hosts", () => {
 
 describe("host patterns", () => {
 	it("refuses a wildcard over everything or over a public suffix", () => {
-		for (const entry of ["*", "*.com", "*.co.uk", "*.github.io", "*.githubusercontent.com", "*.vercel.app", "", " ", "*.*.example.com", "a*.example.com", "*example.com"])
+		for (const entry of [
+			"*",
+			"*.com",
+			"*.co.uk",
+			"*.github.io",
+			"*.githubusercontent.com",
+			"*.vercel.app",
+			"",
+			" ",
+			"*.*.example.com",
+			"a*.example.com",
+			"*example.com",
+		])
 			assert.equal(parseHostEntry(entry), undefined, entry);
 		assert.notEqual(parseHostEntry("*.fastly.net"), undefined);
 		assert.notEqual(parseHostEntry("*.example.co.uk"), undefined);
@@ -241,7 +253,7 @@ describe("host patterns", () => {
 	});
 
 	it("refuses paths that would break out of the CSP source", () => {
-		for (const entry of ["a.com/x;script-src", "a.com/b,sandbox", "a.com/'unsafe-eval'", "a.com/caf\u00e9", "a.com/%zz", "a.com/x\"y"]) {
+		for (const entry of ["a.com/x;script-src", "a.com/b,sandbox", "a.com/'unsafe-eval'", "a.com/caf\u00e9", "a.com/%zz", 'a.com/x"y']) {
 			assert.equal(parseHostEntry(entry), undefined, entry);
 			assert.deepEqual(cspSources([entry]), [], entry);
 		}
@@ -266,10 +278,13 @@ describe("host patterns", () => {
 		for (const value of ["", "  ", "*.example.com", "ftp://a.com", "https://u:p@a.com", "a.com/path", 5, undefined, "not a host"])
 			assert.equal(settingValueEntry(value), undefined, String(value));
 		const settings: Record<string, unknown> = { url: "http://192.168.1.5:4533" };
-		assert.deepEqual(resolveSettings(["a.com", "{setting:url}", "{setting:empty}"], (key) => settings[key]), {
-			hosts: ["a.com", "http://192.168.1.5:4533"],
-			settings: ["http://192.168.1.5:4533"],
-		});
+		assert.deepEqual(
+			resolveSettings(["a.com", "{setting:url}", "{setting:empty}"], (key) => settings[key]),
+			{
+				hosts: ["a.com", "http://192.168.1.5:4533"],
+				settings: ["http://192.168.1.5:4533"],
+			},
+		);
 		assert.equal(cspSources(["{setting:url}"]).length, 0);
 	});
 });

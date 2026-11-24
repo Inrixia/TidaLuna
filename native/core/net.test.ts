@@ -25,7 +25,11 @@ const fakeNet = (plugins: Record<string, PluginHosts>, routes: Record<string, ()
 
 const declared = { name: "Declared", mode: "declared", hosts: ["api.example.com"], allow: [], deny: [] } satisfies PluginHosts;
 const compat = { name: "Compat", mode: "legacy", allow: [], deny: [] } satisfies PluginHosts;
-const plugins = { "https://store/declared": declared, "https://store/compat": compat, "https://store/none": { name: "None", mode: "declared", hosts: [], allow: [], deny: [] } } satisfies Record<string, PluginHosts>;
+const plugins = {
+	"https://store/declared": declared,
+	"https://store/compat": compat,
+	"https://store/none": { name: "None", mode: "declared", hosts: [], allow: [], deny: [] },
+} satisfies Record<string, PluginHosts>;
 
 describe("luna.fetch", () => {
 	it("fetches a declared host and gives status, headers and body", async () => {
@@ -207,7 +211,13 @@ describe("luna.fetch", () => {
 	});
 
 	it("refuses a declared public name that resolves to a local address, not a declared local entry", async () => {
-		const lan = { name: "Lan", mode: "declared", hosts: ["http://api.myplugin.dev", "http://127.0.0.1:8080", "nas.lan"], allow: [], deny: [] } satisfies PluginHosts;
+		const lan = {
+			name: "Lan",
+			mode: "declared",
+			hosts: ["http://api.myplugin.dev", "http://127.0.0.1:8080", "nas.lan"],
+			allow: [],
+			deny: [],
+		} satisfies PluginHosts;
 		const resolved: Record<string, string[]> = { "api.myplugin.dev": ["192.168.1.1"], "nas.lan": ["192.168.1.2"] };
 		const { net, calls } = fakeNet(
 			{ "https://store/lan": lan },
@@ -399,6 +409,14 @@ describe("luna.fetch prompts", () => {
 		assert.equal(always.questions.length, 1);
 		assert.deepEqual(grants, []);
 
+		const deny = asker(["deny", "once"]);
+		const v6b = "https://[2001:db8::2]/x";
+		const { net: denyNet } = fakeNet({ "https://store/u": unlisted }, { [v6b]: () => new Response("ok") }, granting(grants));
+		await assert.rejects(denyNet.fetch("https://store/u", "page", { url: v6b }, deny.ask), /you denied/);
+		await assert.rejects(denyNet.fetch("https://store/u", "page", { url: v6b }, deny.ask), /you denied/);
+		assert.equal(deny.questions.length, 1);
+		assert.deepEqual(grants, []);
+
 		const once = asker(["once", undefined]);
 		await net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, once.ask);
 		net.forget("https://store/u");
@@ -407,9 +425,12 @@ describe("luna.fetch prompts", () => {
 	});
 
 	it("asks with the redirect reason about a host a redirect leads to", async () => {
-		const { net } = fakeNet({ "https://store/u": { ...unlisted, allow: ["https://api.new.example"] } }, {
-			"https://api.new.example/x": () => new Response(null, { status: 302, headers: { location: "https://other.example/y" } }),
-		});
+		const { net } = fakeNet(
+			{ "https://store/u": { ...unlisted, allow: ["https://api.new.example"] } },
+			{
+				"https://api.new.example/x": () => new Response(null, { status: 302, headers: { location: "https://other.example/y" } }),
+			},
+		);
 		const { ask, questions } = asker([undefined]);
 		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, ask), /redirect/);
 		assert.equal(questions[0]?.reason, "redirect");
@@ -463,10 +484,15 @@ describe("luna.fetch prompts", () => {
 			{ resolve: async () => ["93.184.216.34"] },
 		);
 		const { ask, questions } = asker(["once"]);
-		assert.equal((await net.fetch("https://store/s", "page", { url: "https://music.example/api" }, ask, { server: "https://music.example" })).status, 200);
+		assert.equal(
+			(await net.fetch("https://store/s", "page", { url: "https://music.example/api" }, ask, { server: "https://music.example" })).status,
+			200,
+		);
 		assert.equal(questions.length, 0);
 		// The setting names another server now: the old one is no longer covered
-		await assert.rejects(net.fetch("https://store/s", "page", { url: "https://music.example/api" }, undefined, { server: "https://other.example" }));
+		await assert.rejects(
+			net.fetch("https://store/s", "page", { url: "https://music.example/api" }, undefined, { server: "https://other.example" }),
+		);
 		assert.equal(
 			(await net.fetch("https://store/s", "page", { url: "http://192.168.1.5:4533/api" }, ask, { server: "http://192.168.1.5:4533" })).status,
 			200,

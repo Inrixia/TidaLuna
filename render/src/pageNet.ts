@@ -26,12 +26,12 @@ const connectReady = __LunaCore.pageConnect().then(
 );
 
 /** The page's enforced connect-src allows this url (TIDAL's own shell origin always) */
-const pageAllows = (url: URL) => url.origin === location.origin || hostAllowed(connect ?? [], url);
+const pageAllows = (url: URL) => url.origin === location.origin || url.origin === "https://luna" || hostAllowed(connect ?? [], url);
 
 const isNetwork = (url: URL) => ["http:", "https:", "ws:", "wss:"].includes(url.protocol);
 
 /** The plugin whose code is calling, found from the stack (deeper than the default 10 frames) */
-const callingPlugin = (): LunaPlugin | undefined => {
+export const callingPlugin = (): LunaPlugin | undefined => {
 	const limit = Error.stackTraceLimit;
 	Error.stackTraceLimit = 50;
 	try {
@@ -56,7 +56,15 @@ export const toastBlocked = (who: string, target: string, reason?: string) => {
 export const toastIfRefused = (who: string, target: string, err: unknown) => {
 	const message = String((err as Error)?.message ?? err);
 	const at = message.indexOf("luna.fetch refused");
-	if (at !== -1) toastBlocked(who, target, message.slice(at + "luna.fetch refused".length).replace(/^[a-z ]*:\s*/, "").slice(0, 160));
+	if (at !== -1)
+		toastBlocked(
+			who,
+			target,
+			message
+				.slice(at + "luna.fetch refused".length)
+				.replace(/^[a-z ]*:\s*/, "")
+				.slice(0, 160),
+		);
 };
 
 // The plugin's settings its `{setting:<key>}` entries name, as luna.fetch takes them
@@ -64,7 +72,13 @@ const settingKeysOf = new Map<string, { at: number; keys: Promise<string[]> }>()
 export const settingsFor = async (plugin: LunaPlugin): Promise<Record<string, unknown> | undefined> => {
 	let cached = settingKeysOf.get(plugin.url);
 	if (cached === undefined || Date.now() - cached.at > 30_000) {
-		cached = { at: Date.now(), keys: __LunaCore.info(plugin.url).then((info) => settingKeys(info?.hosts ?? [])).catch(() => []) };
+		cached = {
+			at: Date.now(),
+			keys: __LunaCore
+				.info(plugin.url)
+				.then((info) => settingKeys(info?.hosts ?? []))
+				.catch(() => []),
+		};
 		settingKeysOf.set(plugin.url, cached);
 	}
 	const keys = await cached.keys;
@@ -114,9 +128,11 @@ const askLater = (rawUrl: string | URL, kind: string) => {
 		const { allowed, reason, answer } = await __LunaCore
 			.askHost(plugin.url, url.href)
 			.catch((err): { allowed: boolean; reason?: string; answer?: string } => ({ allowed: false, reason: String(err?.message ?? err) }));
-		// This attempt was blocked by the page's CSP either way; only an "always" answer is in it from the next load
+		// This attempt was blocked by the page's CSP either way; an "always" answer, or a host accepted after the page
+		// loaded (no answer: a plugin enabled or updated since), is in it from the next load
 		if (!allowed) toastBlocked(plugin.name, url.host, reason);
-		else if (answer === "always") trace.msg.warn(`${plugin.name} may reach ${url.host}: its ${kind} works once TIDAL reloads (Ctrl+R)`);
+		else if (answer === "always" || answer === undefined)
+			trace.msg.warn(`${plugin.name} may reach ${url.host}: its ${kind} works once TIDAL reloads (Ctrl+R)`);
 		else toastBlocked(plugin.name, url.host, `its ${kind} needs "Always allow": the page's policy is built when it loads`);
 	});
 };

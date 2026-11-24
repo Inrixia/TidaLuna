@@ -617,9 +617,11 @@ export class LunaPlugin {
 	private setPendingUpdate(update: PendingUpdate | undefined) {
 		// The same update found again keeps its object. Other code under the same package hash, or new hosts, is another update
 		const current = this.pendingUpdate._;
-		if (update?.hash === current?.hash && update?.codeSha256 === current?.codeSha256 && update?.worldHash === current?.worldHash && JSON.stringify(update?.hosts) === JSON.stringify(current?.hosts)) return;
+		const sameCode = update?.hash === current?.hash && update?.codeSha256 === current?.codeSha256 && update?.worldHash === current?.worldHash;
+		if (sameCode && JSON.stringify(update?.hosts) === JSON.stringify(current?.hosts)) return;
 		this.pendingUpdate._ = update;
-		if (update !== undefined) LunaPlugin.announceUpdate(this.name);
+		// Hosts alone arriving for the same code (verified.json read after the update was found) aren't announced again
+		if (update !== undefined && !sameCode) LunaPlugin.announceUpdate(this.name);
 	}
 	/**
 	 * Luna core shows the update to the user in its own window and runs it once they accept; a call from page code alone

@@ -86,7 +86,11 @@ export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	if (match === null) return undefined;
 	const [, scheme, star, host, port, rawPath] = match;
 	// A path as the URL parser writes it: no dot segments, no `%2e` that it would turn into one
-	if (rawPath !== undefined && (/(^|\/)\.{1,2}(\/|$)/.test(rawPath) || /%2e/i.test(rawPath) || /%(?![0-9a-f]{2})/.test(rawPath) || rawPath.includes("//"))) return undefined;
+	if (
+		rawPath !== undefined &&
+		(/(^|\/)\.{1,2}(\/|$)/.test(rawPath) || /%2e/i.test(rawPath) || /%(?![0-9a-f]{2})/.test(rawPath) || rawPath.includes("//"))
+	)
+		return undefined;
 	// `/` alone or `/*` is any path
 	const path = rawPath === undefined || rawPath === "/" || rawPath === "/*" ? "" : rawPath;
 	if (star !== undefined && publicSuffixes.has(host)) return undefined;
@@ -155,7 +159,11 @@ export const resolveSettings = (hosts: string[], valueOf: (key: string) => unkno
  * A `{setting:<key>}` entry's value: `<key>` in the plugin storage named like the package, or else, for `<store>.<key>`,
  * `<key>` in the storage `<store>`
  */
-export const settingValueOf = async (key: string, packageName: string, storage: (name: string) => Promise<Record<string, unknown> | undefined>) => {
+export const settingValueOf = async (
+	key: string,
+	packageName: string,
+	storage: (name: string) => Promise<Record<string, unknown> | undefined>,
+) => {
 	const own = (await storage(packageName))?.[key];
 	const dot = key.indexOf(".");
 	return own !== undefined || dot <= 0 ? own : (await storage(key.slice(0, dot)))?.[key.slice(dot + 1)];
@@ -348,7 +356,12 @@ export const cspSources = (hosts: string[]): string[] => {
 		if (rule === undefined) continue;
 		// CSP matches a path ending in `/` as a prefix: the part before the first `*`, cut back to its last `/`. Wider
 		// than the pattern, which net.ts checks exactly
-		const path = rule.path === "" ? "" : rule.path.includes("*") ? rule.path.slice(0, rule.path.slice(0, rule.path.indexOf("*")).lastIndexOf("/") + 1) : rule.path;
+		const path =
+			rule.path === ""
+				? ""
+				: rule.path.includes("*")
+					? rule.path.slice(0, rule.path.slice(0, rule.path.indexOf("*")).lastIndexOf("/") + 1)
+					: rule.path;
 		const host = `${rule.wildcard ? "*." : ""}${rule.host}${rule.port === "" ? "" : `:${rule.port}`}${path === "/" ? "" : path}`;
 		for (const scheme of rule.schemes) sources.add(`${scheme}://${host}`);
 	}

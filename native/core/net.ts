@@ -118,6 +118,8 @@ export const createNet = (deps: NetDeps) => {
 	 * hosts grammar can't keep (an IPv6 address, a name ending in "."): matched as written, not as a host entry
 	 */
 	const onceAllowed = new Set<string>();
+	/** `${plugin url}\n${entry}` denied for a host the grammar can't keep: until TIDAL restarts, as written */
+	const onceDenied = new Set<string>();
 	/** Questions waiting for the user, so that many requests to one new host ask once */
 	const asking = new Map<string, Promise<HostAnswer | undefined>>();
 	const logs = new Map<string, NetLogEntry[]>();
@@ -141,7 +143,12 @@ export const createNet = (deps: NetDeps) => {
 			answer = (ask === undefined ? Promise.resolve(undefined) : ask(question).catch(() => undefined)).then(async (got) => {
 				const keepable = parseHostEntry(entry) !== undefined;
 				if (got === "once" || (got === "always" && !keepable)) onceAllowed.add(key);
-				else if ((got === "always" || got === "deny") && keepable) await deps.grant?.(pluginUrl, entry, got);
+				else if (got === "deny" && !keepable) onceDenied.add(key);
+				else if (got === "always" || got === "deny")
+					// Not kept (plugins.json can't be written): the answer still counts for this request
+					await Promise.resolve(deps.grant?.(pluginUrl, entry, got)).catch((err) =>
+						console.error("[Luna.core] Can't keep the answer for", entry, err),
+					);
 				return got;
 			});
 			asking.set(key, answer);
@@ -167,7 +174,7 @@ export const createNet = (deps: NetDeps) => {
 		if (!schemes.includes(url.protocol)) return `${url.protocol} urls can't be fetched`;
 		if (url.username !== "" || url.password !== "") return "urls with credentials can't be fetched";
 		const deny = plugin.deny ?? [];
-		if (hostAllowed(deny, url)) return `you denied ${url.host} for ${plugin.name}`;
+		if (hostAllowed(deny, url) || onceDenied.has(`${pluginUrl}\n${answerEntry(url)}`)) return `you denied ${url.host} for ${plugin.name}`;
 		const local = `${url.hostname} is a local address: ${plugin.name} must list it in its hosts as a local entry`;
 		// A legacy plugin's luna.fetch reaches public hosts as it is; its page requests (a WebSocket) are asked like any
 		// plugin's, as an "always" answer is the only way into the page's CSP
@@ -176,7 +183,11 @@ export const createNet = (deps: NetDeps) => {
 				settings !== null && typeof settings === "object" && Object.hasOwn(settings, key) ? (settings as Record<string, unknown>)[key] : undefined,
 			);
 			const fixed = hosts.filter((entry) => !fromSettings.includes(entry));
-			const allowed = [...fixed, ...(plugin.allow ?? []), ...[...onceAllowed].filter((key) => key.startsWith(`${pluginUrl}\n`)).map((key) => key.slice(pluginUrl.length + 1))];
+			const allowed = [
+				...fixed,
+				...(plugin.allow ?? []),
+				...[...onceAllowed].filter((key) => key.startsWith(`${pluginUrl}\n`)).map((key) => key.slice(pluginUrl.length + 1)),
+			];
 			// A local entry the user saw ("localhost", "nas.lan", or an answer for a local address) may reach a local
 			// address; a public one may not
 			// An answer kept as written (onceAllowed) names this very host: for a local address, a local entry the user saw
@@ -291,7 +302,18 @@ export const createNet = (deps: NetDeps) => {
 		inFlight.set(key, (inFlight.get(key) ?? 0) + 1);
 		inFlightTotal++;
 		try {
-			return await fetchAllowed(pluginUrl as string, plugin!, url, method, headers, body, entry, refuse, ask, settings as Record<string, unknown> | undefined);
+			return await fetchAllowed(
+				pluginUrl as string,
+				plugin!,
+				url,
+				method,
+				headers,
+				body,
+				entry,
+				refuse,
+				ask,
+				settings as Record<string, unknown> | undefined,
+			);
 		} finally {
 			inFlightTotal--;
 			const left = (inFlight.get(key) ?? 1) - 1;
@@ -386,7 +408,7 @@ export const createNet = (deps: NetDeps) => {
 		fetch: fetchFor,
 		/** Forgets the plugin's answers kept until restart: it was uninstalled, or moved to another url */
 		forget: (pluginUrl: string) => {
-			for (const key of onceAllowed) if (key.startsWith(`${pluginUrl}\n`)) onceAllowed.delete(key);
+			for (const kept of [onceAllowed, onceDenied]) for (const key of kept) if (key.startsWith(`${pluginUrl}\n`)) kept.delete(key);
 		},
 		/**
 		 * For a request page code makes with the page's own network (a WebSocket, an XMLHttpRequest) to a host the page's

@@ -122,7 +122,7 @@ ipcHandle("__LunaCore.disable", (_, url: unknown) => thenChanged([url], () => re
 // A plugin installed again later, or another at the old url, starts without the "only now" answers (net.ts)
 ipcHandle("__LunaCore.uninstall", (_, url: unknown) => thenChanged([url], () => registry().uninstall(url).then((done) => (forgetHostAnswers(url), done))));
 ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) =>
-	thenChanged([from, to], () => registry().moveUrl(from, to).then((done) => (forgetHostAnswers(from), done))),
+	thenChanged([from, to], () => registry().moveUrl(from, to).then((done) => (done === true && forgetHostAnswers(from), done))),
 );
 ipcHandle("__LunaCore.allowStore", (event, url: unknown) => registry().allowStore(url, askerFor(event.sender)));
 ipcHandle("__LunaCore.storeOrigins", () => registry().storeOrigins());
