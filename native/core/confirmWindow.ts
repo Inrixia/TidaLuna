@@ -6,17 +6,19 @@ import { BrowserWindow, ipcMain, shell } from "electron";
 
 import { createPromptWindow, inPromptQueue, visibleOwner } from "../NativeModule/permissions/promptWindow";
 import {
+	actionToRun,
 	ARM_DELAY_MS,
 	buildConfirmHtml,
 	confirmGate,
 	confirmLinks,
 	confirmRequest,
+	type ConfirmRequest,
 	httpLink,
 	NOTE,
+	shownWarning,
 	SUBMIT,
 	TITLE,
 	USER_INPUT_MS,
-	type ConfirmRequest,
 } from "./confirmPage";
 import { notAsked } from "./notAsked";
 
@@ -81,6 +83,7 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 		let answer: boolean | undefined;
 		let submitted = false;
 		const links = confirmLinks(request);
+		const warning = shownWarning(request);
 		const run = (script: string) => !win.isDestroyed() && void win.webContents.executeJavaScript(script).catch(() => {});
 		// The user chose the warning's action: it runs if they confirm (closing or cancelling drops it)
 		let warningChosen = false;
@@ -90,9 +93,9 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 				const what = title.slice(NOTE.length).replace(/#\d+$/, "");
 				const link = what.startsWith("link:") ? httpLink(links[Number(what.slice(5))]) : undefined;
 				if (link !== undefined) void shell.openExternal(link).catch(() => {});
-				if (what === "action" && request.warning !== undefined && !warningChosen) {
+				if (what === "action" && warning !== undefined && !warningChosen) {
 					warningChosen = true;
-					run(`window.warningDone(${JSON.stringify(request.warning.done)})`);
+					run(`window.warningDone(${JSON.stringify(warning.done)})`);
 				}
 				return;
 			}
@@ -135,14 +138,15 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 		});
 		win.once("closed", () => {
 			clearTimeout(armTimer);
-			if (answer !== true || !warningChosen || request.warning === undefined) return resolve(answer);
+			const action = actionToRun(answer, warningChosen, warning);
+			if (action === undefined) return resolve(answer);
 			// Before the answer counts: what it confirms (an update, say) must find the action done
 			Promise.resolve()
-				.then(request.warning.run)
+				.then(action)
 				.catch((err) => console.error("[Luna.core] The confirmation's warning action failed", err))
 				.finally(() => resolve(answer));
 		});
-		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildConfirmHtml(request))}`).catch((err) => {
+		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildConfirmHtml({ ...request, warning }))}`).catch((err) => {
 			console.error("[🛑Security🛑] Failed to show the Luna confirmation", err);
 			if (!win.isDestroyed()) win.close();
 		});

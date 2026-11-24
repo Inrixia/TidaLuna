@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { createHash } from "node:crypto";
 
-import type { ConfirmLine, ConfirmRequest } from "./confirmPage";
+import { shownWarning, type ConfirmLine, type ConfirmRequest } from "./confirmPage";
 import { createRegistry, type CoreState, type PluginPackage } from "./registry";
 
 const URL = "https://example.com/plugin";
@@ -134,7 +134,7 @@ describe("core registry", () => {
 		const no = asker(false);
 		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
 		assert.ok(no.asked[0].lines.map(lineText).includes(`Update only if you trust the author and ${URL}`));
-		assert.strictEqual(no.asked[0].warning, undefined);
+		assert.strictEqual(shownWarning(no.asked[0]), undefined);
 		assert.strictEqual(registry.info(URL)?.hash, "v1");
 
 		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
@@ -288,7 +288,7 @@ describe("core registry", () => {
 			{ text: "changes", href: `https://github.com/owner/repo/compare/${A}...${B}` },
 			")",
 		]);
-		assert.deepStrictEqual(trust, ["Update only if you trust the author and ", { text: RELEASE, href: RELEASE }]);
+		assert.deepStrictEqual(trust, ["Update only if you trust the author and ", { text: RELEASE, href: `${RELEASE}.json` }]);
 	});
 
 	it("warns when the plugin's native files are allowed for all versions, and asks again only if the user updates", async () => {
@@ -298,15 +298,20 @@ describe("core registry", () => {
 		await registry.install(URL, asker(true));
 		serve(URL, "v2", { "a.native.ts": "native a2" });
 		await registry.load(URL);
-		allVersions.set(URL, ["a.native.ts"]);
 
 		const no = asker(false);
 		await registry.acceptUpdate(URL, no);
-		const warning = no.asked[0].warning;
-		assert.ok(warning?.text.includes("a.native.ts"));
+		// Taken when the window shows: an answer given while it waited counts
+		allVersions.set(URL, ["a.native.ts", "gone.native.ts"]);
+		const warning = shownWarning(no.asked[0]);
+		// Only the update's own files
+		assert.strictEqual(warning?.text, "Native code allowed for all versions (a.native.ts): the update's runs without asking.");
 		assert.strictEqual(warning?.action, "Ask again");
+		allVersions.set(URL, ["gone.native.ts"]);
+		assert.strictEqual(shownWarning(no.asked[0]), undefined);
+		allVersions.set(URL, ["a.native.ts", "gone.native.ts"]);
 		// The window runs it only when the user chose it and then confirmed (confirmWindow.ts)
-		assert.deepStrictEqual(allVersions.get(URL), ["a.native.ts"]);
+		assert.deepStrictEqual(allVersions.get(URL), ["a.native.ts", "gone.native.ts"]);
 		await warning!.run();
 		assert.strictEqual(allVersions.get(URL), undefined);
 	});

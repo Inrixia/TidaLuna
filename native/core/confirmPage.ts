@@ -10,7 +10,16 @@ export type ConfirmLine = string | (string | ConfirmLink)[];
  * replaces the warning, and main calls `run` only if the user then confirms, before the answer counts.
  */
 export type ConfirmWarning = { text: string; action: string; done: string; run: () => void | Promise<void> };
-export type ConfirmRequest = { title: string; lines: ConfirmLine[]; confirmText: string; warning?: ConfirmWarning };
+/**
+ * `warning` may be a function: the window calls it when it shows, so a request that waited behind other prompts warns
+ * about the state then (an answer given in one of them, say)
+ */
+export type ConfirmRequest = {
+	title: string;
+	lines: ConfirmLine[];
+	confirmText: string;
+	warning?: ConfirmWarning | (() => ConfirmWarning | undefined);
+};
 
 export const TITLE = "Luna";
 export const SUBMIT = "luna-core-confirm:";
@@ -91,12 +100,12 @@ export const confirmGate = () => {
 	};
 };
 
-/** An http(s) url, else undefined: the only links a confirmation opens */
+/** An http(s) url, normalized (`new URL`), else undefined: the only links a confirmation opens */
 export const httpLink = (href: unknown): string | undefined => {
 	if (typeof href !== "string") return undefined;
 	try {
-		const { protocol } = new URL(href);
-		return protocol === "https:" || protocol === "http:" ? href : undefined;
+		const url = new URL(href);
+		return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
 	} catch {
 		return undefined;
 	}
@@ -119,13 +128,24 @@ export const confirmRequest = (title: unknown, lines: unknown, confirmText: unkn
 	if (!Array.isArray(lines) || lines.length > MAX_LINES) throw new Error("[Luna.core] Bad confirmation lines");
 	const request: ConfirmRequest = { title: text(title), lines: lines.map(line), confirmText: text(confirmText) };
 	if (request.title === "" || request.confirmText === "") throw new Error("[Luna.core] A confirmation needs a title and a button");
-	if (warning !== undefined) {
-		const { text: warningText, action, done, run } = warning as Partial<ConfirmWarning>;
+	const checked = (value: unknown): ConfirmWarning | undefined => {
+		if (value === undefined) return undefined;
+		const { text: warningText, action, done, run } = value as Partial<ConfirmWarning>;
 		if (typeof run !== "function") throw new Error("[Luna.core] A confirmation warning needs an action");
-		request.warning = { text: text(warningText), action: text(action), done: text(done), run };
-	}
+		return { text: text(warningText), action: text(action), done: text(done), run };
+	};
+	if (typeof warning === "function") request.warning = () => checked(warning());
+	else if (warning !== undefined) request.warning = checked(warning);
 	return request;
 };
+
+/** The warning a window shows: a function's is taken now */
+export const shownWarning = ({ warning }: Pick<ConfirmRequest, "warning">): ConfirmWarning | undefined =>
+	typeof warning === "function" ? warning() : warning;
+
+/** What runs when the window closes: the warning's action, only if the user chose it and then confirmed */
+export const actionToRun = (answer: boolean | undefined, chosen: boolean, warning: ConfirmWarning | undefined) =>
+	answer === true && chosen ? warning?.run : undefined;
 
 /** The links of a request in the order the page numbers them (`link:<index>`) */
 export const confirmLinks = ({ lines }: Pick<ConfirmRequest, "lines">): string[] =>
@@ -142,7 +162,7 @@ const lineHtml = (line: ConfirmLine, next: () => number) =>
 				)
 				.join("");
 
-export const buildConfirmHtml = ({ title, lines, confirmText, warning }: ConfirmRequest) => {
+export const buildConfirmHtml = ({ title, lines, confirmText, warning }: Omit<ConfirmRequest, "warning"> & { warning?: ConfirmWarning }) => {
 	let links = 0;
 	const next = () => links++;
 	return `<!DOCTYPE html>
