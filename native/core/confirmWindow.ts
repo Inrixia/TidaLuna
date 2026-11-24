@@ -18,6 +18,7 @@ import {
 	NOT_IN_USE,
 	focusedWithin,
 	isHostAnswer,
+	isHostDeny,
 	oneAtATime,
 	type ConfirmRequest,
 } from "./confirmPage";
@@ -63,7 +64,7 @@ export const askChoice = async (
 	parent: BrowserWindow | undefined,
 	recentUserInput: boolean,
 ): Promise<{ choice?: string; refused?: string }> => {
-	const { answer, refused } = await askRaw(request, parent, recentUserInput, isHostAnswer, hostGate);
+	const { answer, refused } = await askRaw(request, parent, recentUserInput, isHostAnswer, hostGate, isHostDeny);
 	return { choice: answer?.startsWith("choice:") ? answer.slice("choice:".length) : undefined, refused };
 };
 
@@ -73,6 +74,7 @@ const askRaw = async (
 	recentUserInput: boolean,
 	confirms: (raw: string) => boolean = (raw) => raw === "yes",
 	asking = gate,
+	denies: (raw: string) => boolean = () => false,
 ): Promise<{ answer?: string; refused?: string }> => {
 	const owner = visibleOwner(parent);
 	if (owner !== undefined && !watched.has(owner)) {
@@ -95,7 +97,7 @@ const askRaw = async (
 		if (answer === undefined) return { refused: "its window could not be shown over TIDAL" };
 		return { answer };
 	} finally {
-		asking.answered(answer === undefined ? undefined : confirms(answer), Date.now());
+		asking.answered(answer === undefined ? undefined : confirms(answer), Date.now(), answer !== undefined && denies(answer));
 	}
 };
 
@@ -172,6 +174,20 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 // #region Who asks
 /** When the preload last saw a trusted click or key in a renderer: webContents id -> Date.now() */
 const lastInput = new Map<number, number>();
+/** Who waits for the user's next click or key in a renderer (a host question waiting for TIDAL): webContents id -> listeners */
+const inputListeners = new Map<number, Set<() => void>>();
+const inputOf = (id: number) => ({
+	on: (listener: () => void) => {
+		let listeners = inputListeners.get(id);
+		if (listeners === undefined) inputListeners.set(id, (listeners = new Set()));
+		listeners.add(listener);
+	},
+	off: (listener: () => void) => {
+		const listeners = inputListeners.get(id);
+		listeners?.delete(listener);
+		if (listeners?.size === 0) inputListeners.delete(id);
+	},
+});
 /** Renderers whose lastInput entry is already removed when they are destroyed (one listener each, however often they leave) */
 const cleanedUp = new WeakSet<Electron.WebContents>();
 // Sent by the preload (native/preload.ts), which sees only trusted events. It only lets a window open: the click in it is still the user's
@@ -183,6 +199,7 @@ ipcMain.on("__Luna.userInput", (event, active: unknown) => {
 		sender.once("destroyed", () => lastInput.delete(sender.id));
 	}
 	lastInput.set(sender.id, Date.now());
+	for (const listener of [...(inputListeners.get(sender.id) ?? [])]) listener();
 });
 
 /**
@@ -214,8 +231,10 @@ export const choiceAskerFor = (sender: Electron.WebContents) => {
 		// Asked while TIDAL isn't in use (a request in the background): the question waits until the user is back
 		if (refused === NOT_IN_USE && parent !== undefined && waiting < MAX_WAITING) {
 			waiting++;
-			const back = await focusedWithin(parent, HOST_WAIT_MS).finally(() => waiting--);
-			if (back) ({ choice, refused } = await afterWait(() => askChoice(request, parent, false)));
+			const back = await focusedWithin(parent, HOST_WAIT_MS, inputOf(sender.id)).finally(() => waiting--);
+			// Back by a click or key: that is the use the gate looks for, where focus isn't reported
+			const input = () => Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
+			if (back) ({ choice, refused } = await afterWait(() => askChoice(request, parent, input())));
 		}
 		if (refused === undefined) return choice;
 		throw notAsked(request.title, refused);

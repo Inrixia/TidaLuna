@@ -310,6 +310,14 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const netGrants: Record<string, Record<string, HostGrant>> = state.netGrants !== null && typeof state.netGrants === "object"
 		? state.netGrants
 		: (state.netGrants = {});
+	/** Puts a plugin's answer for an entry back as it was (undefined: none) */
+	const restoreGrant = (url: string, entry: string, grant: HostGrant | undefined) => {
+		if (grant !== undefined) (netGrants[url] ??= {})[entry] = grant;
+		else if (netGrants[url] !== undefined) {
+			delete netGrants[url][entry];
+			if (Object.keys(netGrants[url]).length === 0) delete netGrants[url];
+		}
+	};
 	const allowedStores: string[] = Array.isArray(state.storeOrigins)
 		? (state.storeOrigins = state.storeOrigins.filter((origin): origin is string => storeOriginOf(origin) === origin))
 		: (state.storeOrigins = []);
@@ -820,8 +828,15 @@ export const createRegistry = (deps: RegistryDeps) => {
 		 */
 		grantHost: async (url: string, entry: string, grant: HostGrant) => {
 			if (state.plugins[url] === undefined || parseHostEntry(entry) === undefined) return false;
+			const before = netGrants[url]?.[entry];
 			(netGrants[url] ??= {})[entry] = grant;
-			await save();
+			try {
+				await save();
+			} catch (err) {
+				// Not kept: net.ts keeps the answer until restart, Settings → Network and the page's CSP don't list it
+				restoreGrant(url, entry, before);
+				throw err;
+			}
 			return true;
 		},
 		/**
@@ -840,10 +855,15 @@ export const createRegistry = (deps: RegistryDeps) => {
 				}))
 			)
 				return false;
-			if (netGrants[checked]?.[entry] === undefined) return false;
-			delete netGrants[checked][entry];
-			if (Object.keys(netGrants[checked]).length === 0) delete netGrants[checked];
-			await save();
+			const before = netGrants[checked]?.[entry];
+			if (before === undefined) return false;
+			restoreGrant(checked, entry, undefined);
+			try {
+				await save();
+			} catch (err) {
+				restoreGrant(checked, entry, before);
+				throw err;
+			}
 			return true;
 		},
 		/**

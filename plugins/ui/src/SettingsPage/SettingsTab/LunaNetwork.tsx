@@ -64,6 +64,11 @@ export const LunaNetwork = React.memo(() => {
 			title="Network"
 			desc="Plugins' requests (fetch, WebSocket, luna.fetch) reach only TIDAL's hosts and the hosts accepted for plugins: the ones they list, or the ones luna-registry found in their code. Any other host is asked about when the plugin uses it (only now, always, deny). Images, audio and video load from any https host. Page plugins share one page: a host accepted for one is open to the others there too"
 		>
+			{forgetError !== undefined && (
+				<Typography variant="body2" sx={{ color: "error.main" }}>
+					Not forgotten: {forgetError}
+				</Typography>
+			)}
 			{[...plugins]
 				.sort((a, b) => a.name.localeCompare(b.name))
 				.map((plugin) => (

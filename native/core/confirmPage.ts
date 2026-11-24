@@ -26,6 +26,8 @@ export const MAX_PENDING = 3;
 /** After this many cancels in a row, confirmations are refused for COOL_DOWN_MS: page code asking again after each cancel */
 export const MAX_CANCELS = 4;
 export const COOL_DOWN_MS = 60_000;
+/** Host questions denied in a row before they cool down like cancels: page code asking for host after host */
+export const MAX_DENIES = 12;
 /** A trusted click or key in TIDAL counts as using it this long (the preload reports them, see confirmWindow.ts) */
 export const USER_INPUT_MS = 10_000;
 /** An answer in a confirmation window counts as using TIDAL this long (the next of several installs follows it) */
@@ -39,6 +41,8 @@ export const NOT_IN_USE = "TIDAL is not in use";
  * a plugin asks for in a burst is answering, not dismissing windows. Only a close counts as a cancel
  */
 export const isHostAnswer = (raw: string) => raw.startsWith("choice:");
+/** A host question's "Deny": an answer, but many in a row are a plugin asking for host after host (confirmGate) */
+export const isHostDeny = (raw: string) => raw === "choice:deny";
 
 /** Runs the functions it is given one after another, each once the one before settled (a failure doesn't stop the rest) */
 export const oneAtATime = () => {
@@ -58,8 +62,14 @@ export type FocusTarget = {
 	off(event: "focus" | "closed", listener: () => void): unknown;
 };
 
-/** Resolves true once `win` has the focus (at once if it has), false after `ms` or if it closes first */
-export const focusedWithin = (win: FocusTarget, ms: number) =>
+/** Tells a listener of the user's clicks and keys in TIDAL (the preload's trusted events) */
+export type InputSource = { on(listener: () => void): unknown; off(listener: () => void): unknown };
+
+/**
+ * Resolves true once `win` has the focus (at once if it has) or the user clicks or types in it (`input`: not every Linux
+ * window manager reports focus), false after `ms` or if it closes first
+ */
+export const focusedWithin = (win: FocusTarget, ms: number, input?: InputSource) =>
 	new Promise<boolean>((resolve) => {
 		if (win.isDestroyed()) return resolve(false);
 		if (win.isFocused()) return resolve(true);
@@ -67,6 +77,7 @@ export const focusedWithin = (win: FocusTarget, ms: number) =>
 			clearTimeout(timer);
 			win.off("focus", onFocus);
 			win.off("closed", onClosed);
+			input?.off(onFocus);
 			resolve(focused);
 		};
 		const onFocus = () => done(true);
@@ -74,6 +85,7 @@ export const focusedWithin = (win: FocusTarget, ms: number) =>
 		const timer = setTimeout(() => done(false), ms);
 		win.on("focus", onFocus);
 		win.on("closed", onClosed);
+		input?.on(onFocus);
 	});
 
 /** What main knows about TIDAL's window when a request comes */
@@ -93,7 +105,10 @@ export const confirmGate = () => {
 	let pending = 0;
 	let cancelsInARow = 0;
 	let lastCancel = 0;
+	let deniesInARow = 0;
+	let lastDeny = 0;
 	let refusedUntil = 0;
+	let cooledBy = `${MAX_CANCELS} confirmations were cancelled in a row`;
 	let lastAnswer = -Infinity;
 	return {
 		/** Why this request is refused, or undefined if it may ask */
@@ -101,19 +116,31 @@ export const confirmGate = () => {
 			// A user's request comes from a click in TIDAL, or follows their answer to the last confirmation
 			const inUse = tidal.visible && (tidal.focused || tidal.recentUserInput || now - lastAnswer < ANSWER_IN_USE_MS);
 			if (!inUse) return NOT_IN_USE;
-			if (now < refusedUntil)
-				return `${MAX_CANCELS} confirmations were cancelled in a row, asking again in ${Math.ceil((refusedUntil - now) / 1000)} s`;
+			if (now < refusedUntil) return `${cooledBy}, asking again in ${Math.ceil((refusedUntil - now) / 1000)} s`;
 			if (pending >= MAX_PENDING) return `${pending} confirmations are already waiting`;
 			pending++;
 			return undefined;
 		},
-		/** A request that was let through got its answer, or undefined if no window could be shown (not the user's cancel) */
-		answered(answer: boolean | undefined, now: number) {
+		/**
+		 * A request that was let through got its answer, or undefined if no window could be shown (not the user's cancel).
+		 * `denied`: the answer was a host question's Deny
+		 */
+		answered(answer: boolean | undefined, now: number, denied = false) {
 			pending--;
 			if (answer === undefined) return;
 			lastAnswer = now;
 			if (answer) {
 				cancelsInARow = 0;
+				if (!denied) deniesInARow = 0;
+				else {
+					if (now - lastDeny > COOL_DOWN_MS) deniesInARow = 0;
+					lastDeny = now;
+					if (++deniesInARow >= MAX_DENIES) {
+						refusedUntil = now + COOL_DOWN_MS;
+						cooledBy = `${MAX_DENIES} hosts were denied in a row`;
+						deniesInARow = 0;
+					}
+				}
 				return;
 			}
 			// Cancels long apart are the user's own choices, not a page asking again and again
@@ -121,6 +148,7 @@ export const confirmGate = () => {
 			lastCancel = now;
 			if (++cancelsInARow >= MAX_CANCELS) {
 				refusedUntil = now + COOL_DOWN_MS;
+				cooledBy = `${MAX_CANCELS} confirmations were cancelled in a row`;
 				cancelsInARow = 0;
 			}
 		},
@@ -151,18 +179,15 @@ export const fitLines = (lines: string[]) => {
 	const rest = packed.slice(MAX_LINES - 1);
 	let last = "";
 	let taken = 0;
+	const counted = (text: string, left: number) =>
+		left === 0 ? text : `${text === "" ? "" : `${text} … `}and ${left} more line${left === 1 ? "" : "s"}`;
 	for (const line of rest) {
-		const more = ` and ${rest.length - taken - 1} more lines`;
 		const next = last === "" ? line : `${last} ${line}`;
-		if (next.length + more.length > MAX_TEXT) break;
+		if (counted(next, rest.length - taken - 1).length > MAX_TEXT) break;
 		last = next;
 		taken++;
 	}
-	const left = rest.length - taken;
-	return [
-		...packed.slice(0, MAX_LINES - 1),
-		left === 0 ? last : `${last}${last === "" ? "" : " …"} and ${left} more line${left === 1 ? "" : "s"}`.trim(),
-	];
+	return [...packed.slice(0, MAX_LINES - 1), counted(last, rest.length - taken)];
 };
 
 /** Checks a request that came over IPC: strings only, long texts are cut */

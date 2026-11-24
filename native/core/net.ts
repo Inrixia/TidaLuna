@@ -136,6 +136,8 @@ export const createNet = (deps: NetDeps) => {
 	const resolvedLocalDenied = new Set<string>();
 	/** Questions waiting for the user, so that many requests to one new host ask once */
 	const asking = new Map<string, Promise<HostAnswer | undefined>>();
+	/** Bumped when a plugin's answers are forgotten (uninstalled): an answer to a question asked before is dropped */
+	const generations = new Map<string, number>();
 	const logs = new Map<string, NetLogEntry[]>();
 	const inFlight = new Map<string, number>();
 	let inFlightTotal = 0;
@@ -164,6 +166,7 @@ export const createNet = (deps: NetDeps) => {
 		const key = `${pluginUrl}\n${entry}${resolvesLocal ? "\nlocal" : ""}`;
 		let answer = asking.get(key);
 		if (answer === undefined) {
+			const generation = generations.get(pluginUrl) ?? 0;
 			const keepable = !resolvesLocal && parseHostEntry(entry) !== undefined;
 			const question: HostQuestion = {
 				plugin: pluginUrl,
@@ -174,6 +177,8 @@ export const createNet = (deps: NetDeps) => {
 				...(keepable ? {} : { notKept: true as const }),
 			};
 			answer = (ask === undefined ? Promise.resolve(undefined) : ask(question).catch(() => undefined)).then(async (got) => {
+				// The plugin was uninstalled while the user was asked: a reinstall from the same url asks again
+				if ((generations.get(pluginUrl) ?? 0) !== generation) return undefined;
 				if (resolvesLocal) {
 					if (got === "once" || got === "always") resolvedLocalAllowed.add(key);
 					else if (got === "deny") resolvedLocalDenied.add(key);
@@ -195,7 +200,8 @@ export const createNet = (deps: NetDeps) => {
 				return got;
 			});
 			asking.set(key, answer);
-			void answer.finally(() => asking.delete(key));
+			const asked = answer;
+			void answer.finally(() => asking.get(key) === asked && asking.delete(key));
 		}
 		return answer;
 	};
@@ -360,8 +366,8 @@ export const createNet = (deps: NetDeps) => {
 			if (typeof value !== "string") refuse(`header ${name} must be a string`);
 			if (connectionHeaders.includes(name.toLowerCase())) refuse(`header ${name} can't be set`);
 			// Left to fetch, as a browser does: it asks only for the encodings it decodes (decodedEncodings), so a body
-			// comes decoded whatever the plugin would ask for
-			if (name.toLowerCase() === "accept-encoding") continue;
+			// comes decoded whatever the plugin would ask for. Only `identity` is kept (a HEAD for a file's own size)
+			if (name.toLowerCase() === "accept-encoding" && value.trim().toLowerCase() !== "identity") continue;
 			headers[name] = value;
 		}
 		const key = entry.plugin;
@@ -478,6 +484,8 @@ export const createNet = (deps: NetDeps) => {
 		fetch: fetchFor,
 		/** Forgets the plugin's answers kept until restart: it was uninstalled, or moved to another url */
 		forget: (pluginUrl: string) => {
+			generations.set(pluginUrl, (generations.get(pluginUrl) ?? 0) + 1);
+			for (const key of asking.keys()) if (key.startsWith(`${pluginUrl}\n`)) asking.delete(key);
 			for (const kept of [onceAllowed, alwaysNotKept, onceDenied, resolvedLocalAllowed, resolvedLocalDenied])
 				for (const key of kept) if (key.startsWith(`${pluginUrl}\n`)) kept.delete(key);
 		},
