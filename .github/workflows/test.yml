@@ -53,6 +53,14 @@ jobs:
       if-no-files-found: ignore
       retention-days: 7
 
+   # Another workflow (nix-hashes) also commits to master, so a run can check out a head that moves before it finishes
+   # and then have nothing to fast-forward onto. Rebase before generating the files so they are built on the latest
+   # head, and treat a lost race as cosmetic below rather than failing the build over it.
+   - name: Sync with the branch head
+     if: github.event_name == 'push'
+     continue-on-error: true
+     run: git pull --rebase --autostash origin ${{ github.ref_name }}
+
    # Badges are for the default branch only: a PR run has nothing to publish, and its badges would describe an
    # unmerged branch. The coverage thresholds above still gate every PR.
    - name: Coverage badges
@@ -68,6 +76,7 @@ jobs:
    # Commits made with GITHUB_TOKEN don't start another workflow run, so this can't loop.
    - name: Commit coverage badges
      if: github.event_name == 'push'
+     continue-on-error: true
      uses: stefanzweifel/git-auto-commit-action@v7
      with:
       commit_message: "ci: update coverage badges"
@@ -75,6 +84,7 @@ jobs:
 
    - name: Commit the raised floors
      if: github.event_name == 'push'
+     continue-on-error: true
      uses: stefanzweifel/git-auto-commit-action@v7
      with:
       commit_message: "ci: raise the coverage floors"
