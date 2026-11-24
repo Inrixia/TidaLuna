@@ -150,10 +150,6 @@ const legacyNativesOf = (version: Version) => version.natives.filter((fileName) 
 export const legacyFormatMessage = (name: string) =>
 	`${name} uses the old native format, without isolation: its native code doesn't run. The author must move it to the new format (lunaWorld).`;
 
-/**
- * What the confirmation says about a version. `legacyRuns`: its old-format natives would run (see CoreRecord legacyOff);
- * "unknown": they would if this version is on the list, which isn't loaded yet
- */
 /** What a version's old-format native code means: whether it runs and who can call it (`legacyRuns`) */
 export const legacyLines = (url: string, version: Version, legacyRuns: boolean | "unknown"): string[] => {
 	const lines: string[] = [];
@@ -178,6 +174,10 @@ export const legacyLines = (url: string, version: Version, legacyRuns: boolean |
 	return lines;
 };
 
+/**
+ * What the confirmation says about a version. `legacyRuns`: its old-format natives would run (see CoreRecord legacyOff);
+ * "unknown": they would if this version is on the list, which isn't loaded yet
+ */
 export const describe = (url: string, version: Version, legacyRuns: boolean | "unknown" = false): string[] => {
 	const lines = [`${version.package.name} ${version.package.version ?? ""} from ${url}${isDevUrl(url) ? " (this computer)" : ""}`];
 	const world = version.natives.filter(isWorldNative).map((fileName) => fileName.slice(worldFilePrefix.length));
@@ -221,7 +221,11 @@ export const updateQuestion = (
 	const lines: ConfirmLine[] = [versions, hashes, ...notes, ["Update only if you trust the author and ", link(url, `${url}.json`)]];
 	// When the window shows (it may wait behind other prompts), of the update's native files
 	const warning = (): ConfirmWarning | undefined => {
-		const files = deps.allVersionsAnswers(url).filter((fileName) => pending.natives.includes(fileName));
+		const files = deps
+			.allVersionsAnswers(url)
+			.filter((fileName) => pending.natives.includes(fileName))
+			// As describe() names them
+			.map((fileName) => (isWorldNative(fileName) ? fileName.slice(worldFilePrefix.length) : fileName));
 		if (files.length === 0) return undefined;
 		return {
 			text: `Native code allowed for all versions (${files.join(", ")}): the update's runs without asking.`,

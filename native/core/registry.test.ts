@@ -998,6 +998,20 @@ describe("core registry", () => {
 		assert.match(ask.asked[0].lines.map(lineText).join("\n"), /World sha256: \w{12} -> \w{12}/);
 	});
 
+	it("names a world's native files allowed for all versions as the install window does", async () => {
+		const { deps, serveWorld, allVersions } = fakeDeps();
+		serveWorld(URL, "v1", { "w.native.ts": "world native" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serveWorld(URL, "v1", { "w.native.ts": "changed world native" });
+		await registry.load(URL);
+		// As the trust store names it (native/worlds.ts)
+		allVersions.set(URL, ["world:w.native.ts"]);
+		const ask = asker(false);
+		await registry.acceptUpdate(URL, ask);
+		assert.strictEqual(shownWarning(ask.asked[0])?.text, "Native code allowed for all versions (w.native.ts): the update's runs without asking.");
+	});
+
 	it("moves a world plugin silently only when the new url serves the same world", async () => {
 		const NEW_URL = "https://example.org/plugin";
 		const { deps, serveWorld } = fakeDeps();
