@@ -6,8 +6,8 @@ export type ConfirmRequest = {
 	lines: string[];
 	confirmText: string;
 	/**
-	 * Answers instead of Cancel/confirm, in order (the last one is drawn as the main button). Each one but the first is
-	 * armed like the confirm button. Closing the window answers none of them
+	 * Answers instead of Cancel/confirm, in order (the last one is drawn as the main button). All of them are armed like
+	 * the confirm button (none answers before the window was seen). Closing the window answers none of them
 	 */
 	choices?: { id: string; label: string }[];
 };
@@ -39,6 +39,16 @@ export const NOT_IN_USE = "TIDAL is not in use";
  * a plugin asks for in a burst is answering, not dismissing windows. Only a close counts as a cancel
  */
 export const isHostAnswer = (raw: string) => raw.startsWith("choice:");
+
+/** Runs the functions it is given one after another, each once the one before settled (a failure doesn't stop the rest) */
+export const oneAtATime = () => {
+	let last: Promise<unknown> = Promise.resolve();
+	return <T>(run: () => Promise<T>): Promise<T> => {
+		const next = last.then(run);
+		last = next.catch(() => undefined);
+		return next;
+	};
+};
 
 /** The part of a BrowserWindow focusedWithin uses */
 export type FocusTarget = {
@@ -136,8 +146,7 @@ export const fitLines = (lines: string[]) => {
 		if (last >= 0 && packed[last].length + 1 + line.length <= MAX_TEXT) packed[last] += ` ${line}`;
 		else packed.push(line);
 	}
-	const fitted = packed.length <= MAX_LINES ? packed : lines;
-	return fitted.length <= MAX_LINES ? fitted : [...fitted.slice(0, MAX_LINES - 1), fitted.slice(MAX_LINES - 1).join(" ")];
+	return packed.length <= MAX_LINES ? packed : [...packed.slice(0, MAX_LINES - 1), packed.slice(MAX_LINES - 1).join(" ")];
 };
 
 /** Checks a request that came over IPC: strings only, long texts are cut */

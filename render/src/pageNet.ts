@@ -67,7 +67,7 @@ export const settingsFor = async (plugin: LunaPlugin): Promise<Record<string, un
 installPageNet(window as unknown as Parameters<typeof installPageNet>[0], {
 	pageConnect: () => __LunaCore.pageConnect(),
 	lunaFetch: (pluginUrl, request, settings) => __LunaCore.fetch(pluginUrl, request, settings),
-	askHost: (pluginUrl, target) => __LunaCore.askHost(pluginUrl, target),
+	askHost: (pluginUrl, target, settings) => __LunaCore.askHost(pluginUrl, target, settings),
 	callingPlugin,
 	settingsFor: (plugin) => settingsFor(plugin as LunaPlugin),
 	blocked: toastBlocked,

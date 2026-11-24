@@ -173,7 +173,8 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		// Strict network: page code reaches only TIDAL, Luna and the plugins' accepted hosts (cspReportOnly.ts enforcedPolicy).
 		// A host allowed later reaches the page from its next load; until then render/src/pageNet.ts sends page plugins'
 		// fetches to it through luna.fetch
-		headers.set("Content-Security-Policy", enforcedPolicy(pluginSources));
+		// Appended: a policy TIDAL's shell may send stays enforced next to Luna's (each one applies)
+		headers.append("Content-Security-Policy", enforcedPolicy(pluginSources));
 		setPageConnect([...baselineEntries, ...pluginHosts]);
 		setPageStores(storeOrigins);
 		body = body.replace(

@@ -1,6 +1,6 @@
 // The page's network hooks (pageNet.ts), with the page's globals and Luna core passed in so node:test can drive them
 import { toNetRequest, toResponse } from "./netMessages";
-import { pageAllowsUrl } from "./pageNetRules";
+import { isLoopback, pageAllowsUrl } from "./pageNetRules";
 
 type Plugin = { url: string; name: string };
 type AskResult = { allowed: boolean; reason?: string; answer?: string; notKept?: true };
@@ -20,7 +20,7 @@ export type PageNetDeps = {
 	/** luna.fetch for the plugin (__LunaCore.fetch) */
 	lunaFetch(pluginUrl: string, request: Awaited<ReturnType<typeof toNetRequest>>, settings?: Record<string, unknown>): Promise<any>;
 	/** Whether the plugin may reach a host with the page's own network, asking the user (__LunaCore.askHost) */
-	askHost(pluginUrl: string, target: string): Promise<AskResult>;
+	askHost(pluginUrl: string, target: string, settings?: unknown): Promise<AskResult>;
 	/** The plugin whose code is calling (from the stack) */
 	callingPlugin(): Plugin | undefined;
 	settingsFor(plugin: Plugin): Promise<Record<string, unknown> | undefined>;
@@ -31,6 +31,9 @@ export type PageNetDeps = {
 	warn(message: string): void;
 	error(message: string, err: unknown): void;
 };
+
+/** How long a plugin's request askLater toasted about keeps the CSP's report of it from a toast of its own */
+const TOASTED_MS = 30_000;
 
 export const installPageNet = (page: PageNetTarget, deps: PageNetDeps) => {
 	let connect: string[] | undefined;
@@ -80,10 +83,15 @@ export const installPageNet = (page: PageNetTarget, deps: PageNetDeps) => {
 		if (!mayBlock(url)) return;
 		const plugin = deps.callingPlugin();
 		if (plugin === undefined) return;
+		// The CSP violation of this request is this toast's (one toast for it, named after the plugin)
+		toasted.set(url.host, Date.now());
 		return connectReady.then(async () => {
 			if (pageAllows(url)) return;
+			// Mixed content: TIDAL's https page can't reach plain http/ws but on loopback, whatever the user answers
+			if ((url.protocol === "http:" || url.protocol === "ws:") && !isLoopback(url.hostname))
+				return deps.blocked(plugin.name, url.host, `the page can't reach plain ${url.protocol.slice(0, -1)} hosts: its ${kind} needs luna.fetch`);
 			const { allowed, reason, answer, notKept } = await deps
-				.askHost(plugin.url, url.href)
+				.askHost(plugin.url, url.href, await deps.settingsFor(plugin))
 				.catch((err): AskResult => ({ allowed: false, reason: String(err?.message ?? err) }));
 			// This attempt was blocked by the page's CSP either way; an "always" answer, or a host accepted after the page
 			// loaded (no answer: a plugin enabled or updated since), is in it from the next load
@@ -94,6 +102,8 @@ export const installPageNet = (page: PageNetTarget, deps: PageNetDeps) => {
 			else deps.blocked(plugin.name, url.host, `its ${kind} needs "Always allow": the page's policy is built when it loads`);
 		});
 	};
+	/** Hosts askLater toasts about: when, so the CSP's report of the same request isn't a second toast */
+	const toasted = new Map<string, number>();
 	/** The last ask's promise, for tests */
 	let asked: Promise<void> | undefined;
 	const hook = (rawUrl: string | URL, kind: string) => void (asked = askLater(rawUrl, kind) ?? asked);
@@ -130,6 +140,8 @@ export const installPageNet = (page: PageNetTarget, deps: PageNetDeps) => {
 		try {
 			host = new URL(event.blockedURI).host;
 		} catch {}
+		const at = toasted.get(host);
+		if (at !== undefined && Date.now() - at < TOASTED_MS) return;
 		deps.blocked(event.effectiveDirective, host);
 	});
 

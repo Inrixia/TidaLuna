@@ -10,6 +10,7 @@ import {
 	fitLines,
 	focusedWithin,
 	isHostAnswer,
+	oneAtATime,
 	type FocusTarget,
 	COOL_DOWN_MS,
 	MAX_CANCELS,
@@ -48,6 +49,27 @@ describe("host questions", () => {
 		};
 		return win;
 	};
+
+	it("that waited for TIDAL ask one at a time once it's back, past one that failed", async () => {
+		const queue = oneAtATime();
+		const order: string[] = [];
+		let open = 0;
+		const ask = (name: string, fail = false) =>
+			queue(async () => {
+				assert.equal(open++, 0);
+				order.push(name);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				open--;
+				if (fail) throw new Error(name);
+				return name;
+			});
+		const all = await Promise.allSettled([ask("a"), ask("b", true), ask("c")]);
+		assert.deepEqual(order, ["a", "b", "c"]);
+		assert.deepEqual(
+			all.map((r) => r.status),
+			["fulfilled", "rejected", "fulfilled"],
+		);
+	});
 
 	it("wait for TIDAL's focus: at once, on focus, or not after a close or the time", async () => {
 		assert.equal(await focusedWithin(fakeWindow(true), 10), true);

@@ -253,6 +253,8 @@ export const createNet = (deps: NetDeps) => {
 				if (isLocalHost(url.hostname)) return undefined;
 			}
 		}
+		// A legacy plugin's own local entries (its legacy list's, as in the page's CSP) reach their local addresses
+		if (plugin.mode === "legacy" && !page && localEntryAllows(plugin.hosts ?? [], url)) return undefined;
 		if (isLocalHost(url.hostname)) return local;
 		if (deps.resolve !== undefined && !isIpLiteral(url.hostname)) {
 			// A name that doesn't resolve now is refused: the fetch resolves it again and could get a local answer
@@ -474,6 +476,8 @@ export const createNet = (deps: NetDeps) => {
 			pluginUrl: unknown,
 			target: unknown,
 			ask?: AskHost,
+			/** As for fetch: the plugin's settings its `{setting:<key>}` entries name */
+			settings?: unknown,
 		): Promise<{ allowed: boolean; reason?: string; answer?: HostAnswer; notKept?: true }> => {
 			const plugin = typeof pluginUrl === "string" ? deps.hostsOf(pluginUrl) : undefined;
 			let url: URL;
@@ -495,7 +499,15 @@ export const createNet = (deps: NetDeps) => {
 			const reason =
 				plugin === undefined
 					? `${entry.plugin} is not an enabled plugin`
-					: await refusal(pluginUrl as string, plugin, url, ask, undefined, (answer) => (entry.asked = answer), { page: true });
+					: await refusal(
+							pluginUrl as string,
+							plugin,
+							url,
+							ask,
+							settings as Record<string, unknown> | undefined,
+							(answer) => (entry.asked = answer),
+							{ page: true },
+						);
 			entry.allowed = reason === undefined;
 			if (reason !== undefined) entry.error = reason;
 			record(entry, plugin !== undefined);

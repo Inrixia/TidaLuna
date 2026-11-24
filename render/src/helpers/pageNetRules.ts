@@ -2,7 +2,7 @@
 import { hostAllowed } from "../../../native/core/hosts";
 
 /** Loopback: the only plain http/ws a https page may reach (Chromium's mixed content rule, "potentially trustworthy") */
-const isLoopback = (hostname: string) =>
+export const isLoopback = (hostname: string) =>
 	hostname === "localhost" || hostname.endsWith(".localhost") || /^127\.\d+\.\d+\.\d+$/.test(hostname) || hostname === "[::1]";
 
 /**

@@ -629,6 +629,22 @@ describe("luna.fetch prompts", () => {
 		assert.equal((await net.fetch("https://store/c", "page", { url: "https://api.new.example/x" }, ask)).status, 200);
 		await assert.rejects(net.fetch("https://store/c", "page", { url: "http://127.0.0.1/" }, ask), /local address/);
 		assert.equal(questions.length, 0);
+		// A local entry of its own legacy list (in the page's CSP too) is reached
+		const listed = fakeNet(
+			{ "https://store/c": { ...compat, hosts: ["http://192.168.1.10:8080"] } },
+			{ "http://192.168.1.10:8080/x": () => new Response("x") },
+		);
+		assert.equal((await listed.net.fetch("https://store/c", "page", { url: "http://192.168.1.10:8080/x" }, ask)).status, 200);
+		await assert.rejects(listed.net.fetch("https://store/c", "page", { url: "http://192.168.1.11:8080/x" }, ask), /local address/);
+	});
+
+	it("takes the page's settings for a plugin's {setting:} server on page requests, as luna.fetch does", async () => {
+		const server = { name: "S", mode: "declared", hosts: ["{setting:server}"], allow: [], deny: [] } satisfies PluginHosts;
+		const { net } = fakeNet({ "https://store/s": server }, {});
+		const never: AskHost = async () => assert.fail("not asked");
+		assert.deepEqual(await net.ask("https://store/s", "https://jf.example.com/Sessions", never, { server: "https://jf.example.com" }), {
+			allowed: true,
+		});
 	});
 
 	it("asks for a legacy plugin's page requests: an always answer is its only way into the page's CSP", async () => {

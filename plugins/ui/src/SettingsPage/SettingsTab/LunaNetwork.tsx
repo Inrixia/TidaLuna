@@ -52,8 +52,11 @@ export const LunaNetwork = React.memo(() => {
 	}, []);
 	React.useEffect(() => void refresh(), [refresh]);
 	const names = new Map(plugins.map((plugin) => [plugin.url, plugin.name]));
+	const [forgetError, setForgetError] = React.useState<string | undefined>(undefined);
 	const forget = async (url: string, entry: string) => {
-		await __LunaCore.forgetGrant(url, entry);
+		setForgetError(undefined);
+		// Refused unasked (TIDAL's confirmations are cooling down, or others are waiting): said here, not lost
+		await __LunaCore.forgetGrant(url, entry).catch((err) => setForgetError(String(err?.message ?? err)));
 		await refresh();
 	};
 	return (

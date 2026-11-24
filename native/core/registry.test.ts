@@ -1188,7 +1188,13 @@ describe("core registry network modes", () => {
 				id === pluginIdOf(URL) && sha === servedSha("v1") ? ["api.old.example", "{setting:server}"] : undefined,
 		});
 		await installLegacy(registry, deps, URL, "v1");
-		assert.deepStrictEqual(registry.hostsOf(URL), { name: "legacy", mode: "legacy", hosts: undefined, allow: [], deny: [] });
+		assert.deepStrictEqual(registry.hostsOf(URL), {
+			name: "legacy",
+			mode: "legacy",
+			hosts: ["api.old.example", "{setting:server}"],
+			allow: [],
+			deny: [],
+		});
 		// Setting entries never reach the page's CSP
 		assert.deepStrictEqual(registry.pageHosts(), ["api.old.example"]);
 

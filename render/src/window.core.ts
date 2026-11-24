@@ -80,6 +80,8 @@ declare global {
 		askHost(
 			pluginUrl: string,
 			target: string,
+			/** The plugin's settings its `{setting:<key>}` entries name, as for fetch */
+			settings?: unknown,
 		): Promise<{
 			allowed: boolean;
 			reason?: string;

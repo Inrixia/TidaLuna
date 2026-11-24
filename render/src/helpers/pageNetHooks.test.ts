@@ -92,10 +92,19 @@ describe("pageNetHooks", () => {
 
 		const notKept = setup({ askHost: async () => ({ allowed: true, answer: "always", notKept: true }) });
 		await notKept.net.ready;
-		new notKept.page.EventSource("http://nas:8096/events");
+		new notKept.page.EventSource("https://nas:8096/events");
 		await notKept.net.lastAsk();
 		assert.match(notKept.calls.blocked[0], /can't keep an answer/);
 		assert.deepEqual(notKept.calls.warned, []);
+
+		// Plain http/ws but to loopback: mixed content, not asked whatever the answer would be
+		let asked = 0;
+		const plain = setup({ askHost: async () => (asked++, { allowed: true, answer: "always" }) });
+		await plain.net.ready;
+		new plain.page.WebSocket("ws://nas.lan:8096/socket");
+		await plain.net.lastAsk();
+		assert.equal(asked, 0);
+		assert.match(plain.calls.blocked[0], /can't reach plain ws hosts/);
 
 		const denied = setup({ askHost: async () => ({ allowed: false, reason: "you denied x.example" }) });
 		await denied.net.ready;
@@ -114,5 +123,26 @@ describe("pageNetHooks", () => {
 		violation({ disposition: "report", blockedURI: "https://r.example/x", effectiveDirective: "connect-src" });
 		violation({ disposition: "enforce", blockedURI: "https://e.example/x", effectiveDirective: "connect-src" });
 		assert.deepEqual(calls.blocked, ["connect-src e.example"]);
+	});
+
+	it("one toast for a plugin's blocked request: its own, not the CSP report's too", async () => {
+		const { page, net, calls, violation } = setup({ askHost: async () => ({ allowed: false, reason: "you denied x.example" }) });
+		await net.ready;
+		new page.WebSocket("wss://x.example/s");
+		violation({ disposition: "enforce", blockedURI: "wss://x.example/s", effectiveDirective: "connect-src" });
+		await net.lastAsk();
+		assert.deepEqual(calls.blocked, ["P x.example you denied x.example"]);
+	});
+
+	it("hands askHost the plugin's settings", async () => {
+		const seen: unknown[] = [];
+		const { page, net } = setup({
+			settingsFor: async () => ({ server: "https://jf.example.com" }),
+			askHost: async (_u, _t, settings) => (seen.push(settings), { allowed: true }),
+		});
+		await net.ready;
+		new page.WebSocket("wss://jf.example.com/s");
+		await net.lastAsk();
+		assert.deepEqual(seen, [{ server: "https://jf.example.com" }]);
 	});
 });

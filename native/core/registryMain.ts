@@ -191,7 +191,9 @@ ipcHandle("__LunaCore.fetch", (event, pluginUrl: unknown, request: unknown, sett
  * A request page code makes with the page's own network (render/src/pageNet.ts) to a host the page's CSP doesn't allow:
  * asks the user about it for the calling plugin, like luna.fetch. "always" takes effect in the page from its next load
  */
-ipcHandle("__LunaCore.askHost", (event, pluginUrl: unknown, target: unknown) => lunaNet.ask(pluginUrl, target, hostAskerFor(event.sender)));
+ipcHandle("__LunaCore.askHost", (event, pluginUrl: unknown, target: unknown, settings: unknown) =>
+	lunaNet.ask(pluginUrl, target, hostAskerFor(event.sender), settings),
+);
 ipcHandle("__LunaCore.networkLog", () => lunaNet.log());
 ipcHandle("__LunaCore.forgetGrant", (event, url: unknown, entry: unknown) => registry().forgetGrant(url, entry, askerFor(event.sender)));
 

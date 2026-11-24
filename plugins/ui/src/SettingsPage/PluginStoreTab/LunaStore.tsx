@@ -62,7 +62,8 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	}, [fetchPackage]); // Depend on the memoized fetch function
 
 	const allow = React.useCallback(async () => {
-		const access = await allowSource(`${url}/store.json`);
+		// Refused unasked (confirmations cooling down, others waiting): shown like a load error
+		const access = await allowSource(`${url}/store.json`).catch((err) => (setLoadError(String(err?.message ?? err)), "denied" as const));
 		if (access === "denied") return;
 		setBlocked(false);
 		// "ready": the page can read it now (GitHub, or allowed earlier), so read it

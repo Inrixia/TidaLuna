@@ -62,7 +62,7 @@ export type NetMode = "declared" | "derived" | "legacy" | "unlisted";
 export type PluginNet = {
 	name: string;
 	mode: NetMode;
-	/** Declared or derived hosts the user accepted ("declared"/"derived" only), `{setting:}` entries unresolved */
+	/** Declared or derived hosts the user accepted, `{setting:}` entries unresolved; for "legacy", its legacy list's hosts */
 	hosts?: string[];
 	/** Host entries the user answered "always" / "deny" for */
 	allow: string[];
@@ -803,7 +803,12 @@ export const createRegistry = (deps: RegistryDeps) => {
 			return {
 				name: record.name,
 				mode,
-				hosts: mode === "declared" || mode === "derived" ? hostsOfVersion(record.accepted) : undefined,
+				hosts:
+					mode === "declared" || mode === "derived"
+						? hostsOfVersion(record.accepted)
+						: mode === "legacy"
+							? deps.legacyHosts?.(pluginIdOf(url), servedOf(record.accepted))
+							: undefined,
 				allow: grants.filter(([, grant]) => grant === "always").map(([entry]) => entry),
 				deny: grants.filter(([, grant]) => grant === "deny").map(([entry]) => entry),
 				...(record.accepted.hostsUnconfirmed ? { unconfirmed: true as const } : {}),

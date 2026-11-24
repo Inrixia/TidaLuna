@@ -550,12 +550,15 @@ describe("old native format list", () => {
 
 	it("a cache expired at start: later checks don't make the first wait longer", async () => {
 		const time = { now: at("2026-12-10T00:00:00.000Z") };
-		const { store } = storeAt(time, doc(5, [A], { validUntil: "2026-12-01T00:00:00.000Z" }), () => new Promise<object>(() => {}));
+		const { store } = storeAt(time, doc(5, [A], { validUntil: "2026-12-01T00:00:00.000Z" }), () => new Promise<object>(() => {}), {
+			firstWaitMs: 2000,
+		});
 		const first = store.ready();
-		time.now += 40;
+		time.now += 1900;
 		const t0 = Date.now();
 		await store.ready();
-		assert.ok(Date.now() - t0 < 35, `waited ${Date.now() - t0} ms`);
+		// 100 ms left of the first wait, not a new 2000 (the room is for a loaded machine)
+		assert.ok(Date.now() - t0 < 1000, `waited ${Date.now() - t0} ms`);
 		await first;
 	});
 
