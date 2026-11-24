@@ -452,4 +452,27 @@ describe("fromId", () => {
 		expect((dispatch.mock.calls[0][0] as DispatchedAction).payload).toEqual({ id, itemType: "track" });
 		expect(mediaItem?.tidalItem.title).toBe("Loaded");
 	});
+
+	test("resolves undefined when TIDAL answers the load with a failure", async () => {
+		const id = nextId();
+		const storeDispatch = reduxStore.dispatch.bind(reduxStore);
+		type DispatchedAction = { type?: string; payload?: unknown };
+		const tidalAction = (type: string) => {
+			const actionCreators = { _: (actionType: string) => (payload?: unknown) => ({ type: actionType, payload }) };
+			window.patchAction(actionCreators);
+			return actionCreators._(type);
+		};
+		vi.spyOn(reduxStore, "dispatch").mockImplementation((action: DispatchedAction) => {
+			const result = storeDispatch(action as never);
+			if (action.type === "content/LOAD_SINGLE_MEDIA_ITEM") {
+				void Promise.resolve().then(() => {
+					const failed = tidalAction("content/LOAD_SINGLE_MEDIA_ITEM_FAIL");
+					reduxStore.dispatch(failed({ error: { message: "gone" } }) as never);
+				});
+			}
+			return result;
+		});
+
+		await expect(MediaItem.fromId(id)).resolves.toBeUndefined();
+	});
 });

@@ -5,7 +5,7 @@ import { interceptors, unloadSet, type LunaUnload } from "@luna/core";
 // TIDAL's action creators are hooked by exposeTidalInternals.patchAction, so the builder it hands back runs the
 // interceptors. Imported for that side effect, the calls below are the ones TIDAL makes.
 import "../../../../render/src/exposeTidalInternals.patchAction";
-import { interceptActionResp } from "./interceptActionResp";
+import { interceptActionResp, InterceptActionRespFail } from "./interceptActionResp";
 
 const unloads = new Set<LunaUnload>();
 
@@ -41,17 +41,58 @@ describe("interceptActionResp", () => {
 		expect(interceptors["playbackControls/SEEK"]).toBeUndefined();
 	});
 
-	// rejActionTypes are waited on with interceptPromise too, which only resolves, so a rejection action settles the
-	// race with its payload instead of rejecting. Only the timeout rejects. See notes in the task report.
-	test("a rejection action ends the wait with its payload, not a rejection", async () => {
+	test("a rejection action rejects, with its type and payload reachable on the error", async () => {
 		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/PLAY"], ["playbackControls/SEEK"]);
+		const settled = response.then(
+			(value) => ({ value }),
+			(error) => ({ error }),
+		);
 
 		await flush();
 		tidalAction("playbackControls/SEEK")(999);
 
-		await expect(response).resolves.toBe(999);
+		const result = await settled;
+		expect(result).not.toHaveProperty("value");
+		const error = (result as { error: unknown }).error;
+		expect(error).toBeInstanceOf(InterceptActionRespFail);
+		expect(error).toMatchObject({
+			actionType: "playbackControls/SEEK",
+			payload: 999,
+			message: "[interceptActionResp.FAIL] playbackControls/SEEK",
+		});
 		expect(interceptors["playbackControls/PLAY"]).toBeUndefined();
 		expect(interceptors["playbackControls/SEEK"]).toBeUndefined();
+	});
+
+	test("a response action still resolves when rejection actions are given", async () => {
+		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/PLAY"], ["playbackControls/SEEK"]);
+
+		await flush();
+		tidalAction("playbackControls/PLAY")(7);
+
+		await expect(response).resolves.toBe(7);
+		expect(Object.keys(interceptors)).toEqual([]);
+	});
+
+	test("unloading the caller's unloads removes the interceptors and leaves the call pending", async () => {
+		vi.useFakeTimers();
+		const callerUnloads = new Set<LunaUnload>();
+		const response = interceptActionResp(vi.fn(), callerUnloads, ["playbackControls/PLAY"], ["playbackControls/SEEK"]);
+		let settled = false;
+		response.then(
+			() => (settled = true),
+			() => (settled = true),
+		);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(interceptors["playbackControls/PLAY"]?.size).toBe(1);
+		expect(interceptors["playbackControls/SEEK"]?.size).toBe(1);
+
+		await unloadSet(callerUnloads);
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(interceptors["playbackControls/PLAY"]).toBeUndefined();
+		expect(interceptors["playbackControls/SEEK"]).toBeUndefined();
+		expect(settled).toBe(false);
 	});
 
 	test("rejects after the 5s timeout when no action arrives", async () => {

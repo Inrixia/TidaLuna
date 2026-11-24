@@ -6,6 +6,17 @@ import { safeTimeout } from "../helpers";
 import { interceptPromise, type InterceptPayload } from "./intercept";
 import type { ActionType } from "./types";
 
+/** Rejection of interceptActionResp when one of the rejActionTypes arrives. The action's payload is on `payload`. */
+export class InterceptActionRespFail<P = unknown> extends Error {
+	constructor(
+		public readonly actionType: ActionType,
+		public readonly payload: P,
+	) {
+		super(`[interceptActionResp.FAIL] ${actionType}`);
+		this.name = "InterceptActionRespFail";
+	}
+}
+
 const intercepts: Record<ActionType, Semaphore> = {} as Record<ActionType, Semaphore>;
 /**
  * @param trigger Function called after intercepters setup.
@@ -13,7 +24,7 @@ const intercepts: Record<ActionType, Semaphore> = {} as Record<ActionType, Semap
  * @param rejActionTypes Array of action types to reject on
  * @param unloads Set of unload functions to add this to, can be null but only pass if you know
  * @param options Options allowing configuring timeoutMs (default 5s) and if the actions intercepted should be cancelled.
- * @returns A promise that resolves on resActionTypes or rejects on rejActionTypes
+ * @returns A promise that resolves on resActionTypes or rejects on rejActionTypes (with an {@link InterceptActionRespFail} carrying the payload)
  */
 export const interceptActionResp = async <RESAT extends ActionType, REJAT extends ActionType, RES extends InterceptPayload<RESAT>>(
 	trigger: Function,
@@ -30,7 +41,12 @@ export const interceptActionResp = async <RESAT extends ActionType, REJAT extend
 	timeoutMs ??= 5000;
 
 	const resPromises = resActionTypes.map((type) => interceptPromise(type, _unloads, cancel));
-	const rejPromises = rejActionTypes?.map((type) => interceptPromise(type, _unloads, cancel)) ?? [];
+	const rejPromises =
+		rejActionTypes?.map((type) =>
+			interceptPromise(type, _unloads, cancel).then((payload) => {
+				throw new InterceptActionRespFail(type, payload);
+			}),
+		) ?? [];
 	const rejTimeout = new Promise<never>((_, rej) =>
 		safeTimeout(_unloads, () => rej(`[interceptActionResp.TIMEOUT] ${JSON.stringify([resActionTypes, rejActionTypes])}`), timeoutMs),
 	);

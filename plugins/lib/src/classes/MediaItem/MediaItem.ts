@@ -54,6 +54,10 @@ export class MediaItem extends ContentBase {
 				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
 			);
 			return mediaItem;
+		} catch (err) {
+			// TIDAL answered with a failed load (e.g. the content is no longer available): there is no item, as before
+			if (err instanceof redux.InterceptActionRespFail) return undefined;
+			throw err;
 		} finally {
 			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
 			clearWarnCatch();
