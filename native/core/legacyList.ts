@@ -5,7 +5,14 @@
 // if its exact code is listed: every plugin every known store served at the cut-off. The list only ever shrinks: a new
 // signed list is accepted only if its entries are a subset of the one accepted before, so an update, a new plugin or a
 // replayed older list never gets on it.
+//
+// Against a replayed older list where nothing was accepted before (a first start, a removed cache): a list grants
+// nothing below this build's minimum serial (legacyMinSerial.ts, the list signed when it was built), nor past its
+// `validUntil` (the registry signs it again each week for 30 days; LEGACY_CLOCK_SKEW_MS for a wrong clock). An expired
+// list stays the base a new one must be a subset of, until a fresh one comes.
 import { createHash, createPublicKey, verify } from "crypto";
+
+import { legacyMinSerial } from "./legacyMinSerial";
 
 /**
  * TEST KEY: the public half of a key made only to test this client (the same one as the registry client's). It is NOT
@@ -18,7 +25,21 @@ export const legacyPublicKey = "mTYTC1NX88yDPzAuKmJoFXjM5cdJaCnsb5NXU8yAYRY=";
 export const legacyListUrl = "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/legacy.json";
 
 export type LegacyListEntry = { store: string; id: string; sha256: string; natives: Record<string, string> };
-export type LegacyList = { serial: number; cutoff: string; entries: LegacyListEntry[] };
+/** `validUntil`: ms since the epoch, from the list's ISO date */
+export type LegacyList = { serial: number; cutoff: string; validUntil: number; entries: LegacyListEntry[] };
+
+/** How far past `validUntil` a list still grants: a clock a little ahead doesn't stop old-format natives */
+export const LEGACY_CLOCK_SKEW_MS = 2 * 24 * 60 * 60 * 1000;
+/** Whether the list still grants at `now`: not past `validUntil` (plus the clock skew) and not older than this build */
+export const listFresh = (list: LegacyList, now: number, minSerial: number = legacyMinSerial): boolean =>
+	list.serial >= minSerial && now < list.validUntil + LEGACY_CLOCK_SKEW_MS;
+/** Why the list grants nothing at `now`, or undefined if it does */
+const staleReason = (list: LegacyList, now: number, minSerial: number) =>
+	list.serial < minSerial
+		? `serial ${list.serial} is older than this build (${minSerial})`
+		: now >= list.validUntil + LEGACY_CLOCK_SKEW_MS
+			? `expired ${new Date(list.validUntil).toISOString()}`
+			: undefined;
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
@@ -49,6 +70,8 @@ export const parseLegacyList = (bytes: Buffer, sig: string, publicKey: string = 
 	if (doc.schema !== 1) throw new Error("legacy.json: unknown schema");
 	if (!Number.isSafeInteger(doc.serial) || doc.serial < 1) throw new Error("legacy.json: no valid serial");
 	if (typeof doc.cutoff !== "string") throw new Error("legacy.json: no cutoff");
+	const validUntil = typeof doc.validUntil === "string" ? Date.parse(doc.validUntil) : NaN;
+	if (!Number.isFinite(validUntil)) throw new Error("legacy.json: no valid validUntil");
 	if (!Array.isArray(doc.entries)) throw new Error("legacy.json: no entries");
 	const entries: LegacyListEntry[] = doc.entries.map((e: any, i: number) => {
 		if (typeof e?.store !== "string" || typeof e.id !== "string" || typeof e.sha256 !== "string" || !HEX64.test(e.sha256))
@@ -61,17 +84,19 @@ export const parseLegacyList = (bytes: Buffer, sig: string, publicKey: string = 
 			natives: Object.fromEntries(Object.entries(natives).filter(([, h]) => typeof h === "string")),
 		};
 	});
-	return { serial: doc.serial, cutoff: doc.cutoff, entries };
+	return { serial: doc.serial, cutoff: doc.cutoff, validUntil, entries };
 };
 
 /**
  * Whether `next` may replace `current` (undefined: none accepted yet). Only a subset of the same cut-off with a serial
- * not lower: a list that grew, changed an entry or is older is refused.
+ * and a validUntil not lower: a list that grew, changed an entry or is older is refused.
  */
 export const replacesList = (current: LegacyList | undefined, next: LegacyList): { ok: true } | { ok: false; reason: string } => {
 	if (current === undefined) return { ok: true };
 	if (next.serial < current.serial)
 		return { ok: false, reason: `serial ${next.serial} is lower than ${current.serial}, already accepted (rollback)` };
+	if (next.validUntil < current.validUntil)
+		return { ok: false, reason: `valid until ${new Date(next.validUntil).toISOString()}, before the accepted one (rollback)` };
 	if (next.cutoff !== current.cutoff) return { ok: false, reason: `another cut-off: ${current.cutoff} -> ${next.cutoff}` };
 	const before = new Map(current.entries.map((e) => [entryKey(e), e]));
 	for (const e of next.entries) {
@@ -112,6 +137,8 @@ export type LegacyStoreDeps = {
 	/** Waits before fetching again while no list was ever accepted (the last one repeats) */
 	retryMs?: number[];
 	now?(): number;
+	/** The lowest serial that grants (legacyMinSerial by default) */
+	minSerial?: number;
 };
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
@@ -122,7 +149,19 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * mid-write can't leave a copy that fails its check (and with it the "only shrinks" rule).
  */
 export const createLegacyStore = (deps: LegacyStoreDeps) => {
+	const now = deps.now ?? Date.now;
+	const minSerial = deps.minSerial ?? legacyMinSerial;
 	let current: { list: LegacyList; bytes: Buffer; sig: string } | undefined;
+	/** Whether the current list grants: loaded, not older than this build, not expired */
+	const usable = () => current !== undefined && listFresh(current.list, now(), minSerial);
+	/** The last "grants nothing" logged, so it is logged once per reason */
+	let staleLogged: string | undefined;
+	const logStale = () => {
+		const reason = current === undefined ? undefined : staleReason(current.list, now(), minSerial);
+		if (reason !== undefined && reason !== staleLogged)
+			deps.log?.(`[Luna.core] The old native format list grants nothing until a fresh one is fetched: ${reason}`);
+		staleLogged = reason;
+	};
 	/** `${id}\n${sha256}` of the current list */
 	let allowed = new Set<string>();
 	const use = (list: LegacyList, bytes: Buffer, sig: string) => {
@@ -158,6 +197,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes, String(cached?.sig));
 			cachedBytes = bytes;
 			cache = "ok";
+			logStale();
 		} catch (err) {
 			cache = "broken";
 			deps.log?.(
@@ -166,7 +206,6 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		}
 	};
 
-	const now = deps.now ?? Date.now;
 	const retryMs = deps.retryMs ?? [30000, 120000, 600000];
 	/** When to write the current list to the cache again, while the cache holds an older one */
 	let writeAt = 0;
@@ -194,11 +233,15 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		const next = parseLegacyList(bytes, sig, deps.publicKey);
 		const replaces = replacesList(current?.list, next);
 		if (!replaces.ok) throw new Error(`refused: ${replaces.reason}`);
+		// Signed, but granting nothing: not taken (tried again soon), the accepted list stays the base
+		const stale = staleReason(next, now(), minSerial);
+		if (stale !== undefined) throw new Error(`refused: ${stale}`);
 		// A removal under the same serial is still a removal: only the same bytes change nothing
 		if (current !== undefined && current.bytes.equals(bytes) && cachedBytes?.equals(bytes)) return;
 		// Used at once, even if it can't be cached: a smaller list must apply now. Writing it is tried again shortly (on a
 		// check) and on each refresh until the cache holds it
 		if (current === undefined || !current.bytes.equals(bytes)) use(next, bytes, sig);
+		staleLogged = undefined;
 		writeCurrent();
 		deps.log?.(`[Luna.core] Old native format list: serial ${next.serial}, ${next.entries.length} plugins`);
 	};
@@ -237,17 +280,21 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 			loadCache();
 			void start();
 			if (now() >= writeAt) writeCurrent();
+			if (!usable()) {
+				logStale();
+				return false;
+			}
 			return allowed.has(`${id}\n${servedSha256}`);
 		},
 		/**
-		 * Before a check: with no list yet, waits for the cache to be readable and for the first fetch, at most
-		 * firstWaitMs after the first call of this start
+		 * Before a check: with no list that grants yet (none, or one expired or older than this build), waits for the cache
+		 * to be readable and for a fetch, at most firstWaitMs after the first call of this start
 		 */
 		ready: async (): Promise<void> => {
 			waitUntil ??= now() + (deps.firstWaitMs ?? 10000);
 			for (;;) {
 				loadCache();
-				if (current !== undefined || cache === "broken") return;
+				if (usable() || cache === "broken") return;
 				const left = waitUntil - now();
 				if (left <= 0) return;
 				const started = start();
@@ -261,5 +308,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 			}
 		},
 		current: () => current?.list,
+		/** Whether the current list grants (see listFresh) */
+		usable,
 	};
 };

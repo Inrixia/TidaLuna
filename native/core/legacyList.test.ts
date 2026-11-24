@@ -17,6 +17,7 @@ const doc = (serial: number, entries: ReturnType<typeof entry>[], extra: object 
 	schema: 1,
 	serial,
 	cutoff: "2026-11-23T00:00:00.000Z",
+	validUntil: "2099-01-01T00:00:00.000Z",
 	entries,
 	...extra,
 });
@@ -362,6 +363,105 @@ describe("old native format list", () => {
 		}
 		assert.strictEqual(logs.length, 1);
 		assert.match(logs[0], /can't be read now: EACCES/);
+	});
+
+	it("needs a validUntil, and refuses a list valid for less long than the accepted one", () => {
+		assert.throws(() => parse(doc(1, [A], { validUntil: undefined })), /validUntil/);
+		assert.throws(() => parse(doc(1, [A], { validUntil: "soon" })), /validUntil/);
+		assert.throws(() => parse(doc(1, [A], { validUntil: 4102444800000 })), /validUntil/);
+		const later = parse(doc(2, [A, B], { validUntil: "2099-02-01T00:00:00.000Z" }));
+		assert.deepStrictEqual(replacesList(base, later), { ok: true });
+		assert.match((replacesList(later, parse(doc(2, [A, B]))) as { reason: string }).reason, /before the accepted one/);
+		assert.match((replacesList(later, parse(doc(3, [A]))) as { reason: string }).reason, /before the accepted one/);
+	});
+
+	const DAY = 24 * 60 * 60 * 1000;
+	const at = (iso: string) => Date.parse(iso);
+	/** A store over `cached` (a signed doc or none) fetching `fetched()`, at the time `time.now` */
+	const storeAt = (time: { now: number }, cached: object | undefined, fetched: () => object, extra: object = {}) => {
+		let cache: string | undefined;
+		if (cached !== undefined) {
+			const { bytes, sig } = signed(cached);
+			cache = JSON.stringify({ list: bytes.toString("base64"), sig });
+		}
+		const logs: string[] = [];
+		const store = createLegacyStore({
+			readCache: () => cache,
+			writeCache: (text) => void (cache = text),
+			fetchList: async () => signed(fetched()),
+			publicKey: pub,
+			firstWaitMs: 50,
+			retryMs: [0],
+			now: () => time.now,
+			log: (message) => void logs.push(message),
+			...extra,
+		});
+		return { store, logs };
+	};
+
+	it("an expired list grants nothing until a fresh one comes, with two days for a clock that is ahead", async () => {
+		const until = "2026-12-01T00:00:00.000Z";
+		const time = { now: at(until) - DAY };
+		let served: object = doc(5, [A, B], { validUntil: until });
+		const { store, logs } = storeAt(time, doc(5, [A, B], { validUntil: until }), () => served);
+		await store.ready();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		// Past validUntil, within the skew: still grants
+		time.now = at(until) + 2 * DAY - 1;
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		time.now = at(until) + 2 * DAY;
+		assert.strictEqual(store.usable(), false);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		assert.ok(logs.some((line) => /grants nothing until a fresh one is fetched: expired 2026-12-01/.test(line)));
+		// The registry still serves the expired one: refused, nothing granted
+		await assert.rejects(store.refresh(), /refused: expired/);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		// A fresh one, signed again (a subset): grants again
+		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
+		await store.refresh();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+	});
+
+	it("an expired cache stays the base: a fresh list must still be a subset of it", async () => {
+		const time = { now: at("2027-01-10T00:00:00.000Z") };
+		const C = entry("c.mjs", "code c");
+		const { store } = storeAt(time, doc(5, [A], { validUntil: "2027-01-01T00:00:00.000Z" }), () =>
+			doc(7, [A, C], { validUntil: "2027-02-01T00:00:00.000Z" }),
+		);
+		await store.ready();
+		assert.strictEqual(store.usable(), false);
+		await assert.rejects(store.refresh(), /adds c\.mjs/);
+		assert.strictEqual(store.allows("c.mjs", C.sha256), false);
+	});
+
+	it("waits on a start with an expired cache for a fresh list, like with none", async () => {
+		const time = { now: at("2027-01-10T00:00:00.000Z") };
+		const { store } = storeAt(time, doc(5, [A], { validUntil: "2027-01-01T00:00:00.000Z" }), () =>
+			doc(6, [A], { validUntil: "2027-02-01T00:00:00.000Z" }),
+		);
+		await store.ready();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(store.current()?.serial, 6);
+	});
+
+	it("takes no list older than this build, fetched on a first start or cached", async () => {
+		const time = { now: at("2026-12-01T00:00:00.000Z") };
+		// Nothing cached, an older signed list replayed: refused
+		const first = storeAt(time, undefined, () => doc(3, [A, B]), { minSerial: 4 });
+		await first.store.ready();
+		assert.strictEqual(first.store.allows("a.mjs", A.sha256), false);
+		assert.strictEqual(first.store.current(), undefined);
+		await assert.rejects(first.store.refresh(), /refused: serial 3 is older than this build \(4\)/);
+		// A cache older than the build (written by an older Luna): the base, granting nothing until a newer list
+		let served: object = doc(3, [A, B]);
+		const cached = storeAt(time, doc(3, [A, B]), () => served, { minSerial: 4 });
+		await cached.store.ready();
+		assert.strictEqual(cached.store.allows("a.mjs", A.sha256), false);
+		served = doc(4, [A]);
+		await cached.store.refresh();
+		assert.strictEqual(cached.store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(cached.store.allows("b.mjs", B.sha256), false);
 	});
 
 	it("allows exactly the listed code of a listed plugin", () => {

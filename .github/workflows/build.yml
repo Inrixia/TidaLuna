@@ -32,6 +32,12 @@ jobs:
    - name: Install dependencies 📥
      run: pnpm install
 
+   - name: Refuse old-native lists signed before this build
+     # Sets native/core/legacyMinSerial.ts to the serial of the signed legacy.json (luna-registry) for pushes, which
+     # are what gets released. Add --require once the registry publishes the list
+     if: github.event_name == 'push'
+     run: node scripts/legacyMinSerial.mjs
+
    - name: Build
      run: pnpm run build
 
