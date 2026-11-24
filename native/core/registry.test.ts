@@ -1262,6 +1262,29 @@ describe("core registry network modes", () => {
 		assert.deepStrictEqual(registry.hostsOf(URL)?.allow, ["https://b.com"]);
 	});
 
+	it("never writes an answer whose save failed, even when another save is queued behind it", async () => {
+		const { deps, serve, writes } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		const write = deps.write;
+		let calls = 0;
+		deps.write = async (next) => {
+			// The first write (the grant's) fails after a pause; the next one goes through
+			if (calls++ === 0) {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				throw new Error("disk full");
+			}
+			return write(next);
+		};
+		const failed = registry.grantHost(URL, "https://b.com", "always");
+		const other = registry.grantHost(URL, "https://c.com", "always");
+		assert.deepStrictEqual([await failed, await other], [false, true]);
+		const last = writes[writes.length - 1];
+		assert.deepStrictEqual(Object.keys(last.netGrants?.[URL] ?? {}), ["https://c.com"]);
+		assert.deepStrictEqual(registry.hostsOf(URL)?.allow, ["https://c.com"]);
+	});
+
 	it("asks the hosts of a plugin from before the core one by one: it never saw them", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", {}, { hosts: ["a.com"] });

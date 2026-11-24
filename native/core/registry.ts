@@ -341,13 +341,17 @@ export const createRegistry = (deps: RegistryDeps) => {
 	delete (state as { legacy?: unknown }).legacy;
 	let saving: Promise<unknown> = Promise.resolve();
 	const save = () => (saving = saving.then(() => deps.write(state)).catch((err) => deps.log?.(`[Luna.core] Failed to save: ${err}`)));
-	/** Saves and says whether the write went through (save() logs a failure and goes on) */
-	const saveChecked = async () => {
+	/**
+	 * Saves and says whether the write went through (save() logs a failure and goes on). `undo` puts memory back when it
+	 * didn't: it runs in the save chain itself, so a save queued behind this one never writes what failed
+	 */
+	const saveChecked = async (undo: () => void) => {
 		let ok = true;
 		saving = saving
 			.then(() => deps.write(state))
 			.catch((err) => {
 				ok = false;
+				undo();
 				deps.log?.(`[Luna.core] Failed to save: ${err}`);
 			});
 		await saving;
@@ -844,12 +848,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 			if (state.plugins[url] === undefined || parseHostEntry(entry) === undefined) return false;
 			const before = netGrants[url]?.[entry];
 			(netGrants[url] ??= {})[entry] = grant;
-			if (!(await saveChecked())) {
-				// Not kept: net.ts keeps the answer until restart, Settings → Network and the page's CSP don't list it
-				restoreGrant(url, entry, before, grant);
-				return false;
-			}
-			return true;
+			// Not kept: net.ts keeps the answer until restart, Settings → Network and the page's CSP don't list it
+			return await saveChecked(() => restoreGrant(url, entry, before, grant));
 		},
 		/**
 		 * Forgets an answer: the host is asked again. Forgetting "always" only takes away (any caller may); forgetting a
@@ -870,8 +870,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 			const before = netGrants[checked]?.[entry];
 			if (before === undefined) return false;
 			restoreGrant(checked, entry, undefined, before);
-			if (!(await saveChecked())) {
-				restoreGrant(checked, entry, before, undefined);
+			if (!(await saveChecked(() => restoreGrant(checked, entry, before, undefined)))) {
 				throw new Error("[Luna.core] Couldn't save, the answer stays");
 			}
 			return true;
