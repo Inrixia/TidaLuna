@@ -268,6 +268,9 @@ describe("core confirmation page", () => {
 		expect(() => confirmRequest("T", fitted, "Go")).not.toThrow();
 		// Short enough lines are left as they are
 		expect(fitConfirmLines(lines.slice(0, 4))).toStrictEqual(lines.slice(0, 4));
+		// Only link lines, too many: left whole, not cut
+		const links = Array.from({ length: 13 }, () => [link]);
+		expect(fitConfirmLines(links)).toBe(links);
 	});
 
 	it("takes http(s) links only, and a warning only with an action to run", () => {

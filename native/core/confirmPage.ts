@@ -229,6 +229,8 @@ export const fitConfirmLines = (lines: ConfirmLine[]): ConfirmLine[] => {
 	const texts = lines.filter((line): line is string => typeof line === "string");
 	const fitted = fitLines(texts, Math.max(1, MAX_LINES - (lines.length - texts.length)));
 	const first = lines.findIndex((line) => typeof line === "string");
+	// No text lines to pack: confirmRequest refuses the request as it is
+	if (first < 0) return lines;
 	return [...lines.slice(0, first), ...fitted, ...lines.slice(first).filter((line) => typeof line !== "string")];
 };
 
