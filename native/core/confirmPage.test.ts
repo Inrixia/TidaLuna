@@ -7,6 +7,7 @@ import {
 	buildConfirmHtml,
 	confirmGate,
 	confirmRequest,
+	fitLines,
 	COOL_DOWN_MS,
 	MAX_CANCELS,
 	MAX_PENDING,
@@ -117,6 +118,11 @@ describe("core confirmation page", () => {
 
 	it("checks requests that come over IPC", () => {
 		assert.deepEqual(confirmRequest("T", ["a"], "Go"), { title: "T", lines: ["a"], confirmText: "Go" });
+		// Luna's own lines past the limit go into the last one instead of failing the window
+		const many = Array.from({ length: 14 }, (_, i) => `l${i}`);
+		assert.deepEqual(fitLines(many), [...many.slice(0, 11), "l11 l12 l13"]);
+		assert.equal(confirmRequest("T", fitLines(many), "Go").lines.length, 12);
+		assert.deepEqual(fitLines(["a"]), ["a"]);
 		assert.throws(() => confirmRequest(1, [], "Go"));
 		assert.throws(() => confirmRequest("T", "a", "Go"));
 		assert.throws(() => confirmRequest("T", [{}], "Go"));

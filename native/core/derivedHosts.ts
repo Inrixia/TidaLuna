@@ -62,13 +62,17 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export const createDerivedStore = (deps: DerivedStoreDeps) => {
 	let current: { list: VerifiedHosts; bytes: Buffer; sig: string } | undefined;
 	let cacheRead = false;
+	/** The last reason the cache couldn't be read: it is tried again on each use, and logged once per reason */
+	let cacheError: string | undefined;
 	const loadCache = () => {
 		if (cacheRead) return;
 		let text: string | undefined;
 		try {
 			text = deps.readCache();
 		} catch (err) {
-			deps.log?.(`[Luna.core] The cached registry list can't be read now: ${(err as Error)?.message ?? err}`);
+			const reason = String((err as Error)?.message ?? err);
+			if (reason !== cacheError) deps.log?.(`[Luna.core] The cached registry list can't be read now: ${reason}`);
+			cacheError = reason;
 			return;
 		}
 		cacheRead = true;

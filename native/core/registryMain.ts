@@ -120,9 +120,19 @@ ipcHandle("__LunaCore.enable", (event, url: unknown) => thenChanged([url], () =>
 ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => thenChanged([url], () => registry().acceptUpdate(url, askerFor(event.sender))));
 ipcHandle("__LunaCore.disable", (_, url: unknown) => thenChanged([url], () => registry().disable(url)));
 // A plugin installed again later, or another at the old url, starts without the "only now" answers (net.ts)
-ipcHandle("__LunaCore.uninstall", (_, url: unknown) => thenChanged([url], () => registry().uninstall(url).then((done) => (forgetHostAnswers(url), done))));
+ipcHandle("__LunaCore.uninstall", (_, url: unknown) =>
+	thenChanged([url], () =>
+		registry()
+			.uninstall(url)
+			.then((done) => (forgetHostAnswers(url), done)),
+	),
+);
 ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) =>
-	thenChanged([from, to], () => registry().moveUrl(from, to).then((done) => (done === true && forgetHostAnswers(from), done))),
+	thenChanged([from, to], () =>
+		registry()
+			.moveUrl(from, to)
+			.then((done) => (done === true && forgetHostAnswers(from), done)),
+	),
 );
 ipcHandle("__LunaCore.allowStore", (event, url: unknown) => registry().allowStore(url, askerFor(event.sender)));
 ipcHandle("__LunaCore.storeOrigins", () => registry().storeOrigins());
@@ -139,6 +149,7 @@ const forgetHostAnswers = (url: unknown) => typeof url === "string" && lunaNet.f
 
 const reasons: Record<string, string> = {
 	unlisted: "The plugin lists no hosts, and luna-registry has none for this version.",
+	unconfirmed: "Installed before Luna checked plugins' hosts: you haven't seen the ones it lists, so each host is asked.",
 	"not-listed": "This host is not in the hosts you accepted for it.",
 	"local-setting": "A local address, from the server in one of its settings.",
 	redirect: "A host it was redirected to.",
@@ -154,7 +165,9 @@ export const hostAskerFor =
 				`Host: ${question.entry}`,
 				`Example: ${question.example}`,
 				reasons[question.reason] ?? "",
-				"Only now allows it until TIDAL restarts. Always and Deny are remembered for this plugin: Luna Settings > Network shows them and can take them back.",
+				question.notKept
+					? "Luna can't keep an answer for this host: Only now, Always and Deny all last until TIDAL restarts."
+					: "Only now allows it until TIDAL restarts. Always and Deny are remembered for this plugin: Luna Settings > Network shows them and can take them back.",
 			],
 			[
 				{ id: "deny", label: "Deny" },
@@ -176,7 +189,7 @@ ipcHandle("__LunaCore.fetch", (event, pluginUrl: unknown, request: unknown, sett
  */
 ipcHandle("__LunaCore.askHost", (event, pluginUrl: unknown, target: unknown) => lunaNet.ask(pluginUrl, target, hostAskerFor(event.sender)));
 ipcHandle("__LunaCore.networkLog", () => lunaNet.log());
-ipcHandle("__LunaCore.forgetGrant", (_, url: unknown, entry: unknown) => registry().forgetGrant(url, entry));
+ipcHandle("__LunaCore.forgetGrant", (event, url: unknown, entry: unknown) => registry().forgetGrant(url, entry, askerFor(event.sender)));
 
 /** What the page's connect-src allows besides TIDAL and Luna: hosts of enabled plugins (registry.ts pageHosts) */
 export const pluginPageHosts = (): string[] => {
@@ -206,4 +219,3 @@ ipcHandle("__LunaCore.pageConnect", () => pageConnect);
 let pageStores: string[] = [];
 export const setPageStores = (origins: string[]) => void (pageStores = origins);
 ipcHandle("__LunaCore.pageStores", () => pageStores);
-

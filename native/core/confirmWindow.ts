@@ -5,7 +5,18 @@
 import { BrowserWindow, ipcMain } from "electron";
 
 import { createPromptWindow, inPromptQueue, visibleOwner } from "../NativeModule/permissions/promptWindow";
-import { ARM_DELAY_MS, buildChoiceHtml, buildConfirmHtml, confirmGate, confirmRequest, SUBMIT, TITLE, USER_INPUT_MS, type ConfirmRequest } from "./confirmPage";
+import {
+	ARM_DELAY_MS,
+	buildChoiceHtml,
+	buildConfirmHtml,
+	confirmGate,
+	confirmRequest,
+	fitLines,
+	SUBMIT,
+	TITLE,
+	USER_INPUT_MS,
+	type ConfirmRequest,
+} from "./confirmPage";
 import { notAsked } from "./notAsked";
 
 // Page code can ask for confirmations: it must not flood the user with windows
@@ -39,7 +50,12 @@ export const askChoice = async (
 	recentUserInput: boolean,
 ): Promise<{ choice?: string; refused?: string }> => {
 	const firstChoice = request.choices?.[0]?.id;
-	const { answer, refused } = await askRaw(request, parent, recentUserInput, (raw) => raw.startsWith("choice:") && raw !== `choice:${firstChoice}`);
+	const { answer, refused } = await askRaw(
+		request,
+		parent,
+		recentUserInput,
+		(raw) => raw.startsWith("choice:") && raw !== `choice:${firstChoice}`,
+	);
 	return { choice: answer?.startsWith("choice:") ? answer.slice("choice:".length) : undefined, refused };
 };
 
@@ -169,7 +185,7 @@ export const askerFor = (sender: Electron.WebContents) => {
 	const parent = BrowserWindow.fromWebContents(sender) ?? undefined;
 	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
 	return async ({ title, lines, confirmText }: ConfirmRequest): Promise<boolean> => {
-		const request = confirmRequest(title, lines, confirmText);
+		const request = confirmRequest(title, Array.isArray(lines) ? fitLines(lines) : lines, confirmText);
 		const { answer, refused } = await askConfirm(request, parent, recentUserInput);
 		if (refused === undefined) return answer;
 		throw notAsked(request.title, refused);
@@ -184,7 +200,7 @@ export const choiceAskerFor = (sender: Electron.WebContents) => {
 	const parent = BrowserWindow.fromWebContents(sender) ?? undefined;
 	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
 	return async (title: string, lines: string[], choices: { id: string; label: string }[]): Promise<string | undefined> => {
-		const request = { ...confirmRequest(title, lines, "-"), choices };
+		const request = { ...confirmRequest(title, fitLines(lines), "-"), choices };
 		const { choice, refused } = await askChoice(request, parent, recentUserInput);
 		if (refused === undefined) return choice;
 		throw notAsked(request.title, refused);

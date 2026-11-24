@@ -264,6 +264,11 @@ describe("host patterns", () => {
 		assert.deepEqual(cspSources(["*.fastly.net/covers/*"]), ["https://*.fastly.net/covers/", "wss://*.fastly.net/covers/"]);
 		assert.deepEqual(cspSources(["a.com/x*"]), ["https://a.com", "wss://a.com"]);
 		assert.deepEqual(cspSources(["a.com/file.json"]), ["https://a.com/file.json", "wss://a.com/file.json"]);
+		// CSP matches paths case-sensitively: the path stays as written, the host goes to lower case
+		assert.deepEqual(cspSources(["CDN.Example.com/Covers/*"]), ["https://cdn.example.com/Covers/", "wss://cdn.example.com/Covers/"]);
+		assert.deepEqual(declaredHosts(["HTTP://A.com:8080/Path/*"])?.hosts, ["http://a.com:8080/Path/*"]);
+		assert.equal(allowed(["cdn.example.com/Covers/*"], "https://cdn.example.com/Covers/a.jpg"), true);
+		assert.equal(allowed(["cdn.example.com/Covers/*"], "https://cdn.example.com/COVERS/a.jpg"), false);
 	});
 
 	it("reads `{setting:<key>}` entries and resolves them to the setting's server only", () => {

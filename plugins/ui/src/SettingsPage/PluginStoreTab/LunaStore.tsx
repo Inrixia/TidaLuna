@@ -44,10 +44,13 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 			// A network error, not an answer: maybe the page's connect-src doesn't list the store. GitHub and the other
 			// baseline hosts are in it without being a store origin: for them it's the network
 			if (error instanceof TypeError)
-				Promise.all([__LunaCore.pageStores(), __LunaCore.pageConnect()]).then(([origins, connect]) => {
-					const at = new URL(url);
-					setBlocked(!origins.includes(at.origin) && !hostAllowed(connect, at));
-				}, () => {});
+				Promise.all([__LunaCore.pageStores(), __LunaCore.pageConnect()]).then(
+					([origins, connect]) => {
+						const at = new URL(url);
+						setBlocked(!origins.includes(at.origin) && !hostAllowed(connect, at));
+					},
+					() => {},
+				);
 			setPackage(undefined); // Clear package on error
 		} finally {
 			setLoading(false);

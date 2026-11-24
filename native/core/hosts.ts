@@ -82,9 +82,12 @@ export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	if (typeof entry !== "string" || entry.length > 260) return undefined;
 	// A path of URL path characters only (RFC 3986), without `;`, `,` and `'`: it goes into the CSP header as it is, where
 	// those would start another directive or policy
-	const match = /^(?:([a-z]+):\/\/)?(\*\.)?([^:/?#@\s*]+)(?::(\d{1,5}))?(\/[a-z0-9\-._~!$&()*+=:@%/]*)?$/.exec(entry.trim().toLowerCase());
+	// Scheme and host in any case; the path as written (CSP and the URL parser match paths case-sensitively)
+	const match = /^(?:([a-z]+):\/\/)?(\*\.)?([^:/?#@\s*]+)(?::(\d{1,5}))?(\/[a-z0-9\-._~!$&()*+=:@%/]*)?$/i.exec(entry.trim());
 	if (match === null) return undefined;
-	const [, scheme, star, host, port, rawPath] = match;
+	const [, rawScheme, star, rawHost, port, rawPath] = match;
+	const scheme = rawScheme?.toLowerCase();
+	const host = rawHost.toLowerCase();
 	// A path as the URL parser writes it: no dot segments, no `%2e` that it would turn into one
 	if (
 		rawPath !== undefined &&
@@ -107,6 +110,9 @@ export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	const schemes = scheme === undefined ? defaultSchemes : [scheme];
 	return { schemes, host, wildcard: star !== undefined, port: port ?? "", path };
 };
+
+/** An entry with its scheme, host and port in lower case and its path as written */
+export const normalEntry = (entry: string) => entry.trim().replace(/^(?:[a-z]+:\/\/)?[^/]*/i, (origin) => origin.toLowerCase());
 
 /** A valid entry: a host entry or a `{setting:<key>}` */
 export const validEntry = (entry: unknown) => parseHostEntry(entry) !== undefined || settingKeyOf(entry) !== undefined;
@@ -175,7 +181,7 @@ export const settingKeys = (hosts: string[]) => hosts.map(settingKeyOf).filter((
 /** A path pattern matches the url's path: `*` is any characters, everything else literal */
 const pathMatches = (pattern: string, pathname: string) => {
 	if (pattern === "") return true;
-	const path = pathname.toLowerCase();
+	const path = pathname;
 	const parts = pattern.split("*");
 	if (parts.length === 1) return path === pattern;
 	if (!path.startsWith(parts[0])) return false;
@@ -190,7 +196,7 @@ const pathMatches = (pattern: string, pathname: string) => {
 };
 
 export type DeclaredHosts = {
-	/** Valid entries, normalized (lower case, trimmed), without duplicates */
+	/** Valid entries, normalized (trimmed, scheme and host in lower case), without duplicates */
 	hosts: string[];
 	/** Entries that aren't valid: they allow nothing */
 	invalid: string[];
@@ -205,7 +211,7 @@ export const declaredHosts = (value: unknown): DeclaredHosts | undefined => {
 		if (!validEntry(entry)) invalid.push(String(entry).slice(0, 80));
 		else {
 			const key = settingKeyOf(entry);
-			const normalized = key !== undefined ? `{setting:${key}}` : (entry as string).trim().toLowerCase();
+			const normalized = key !== undefined ? `{setting:${key}}` : normalEntry(entry as string);
 			if (!hosts.includes(normalized)) hosts.push(normalized);
 		}
 	}

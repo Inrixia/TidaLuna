@@ -89,6 +89,10 @@ export const confirmGate = () => {
 	};
 };
 
+/** Luna's own lines past the limit go into the last one (an update that changes its natives and its hosts at once) */
+export const fitLines = (lines: string[]) =>
+	lines.length <= MAX_LINES ? lines : [...lines.slice(0, MAX_LINES - 1), lines.slice(MAX_LINES - 1).join(" ")];
+
 /** Checks a request that came over IPC: strings only, long texts are cut */
 export const confirmRequest = (title: unknown, lines: unknown, confirmText: unknown): ConfirmRequest => {
 	const text = (value: unknown) => {
@@ -106,11 +110,11 @@ const choiceId = /^[a-z]{1,16}$/;
 export const buildChoiceHtml = ({ title, lines, choices = [] }: ConfirmRequest) => {
 	if (choices.length < 2 || choices.some((choice) => !choiceId.test(choice.id))) throw new Error("[Luna.core] Bad choices");
 	const actions = `<div class="actions">${choices
-			.map(
-				(choice, index) =>
-					`<button class="choice" data-id="${choice.id}"${index === choices.length - 1 ? ' id="confirm"' : ""}${index === 0 ? ' id="cancel"' : ""} disabled>${escapeHtml(choice.label)}</button>`,
-			)
-			.join("")}</div>
+		.map(
+			(choice, index) =>
+				`<button class="choice" data-id="${choice.id}"${index === choices.length - 1 ? ' id="confirm"' : ""}${index === 0 ? ' id="cancel"' : ""} disabled>${escapeHtml(choice.label)}</button>`,
+		)
+		.join("")}</div>
 <script>
 const submit = (answer) => (document.title = "${SUBMIT}" + answer);
 // Every choice is kept (the first, deny, too), so all wait to be armed, and the focus is on none: Enter typed into TIDAL

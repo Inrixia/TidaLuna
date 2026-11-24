@@ -1016,7 +1016,13 @@ describe("core registry", () => {
 		assert.ok(lines.some((line) => line === "Network: the plugin says it connects to api.last.fm, *.example.com."));
 		assert.ok(lines.some((line) => line === "Ignored, not valid hosts: *"));
 		assert.deepStrictEqual(registry.info(URL)?.hosts, ["api.last.fm", "*.example.com"]);
-		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", mode: "declared", hosts: ["api.last.fm", "*.example.com"], allow: [], deny: [] });
+		assert.deepStrictEqual(registry.hostsOf(URL), {
+			name: "plugin v1",
+			mode: "declared",
+			hosts: ["api.last.fm", "*.example.com"],
+			allow: [],
+			deny: [],
+		});
 		assert.deepStrictEqual(registry.pageHosts(), ["api.last.fm", "*.example.com"]);
 		await registry.disable(URL);
 		assert.strictEqual(registry.hostsOf(URL), undefined);
@@ -1168,7 +1174,8 @@ describe("core registry network modes", () => {
 		serve(URL, "v1");
 		const registry = createRegistry({
 			...deps,
-			legacyHosts: (id: string, sha: string) => (id === pluginIdOf(URL) && sha === servedSha("v1") ? ["api.old.example", "{setting:server}"] : undefined),
+			legacyHosts: (id: string, sha: string) =>
+				id === pluginIdOf(URL) && sha === servedSha("v1") ? ["api.old.example", "{setting:server}"] : undefined,
 		});
 		await installLegacy(registry, deps, URL, "v1");
 		assert.deepStrictEqual(registry.hostsOf(URL), { name: "legacy", mode: "legacy", hosts: undefined, allow: [], deny: [] });
@@ -1203,9 +1210,14 @@ describe("core registry network modes", () => {
 		assert.deepStrictEqual(registry.pageHosts(), ["a.com", "https://b.com"]);
 		assert.deepStrictEqual(registry.info(URL)?.grants, { "https://b.com": "always", "https://c.com": "deny" });
 
-		assert.strictEqual(await registry.forgetGrant(URL, "https://b.com"), true);
-		assert.strictEqual(await registry.forgetGrant(URL, "https://b.com"), false);
+		assert.strictEqual(await registry.forgetGrant(URL, "https://b.com", asker(false)), true, "an always goes without asking");
+		assert.strictEqual(await registry.forgetGrant(URL, "https://b.com", asker(true)), false);
 		assert.deepStrictEqual(registry.hostsOf(URL)?.allow, []);
+		// Forgetting a deny lets the plugin ask again: the user confirms it
+		assert.strictEqual(await registry.forgetGrant(URL, "https://c.com", asker(false)), false);
+		assert.deepStrictEqual(registry.hostsOf(URL)?.deny, ["https://c.com"]);
+		assert.strictEqual(await registry.forgetGrant(URL, "https://c.com", asker(true)), true);
+		assert.deepStrictEqual(registry.hostsOf(URL)?.deny, []);
 
 		await registry.uninstall(URL);
 		serve(URL, "v1", {}, { hosts: ["a.com"] });
@@ -1283,7 +1295,9 @@ describe("core registry store origins", () => {
 		const reread = createRegistry({ ...fakeDeps(writes.at(-1)!).deps, storeBaseline: BASELINE });
 		assert.ok(reread.storeOrigins().includes("http://127.0.0.1:4000"));
 		// A stored list that isn't one is dropped
-		const bad = createRegistry({ ...fakeDeps({ version: 1, plugins: {}, storeOrigins: ["https://ok.example", "javascript:x", 1 as never] }).deps });
+		const bad = createRegistry({
+			...fakeDeps({ version: 1, plugins: {}, storeOrigins: ["https://ok.example", "javascript:x", 1 as never] }).deps,
+		});
 		assert.ok(bad.storeOrigins().includes("https://ok.example"));
 		assert.strictEqual(bad.storeOrigins().includes("javascript:x"), false);
 	});

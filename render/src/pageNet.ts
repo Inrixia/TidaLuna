@@ -8,8 +8,9 @@
 // - every block is shown as a toast and in Luna Settings > Network.
 // The calling plugin is found from the stack, like lunaFetch: page code can get the page's fetch from elsewhere (an
 // iframe) and skip all this, and then the CSP blocks it.
-import { hostAllowed, settingKeys, settingValueOf } from "../../native/core/hosts";
+import { settingKeys, settingValueOf } from "../../native/core/hosts";
 import { toNetRequest, toResponse } from "./helpers/netMessages";
+import { pageAllowsUrl, refusalReason, toastGate } from "./helpers/pageNetRules";
 import { LunaPlugin } from "./LunaPlugin";
 import { ReactiveStore } from "./ReactiveStore";
 import { coreTrace } from "./trace";
@@ -26,7 +27,7 @@ const connectReady = __LunaCore.pageConnect().then(
 );
 
 /** The page's enforced connect-src allows this url (TIDAL's own shell origin always) */
-const pageAllows = (url: URL) => url.origin === location.origin || url.origin === "https://luna" || hostAllowed(connect ?? [], url);
+const pageAllows = (url: URL) => pageAllowsUrl(connect ?? [], location.origin, url);
 
 const isNetwork = (url: URL) => ["http:", "https:", "ws:", "wss:"].includes(url.protocol);
 
@@ -42,29 +43,16 @@ export const callingPlugin = (): LunaPlugin | undefined => {
 };
 
 // One toast for a plugin and host every half minute: a plugin polling a blocked host doesn't fill the screen
-const toasted = new Map<string, number>();
+const toastDue = toastGate();
 export const toastBlocked = (who: string, target: string, reason?: string) => {
-	const key = `${who}\n${target}`;
-	const now = Date.now();
-	if (now - (toasted.get(key) ?? 0) < 30_000) return;
-	toasted.set(key, now);
-	if (toasted.size > 200) toasted.clear();
+	if (!toastDue(who, target)) return;
 	trace.msg.warn(`Blocked: ${who} -> ${target}${reason ? ` (${reason})` : ""}. Luna Settings > Network`);
 };
 
 /** Toasts a luna.fetch error if it is a refusal (net.ts NetRefused; only its message crosses IPC), not a network failure */
 export const toastIfRefused = (who: string, target: string, err: unknown) => {
-	const message = String((err as Error)?.message ?? err);
-	const at = message.indexOf("luna.fetch refused");
-	if (at !== -1)
-		toastBlocked(
-			who,
-			target,
-			message
-				.slice(at + "luna.fetch refused".length)
-				.replace(/^[a-z ]*:\s*/, "")
-				.slice(0, 160),
-		);
+	const reason = refusalReason(err);
+	if (reason !== undefined) toastBlocked(who, target, reason);
 };
 
 // The plugin's settings its `{setting:<key>}` entries name, as luna.fetch takes them

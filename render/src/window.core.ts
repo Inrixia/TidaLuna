@@ -77,7 +77,10 @@ declare global {
 		/** luna.fetch requests since TIDAL started (the newest 100 of each plugin), the newest last */
 		networkLog(): Promise<import("../../native/core/net").NetLogEntry[]>;
 		/** Whether page code of `pluginUrl` may reach `target` with the page's own network (asks the user like luna.fetch) */
-		askHost(pluginUrl: string, target: string): Promise<{ allowed: boolean; reason?: string; answer?: import("../../native/core/net").HostAnswer }>;
+		askHost(
+			pluginUrl: string,
+			target: string,
+		): Promise<{ allowed: boolean; reason?: string; answer?: import("../../native/core/net").HostAnswer }>;
 		/** The host entries the page's enforced connect-src was built from when it loaded */
 		pageConnect(): Promise<string[]>;
 		/** Forgets an "always"/"deny" answer: the host is asked again */

@@ -436,6 +436,28 @@ describe("luna.fetch prompts", () => {
 		assert.equal(questions[0]?.reason, "redirect");
 	});
 
+	it("doesn't time out a redirect while the user answers", async () => {
+		const { net } = fakeNet(
+			{ "https://store/u": { ...unlisted, allow: ["https://api.new.example"] } },
+			{
+				"https://api.new.example/x": () => new Response(null, { status: 302, headers: { location: "https://other.example/y" } }),
+				"https://other.example/y": () => new Response("ok"),
+			},
+			{ timeoutMs: 50 },
+		);
+		const slow = async () => (await new Promise((resolve) => setTimeout(resolve, 150)), "once" as const);
+		const res = await net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, slow);
+		assert.equal(res.status, 200);
+	});
+
+	it("tells the user when an answer can't be kept, and names a migrated plugin's reason", async () => {
+		const { net } = fakeNet({ "https://store/u": { ...unlisted, unconfirmed: true } }, { "https://[2001:db8::3]/x": () => new Response("ok") });
+		const { ask, questions } = asker(["once", "once"]);
+		await net.fetch("https://store/u", "page", { url: "https://[2001:db8::3]/x" }, ask);
+		assert.equal(questions[0]?.notKept, true);
+		assert.equal(questions[0]?.reason, "unconfirmed");
+	});
+
 	it("asks once for many requests waiting on the same host", async () => {
 		const { net } = fakeNet({ "https://store/u": unlisted }, routes);
 		let release!: (answer: HostAnswer) => void;
@@ -499,6 +521,21 @@ describe("luna.fetch prompts", () => {
 		);
 		assert.equal(questions[0].reason, "local-setting");
 		assert.equal(calls.length, 2);
+	});
+
+	it("keeps a declared local entry when a setting names the same server", async () => {
+		const plugin = {
+			name: "S",
+			mode: "declared",
+			hosts: ["http://localhost:8096", "{setting:server}"],
+			allow: [],
+			deny: [],
+		} satisfies PluginHosts;
+		const { net } = fakeNet({ "https://store/s": plugin }, { "http://localhost:8096/api": () => new Response("lan") });
+		const { ask, questions } = asker([]);
+		const res = await net.fetch("https://store/s", "page", { url: "http://localhost:8096/api" }, ask, { server: "http://localhost:8096" });
+		assert.equal(res.status, 200);
+		assert.equal(questions.length, 0);
 	});
 
 	it("lets a legacy plugin reach public hosts without asking, never local ones", async () => {

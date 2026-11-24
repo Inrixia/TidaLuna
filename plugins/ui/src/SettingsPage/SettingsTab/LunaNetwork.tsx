@@ -27,8 +27,12 @@ const modeDesc = (plugin: CorePluginInfo) => {
 			return hosts === "" ? "luna-registry found no network in its code" : `luna-registry found in its code: ${hosts}`;
 		case "legacy":
 			return "Reviewed by hand before hosts were checked: may reach any public host until it updates";
+		case "unlisted":
+			return plugin.hostsUnconfirmed
+				? "Installed before Luna checked plugins' hosts: you haven't seen the ones it lists, so every host is asked when the plugin first uses it"
+				: "Lists no hosts, and luna-registry has none for this version: every host is asked when the plugin first uses it";
 		default:
-			return "Lists no hosts, and luna-registry has none for this version: every host is asked when the plugin first uses it";
+			return "No version confirmed yet: it doesn't run until you confirm one";
 	}
 };
 
@@ -61,12 +65,12 @@ export const LunaNetwork = React.memo(() => {
 				.sort((a, b) => a.name.localeCompare(b.name))
 				.map((plugin) => (
 					<LunaSetting key={plugin.url} title={plugin.name} desc={modeDesc(plugin)}>
-						<Stack spacing={0.5} sx={{ alignItems: "flex-end" }}>
+						<Stack spacing={0.5} sx={{ alignItems: "flex-end", ml: 2 }}>
 							<Typography
 								variant="body2"
 								sx={{ color: plugin.netMode === "unlisted" || plugin.netMode === "legacy" ? "warning.main" : "text.primary", whiteSpace: "nowrap" }}
 							>
-								{plugin.netMode !== undefined ? modeText[plugin.netMode] : "-"}
+								{plugin.netMode !== undefined ? modeText[plugin.netMode] : "Not confirmed"}
 								{plugin.enabled ? "" : " (disabled)"}
 							</Typography>
 							{Object.entries(plugin.grants ?? {}).map(([entry, grant]) => (

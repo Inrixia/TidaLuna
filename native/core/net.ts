@@ -58,7 +58,9 @@ export type HostQuestion = {
 	/** The url asked for, without its query */
 	example: string;
 	/** Why it is asked */
-	reason: "unlisted" | "not-listed" | "local-setting" | "redirect";
+	reason: "unlisted" | "unconfirmed" | "not-listed" | "local-setting" | "redirect";
+	/** Luna can't keep an answer for this host (an IPv6 address, a single-label name): any answer lasts until TIDAL restarts */
+	notKept?: true;
 };
 /** Asks the user, in a window over the caller's TIDAL. Undefined, or a throw, if they couldn't be asked */
 export type AskHost = (question: HostQuestion) => Promise<HostAnswer | undefined>;
@@ -139,9 +141,16 @@ export const createNet = (deps: NetDeps) => {
 		const key = `${pluginUrl}\n${entry}`;
 		let answer = asking.get(key);
 		if (answer === undefined) {
-			const question: HostQuestion = { plugin: pluginUrl, name: plugin.name, entry, example: targetOf(url), reason };
+			const keepable = parseHostEntry(entry) !== undefined;
+			const question: HostQuestion = {
+				plugin: pluginUrl,
+				name: plugin.name,
+				entry,
+				example: targetOf(url),
+				reason,
+				...(keepable ? {} : { notKept: true as const }),
+			};
 			answer = (ask === undefined ? Promise.resolve(undefined) : ask(question).catch(() => undefined)).then(async (got) => {
-				const keepable = parseHostEntry(entry) !== undefined;
 				if (got === "once" || (got === "always" && !keepable)) onceAllowed.add(key);
 				else if (got === "deny" && !keepable) onceDenied.add(key);
 				else if (got === "always" || got === "deny")
@@ -182,7 +191,8 @@ export const createNet = (deps: NetDeps) => {
 			const { hosts, settings: fromSettings } = resolveSettings(plugin.hosts ?? [], (key) =>
 				settings !== null && typeof settings === "object" && Object.hasOwn(settings, key) ? (settings as Record<string, unknown>)[key] : undefined,
 			);
-			const fixed = hosts.filter((entry) => !fromSettings.includes(entry));
+			// The declared entries themselves: one a setting's value happens to equal stays declared
+			const fixed = hosts.filter((entry) => !fromSettings.includes(entry) || (plugin.hosts ?? []).includes(entry));
 			const allowed = [
 				...fixed,
 				...(plugin.allow ?? []),
@@ -202,7 +212,9 @@ export const createNet = (deps: NetDeps) => {
 					: redirected
 						? "redirect"
 						: plugin.mode === "unlisted"
-							? "unlisted"
+							? plugin.unconfirmed
+								? "unconfirmed"
+								: "unlisted"
 							: "not-listed";
 				const answer = await askOnce(pluginUrl, plugin, url, reason, ask);
 				if (answer === undefined) return `${url.host} is not in the hosts of ${plugin.name}, and you didn't allow it`;
@@ -362,8 +374,11 @@ export const createNet = (deps: NetDeps) => {
 					if (hop >= maxRedirects) throw new Error(`More than ${maxRedirects} redirects`);
 					const from = url;
 					url = new URL(location, url);
-					// Every hop is checked like the first: a declared host can't redirect the plugin to another one
+					// Every hop is checked like the first: a declared host can't redirect the plugin to another one. The user's
+					// answer takes its time: no timeout while Luna asks
+					clearTimeout(timer);
 					const hopRefusal = await refusal(pluginUrl, plugin, url, ask, settings, (answer) => (entry.asked ??= answer), { redirected: true });
+					alive();
 					if (hopRefusal !== undefined) {
 						entry.allowed = false;
 						throw new NetRefused(`[🛑Security🛑] luna.fetch refused a redirect: ${hopRefusal}`);

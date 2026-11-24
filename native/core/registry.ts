@@ -67,6 +67,8 @@ export type PluginNet = {
 	/** Host entries the user answered "always" / "deny" for */
 	allow: string[];
 	deny: string[];
+	/** Installed before the core: it may list hosts, but the user never saw them (Version hostsUnconfirmed) */
+	unconfirmed?: true;
 };
 export type CoreRecord = {
 	url: string;
@@ -118,6 +120,8 @@ export type PendingUpdate = {
 };
 export type CorePluginInfo = {
 	url: string;
+	/** Accepted before the core: its hosts (if it lists any) were never shown, every host is asked */
+	hostsUnconfirmed?: true;
 	name: string;
 	installed: boolean;
 	enabled: boolean;
@@ -292,8 +296,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const legacyOffIds = new Set(Array.isArray(state.legacyOffIds) ? state.legacyOffIds : []);
 	const legacyFirst: Record<string, string> =
 		state.legacyFirst !== null && typeof state.legacyFirst === "object" ? state.legacyFirst : (state.legacyFirst = {});
-	const netGrants: Record<string, Record<string, HostGrant>> =
-		state.netGrants !== null && typeof state.netGrants === "object" ? state.netGrants : (state.netGrants = {});
+	const netGrants: Record<string, Record<string, HostGrant>> = state.netGrants !== null && typeof state.netGrants === "object"
+		? state.netGrants
+		: (state.netGrants = {});
 	const allowedStores: string[] = Array.isArray(state.storeOrigins)
 		? (state.storeOrigins = state.storeOrigins.filter((origin): origin is string => storeOriginOf(origin) === origin))
 		: (state.storeOrigins = []);
@@ -427,7 +432,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const legacyNet = (url: string, version: Version | undefined) =>
 		!isDevUrl(url) && version !== undefined && stillLegacy(url, version) && deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true;
 	/** Whether this version would be on the list for the network once accepted (what the confirmation says) */
-	const legacyNetWouldRun = (url: string, before: Version | undefined, version: Version) => legacyNet(url, version) && !leaves(url, before, version);
+	const legacyNetWouldRun = (url: string, before: Version | undefined, version: Version) =>
+		legacyNet(url, version) && !leaves(url, before, version);
 	const netModeOf = (url: string, version: Version | undefined): NetMode => {
 		if (version === undefined || legacyNet(url, version)) return version === undefined ? "unlisted" : "legacy";
 		if (version.hostsUnconfirmed) return "unlisted";
@@ -472,6 +478,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 			natives: accepted?.natives ?? [],
 			hosts: hostsOfVersion(accepted),
 			netMode: accepted === undefined ? undefined : netModeOf(url, accepted),
+			hostsUnconfirmed: accepted?.hostsUnconfirmed,
 			grants: { ...netGrants[url] },
 			legacyNatives:
 				accepted === undefined || legacyNativesOf(accepted).length === 0 ? undefined : legacyRuns(url, accepted) ? "allowed" : "refused",
@@ -603,7 +610,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (changes.added.length !== 0) lines.push(`New native files: ${changes.added.join(", ")}`);
 		if (changes.removed.length !== 0) lines.push(`Removed native files: ${changes.removed.join(", ")}`);
 		const acceptedHosts = hostsOfVersion(accepted);
-		if (acceptedHosts === undefined && changes.hosts !== undefined) lines.push("Now lists its network hosts: Luna asks you before any other host.");
+		if (acceptedHosts === undefined && changes.hosts !== undefined)
+			lines.push("Now lists its network hosts: Luna asks you before any other host.");
 		else if (acceptedHosts !== undefined && changes.hosts === undefined)
 			lines.push("No longer lists its network hosts: Luna asks you for each host it uses.");
 		else {
@@ -664,7 +672,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 		// is, with its sourceURL line naming the old url: the new url's line could close something the code leaves open
 		// (a trailing `/*`, a template literal) and run the rest of the url
 		const same =
-			found !== undefined && accepted !== undefined && servedSha256(found.code) === servedSha256(accepted.code) && found.world === accepted.world &&
+			found !== undefined &&
+			accepted !== undefined &&
+			servedSha256(found.code) === servedSha256(accepted.code) &&
+			found.world === accepted.world &&
 			sameHosts(found.package.hosts, accepted.package.hosts);
 		if (!same && found !== undefined && accepted !== undefined) moved.pending = found;
 		// One plugin at both urls: one that left the old format at either stays off it at both, and other code at `to`
@@ -783,6 +794,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 				hosts: mode === "declared" || mode === "derived" ? hostsOfVersion(record.accepted) : undefined,
 				allow: grants.filter(([, grant]) => grant === "always").map(([entry]) => entry),
 				deny: grants.filter(([, grant]) => grant === "deny").map(([entry]) => entry),
+				...(record.accepted.hostsUnconfirmed ? { unconfirmed: true as const } : {}),
 			};
 		},
 		/**
@@ -795,10 +807,23 @@ export const createRegistry = (deps: RegistryDeps) => {
 			await save();
 			return true;
 		},
-		/** Forgets an answer: the host is asked again (any caller may: it only takes away) */
-		forgetGrant: async (url: unknown, entry: unknown) => {
+		/**
+		 * Forgets an answer: the host is asked again. Forgetting "always" only takes away (any caller may); forgetting a
+		 * "deny" lets the plugin ask again, so the user confirms it in Luna's window
+		 */
+		forgetGrant: async (url: unknown, entry: unknown, ask: Ask) => {
 			const checked = pluginUrl(url);
 			if (typeof entry !== "string" || netGrants[checked]?.[entry] === undefined) return false;
+			if (
+				netGrants[checked][entry] === "deny" &&
+				!(await ask({
+					title: `Forget that you denied ${entry}?`,
+					lines: [`Plugin: ${state.plugins[checked]?.name ?? checked}`, "Luna asks you again the next time the plugin connects to it."],
+					confirmText: "Forget",
+				}))
+			)
+				return false;
+			if (netGrants[checked]?.[entry] === undefined) return false;
 			delete netGrants[checked][entry];
 			if (Object.keys(netGrants[checked]).length === 0) delete netGrants[checked];
 			await save();
@@ -820,7 +845,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 			if (origin === undefined) throw new Error(`[Luna.core] Not a store url: ${String(url)}`);
 			// GitHub and the other https hosts of the baseline are in the page's connect-src already; a dev port on this computer
 			// isn't (main fetches dev plugins without asking, the page reads a dev store only once it's allowed)
-			if (storeOrigins().includes(origin) || (deps.storeBaseline !== undefined && storeUrlAllowed(origin, [], deps.storeBaseline) && !isDevUrl(origin)))
+			if (
+				storeOrigins().includes(origin) ||
+				(deps.storeBaseline !== undefined && storeUrlAllowed(origin, [], deps.storeBaseline) && !isDevUrl(origin))
+			)
 				return true;
 			const allowed = await ask({
 				title: `Allow Luna to read from ${origin}?`,

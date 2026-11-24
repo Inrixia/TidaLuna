@@ -49,7 +49,12 @@ const decodeAttribute = (value: string) =>
 
 // The GitHub hosts plugins, stores and releases are served from: host entries refuse `*.githubusercontent.com` (a
 // public suffix: anyone's pages), which the CSP itself lists
-const githubContent = ["raw.githubusercontent.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "media.githubusercontent.com"];
+const githubContent = [
+	"raw.githubusercontent.com",
+	"objects.githubusercontent.com",
+	"release-assets.githubusercontent.com",
+	"media.githubusercontent.com",
+];
 /**
  * The baseline's hosts as host entries (core/hosts.ts), for page code that checks a url before it sends it
  * (render/src/pageNet.ts) and for the store gate (core/stores.ts). `'self'` is the TIDAL shell, under tidal.com;
@@ -104,7 +109,9 @@ export const reportOnlyPolicy = (tidalPolicy: string, pluginSources: string[] = 
 	if (!directives.has("default-src")) {
 		for (const directive of networkDirectives) {
 			if (directives.has(directive)) continue;
-			const sources = pluginDirectives.has(directive) ? [...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))] : networkBaseline;
+			const sources = pluginDirectives.has(directive)
+				? [...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))]
+				: networkBaseline;
 			directives.set(directive, sources);
 		}
 	}

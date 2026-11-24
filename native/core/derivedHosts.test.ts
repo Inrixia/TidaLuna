@@ -89,6 +89,24 @@ describe("registry derived hosts", () => {
 		assert.ok(logs.some((line) => line.includes("fails its check")));
 	});
 
+	it("logs a cache it can't read once per reason, and tries again on each use", async () => {
+		const logs: string[] = [];
+		let reads = 0;
+		const store = createDerivedStore({
+			readCache: () => {
+				reads++;
+				throw new Error("EBUSY");
+			},
+			writeCache: () => {},
+			fetchList: () => new Promise<never>(() => {}),
+			publicKey: pub,
+			log: (message: string) => void logs.push(message),
+		});
+		for (let i = 0; i < 3; i++) store.lookup(SHA_A, "A");
+		assert.ok(reads >= 3);
+		assert.strictEqual(logs.filter((line) => line.includes("EBUSY")).length, 1);
+	});
+
 	it("waits at most firstWaitMs for a first list before a confirmation", async () => {
 		let time = 0;
 		const store = createDerivedStore({
