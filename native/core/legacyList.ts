@@ -106,7 +106,12 @@ export type LegacyStoreDeps = {
 	log?(message: string): void;
 	/** How long the first check of a start with no cached copy waits for the first fetch */
 	firstWaitMs?: number;
+	/** Waits before fetching again while no list was ever accepted (the last one repeats) */
+	retryMs?: number[];
+	now?(): number;
 };
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
 
 /**
  * The accepted list: the cached copy (its signature checked again on each start), replaced only by a fetched list
@@ -168,13 +173,23 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		deps.log?.(`[Luna.core] Old native format list: serial ${next.serial}, ${next.entries.length} plugins`);
 	};
 
+	const now = deps.now ?? Date.now;
+	const retryMs = deps.retryMs ?? [30000, 120000, 600000];
 	let first: Promise<void> | undefined;
-	/** The first refresh (started once, again while the cache couldn't be read); never rejects */
+	/** While no list was accepted: when to fetch again (a cache that can't be read yet: on the next call) */
+	let retryAt: number | undefined;
+	let failures = 0;
+	/** The first refresh, started again while no list was accepted yet (the 6 h refresh is the caller's); never rejects */
 	const start = () => {
-		if (cache === "unread") first = undefined;
-		return (first ??= refresh().catch((err) => deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`)));
+		if (first !== undefined && (retryAt === undefined || now() < retryAt)) return first;
+		retryAt = undefined;
+		return (first = refresh().catch((err) => {
+			deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
+			if (cache === "unread") retryAt = now();
+			else if (current === undefined && cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
+		}));
 	};
-	let firstWait: Promise<void> | undefined;
+	let waitUntil: number | undefined;
 
 	return {
 		refresh,
@@ -184,13 +199,26 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 			void start();
 			return allowed.has(`${id}\n${servedSha256}`);
 		},
-		/** Before a check: with no list yet, waits (once per start, at most firstWaitMs) for the first fetch */
+		/**
+		 * Before a check: with no list yet, waits for the cache to be readable and for the first fetch, at most
+		 * firstWaitMs after the first call of this start
+		 */
 		ready: async (): Promise<void> => {
-			loadCache();
-			const started = start();
-			if (current !== undefined) return;
-			firstWait ??= Promise.race([started, new Promise<void>((resolve) => setTimeout(resolve, deps.firstWaitMs ?? 10000).unref?.())]);
-			await firstWait;
+			waitUntil ??= now() + (deps.firstWaitMs ?? 10000);
+			for (;;) {
+				loadCache();
+				if (current !== undefined || cache === "broken") return;
+				const left = waitUntil - now();
+				if (left <= 0) return;
+				const started = start();
+				// A locked cache: read it again shortly
+				if (cache === "unread") {
+					await sleep(Math.min(200, left));
+					continue;
+				}
+				await Promise.race([started, sleep(left)]);
+				return;
+			}
 		},
 		current: () => current?.list,
 	};

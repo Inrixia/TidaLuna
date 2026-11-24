@@ -165,8 +165,72 @@ describe("old native format list", () => {
 		assert.ok(Date.now() - started < 1000);
 		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
 		release();
+		await fetched;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+	});
+
+	it("waits for a cache locked at the start, and reads it once it is free", async () => {
+		const { bytes, sig } = signed(doc(1, [A]));
+		let locked = 3;
+		const store = createLegacyStore({
+			readCache: () => {
+				if (locked-- > 0) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+				return JSON.stringify({ list: bytes.toString("base64"), sig });
+			},
+			writeCache: () => {},
+			fetchList: async () => {
+				throw new Error("offline");
+			},
+			publicKey: pub,
+			firstWaitMs: 5000,
+		});
 		await store.ready();
 		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+	});
+
+	it("fetches again while no list was ever accepted, after a growing wait", async () => {
+		const { bytes, sig } = signed(doc(1, [A]));
+		let time = 0;
+		let online = false;
+		let fetches = 0;
+		const store = createLegacyStore({
+			readCache: () => undefined,
+			writeCache: () => {},
+			fetchList: async () => {
+				fetches++;
+				if (!online) throw new Error("offline");
+				return { bytes, sig };
+			},
+			publicKey: pub,
+			retryMs: [100, 1000],
+			now: () => time,
+		});
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 1);
+		time = 100;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		// The next wait is longer
+		time = 600;
+		online = true;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		time = 1100;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		// Accepted: no more fetches of its own (the 6 h refresh is legacyListMain's)
+		time = 99999;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 3);
 	});
 
 	it("allows exactly the listed code of a listed plugin", () => {

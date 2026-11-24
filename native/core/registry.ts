@@ -54,8 +54,8 @@ export type CoreState = {
 	 */
 	legacyOff?: string[];
 	/**
-	 * Url -> the sha256 of the served code whose old-format natives ran here. Accepting other code at that url takes it
-	 * off the old format for good, whatever the list says at that moment and also after an uninstall.
+	 * Url -> the sha256 of the first code with old-format natives accepted (or run) here. Accepting other code at that
+	 * url takes it off the old format for good, whatever the list says at that moment and also after an uninstall.
 	 */
 	legacyRan?: Record<string, string>;
 };
@@ -238,9 +238,17 @@ export const createRegistry = (deps: RegistryDeps) => {
 	/** Whether this version's old-format natives would run once accepted (what the confirmation says) */
 	const legacyWouldRun = (url: string, before: Version | undefined, version: Version) =>
 		legacyRuns(url, version) && !leaves(url, before, version);
+	/**
+	 * A url's first accepted code with old-format natives is remembered, whether or not they ran (the list may have been
+	 * missing then): other code accepted there later leaves the format, also after an uninstall
+	 */
+	const noteLegacy = (url: string, version: Version) => {
+		if (!isDevUrl(url) && legacyRan[url] === undefined && legacyNativesOf(version).length !== 0) legacyRan[url] = servedOf(version);
+	};
 	/** The only way a version becomes accepted: leaving listed old-format code for unlisted code is for good */
 	const accept = (record: CoreRecord, version: Version) => {
 		leavesLegacy(record.url, record.accepted, version);
+		noteLegacy(record.url, version);
 		record.accepted = version;
 	};
 	// #endregion
@@ -343,6 +351,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		// Queued by url, but a moveUrl to this url (queued by its source) may have landed while the user was asked
 		if (state.plugins[url] !== undefined) throw new Error(`[Luna.core] ${url} was installed meanwhile: try again`);
 		leavesLegacy(url, undefined, version);
+		noteLegacy(url, version);
 		state.plugins[url] = { url, name: version.package.name, enabled: true, accepted: version };
 		await save();
 		return true;

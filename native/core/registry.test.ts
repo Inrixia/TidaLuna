@@ -477,6 +477,25 @@ describe("core registry", () => {
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
 	});
 
+	it("takes a plugin off the old format once other code replaces its listed version, also if that never ran", async () => {
+		const { deps, serve, list } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		list(URL, "v1");
+		let readable = false;
+		const registry = createRegistry({ ...deps, legacyAllows: (id, sha) => readable && deps.legacyAllows(id, sha) });
+		// Installed while the list is missing: its natives never ran
+		await registry.install(URL, asker(true));
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		await registry.uninstall(URL);
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.install(URL, asker(true));
+		await registry.uninstall(URL);
+		readable = true;
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		await registry.install(URL, asker(true));
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
 	it("runs the old format for no code off the list: a new plugin, one of the same name elsewhere, a second migrate", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
