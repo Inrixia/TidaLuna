@@ -135,15 +135,15 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 							{collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
 						</IconButton>
 						<RegistryBadge plugin={plugin} rawSha256={packageSha256s(pkg)} name={pkg?.name ?? plugin.name} />
+						{!collapsed && !isCore && (
+							<Tooltip
+								title={enabled ? `Disable ${name}` : `Enable ${name}`}
+								children={<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />}
+							/>
+						)}
 						<PluginUpdateButton plugin={plugin} />
 						{!collapsed && (
 							<>
-								{!isCore && (
-									<Tooltip
-										title={enabled ? `Disable ${name}` : `Enable ${name}`}
-										children={<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />}
-									/>
-								)}
 								<SpinningButton title="Reload plugin" spin={loading} disabled={disabled} onClick={handleReload} />
 								<LiveReloadToggle plugin={plugin} disabled={disabled} sx={{ marginLeft: 1 }} />
 								<SpinningButton

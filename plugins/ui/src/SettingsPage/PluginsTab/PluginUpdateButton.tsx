@@ -1,15 +1,19 @@
 import React from "react";
 
 import { asSentence, LunaPlugin, LunaRegistry, type PluginPackage } from "@luna/core";
+import { ipcRenderer } from "@luna/lib";
 import { useConfirm } from "material-ui-confirm";
 
+import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
+import type { NativePermissionEntry } from "../../../../../native/NativeModule/trust";
 import { LunaLink } from "../../components";
 import { RegistryBadge, registryEntryOf, useRegistry } from "./RegistryBadge";
 
@@ -53,34 +57,84 @@ const UpdateRegistryStatus = ({ plugin, update }: { plugin: LunaPlugin; update: 
 	);
 };
 
-/** What the update changes that the user should know about before running it */
-const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
-	const { files, added, removed } = LunaPlugin.nativeFileChanges(plugin.code ?? "", update.code ?? "");
+const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
+	href === undefined ? <>{children}</> : <LunaLink href={href}>{children}</LunaLink>;
+
+/**
+ * The plugin's native files allowed for all versions: the update's native code runs without asking. "Ask again" chooses
+ * to revoke those answers when the user updates (as Luna Settings > Native permissions does), so they ask when the new
+ * code loads. Not at once: that would stop the running version's native code too, also if the user doesn't update.
+ */
+const AllVersionsWarning = ({ url, onAskAgain }: { url: string; onAskAgain: (keys: string[]) => void }) => {
+	const [entries, setEntries] = React.useState<NativePermissionEntry[]>([]);
+	const [chosen, setChosen] = React.useState(false);
+	React.useEffect(() => {
+		ipcRenderer
+			.invoke("__Luna.nativePermissions.list")
+			.then((list: NativePermissionEntry[]) => setEntries(LunaPlugin.allowedForAllVersions(list, url)))
+			.catch(() => {});
+	}, [url]);
+	const askAgain = React.useCallback(() => {
+		onAskAgain(entries.map(({ key }) => key));
+		setChosen(true);
+	}, [entries, onAskAgain]);
+
+	if (entries.length === 0) return null;
+	const files = entries.map(({ fileName }) => fileName).join(", ");
+	return (
+		<Alert
+			severity="warning"
+			sx={{ marginTop: 1 }}
+			action={
+				chosen ? undefined : (
+					<Button color="inherit" size="small" onClick={askAgain}>
+						Ask again
+					</Button>
+				)
+			}
+		>
+			{chosen
+				? `If you update, ${files} will ask for permission again.`
+				: `Native code allowed for all versions (${files}): the update's runs without asking.`}
+		</Alert>
+	);
+};
+
+/** What the update changes, with links to its source where the packages say */
+const UpdateDetails = ({ plugin, update, onAskAgain }: { plugin: LunaPlugin; update: PluginPackage; onAskAgain: (keys: string[]) => void }) => {
+	const current: Partial<PluginPackage> = plugin.package ?? {};
+	const links = LunaPlugin.updateLinks(plugin.url, current, update);
 	return (
 		<>
 			<Typography variant="body2" gutterBottom>
-				<b>{plugin.package?.version ?? "?"}</b> → <b>{update.version ?? "?"}</b>
+				<MaybeLink href={links.from}>
+					<b>{current.version ?? "?"}</b>
+				</MaybeLink>
+				{" → "}
+				<MaybeLink href={links.to}>
+					<b>{update.version ?? "?"}</b>
+				</MaybeLink>
+				{links.release !== undefined && (
+					<>
+						{" ("}
+						<LunaLink href={links.release.page}>release {links.release.tag}</LunaLink>)
+					</>
+				)}
 			</Typography>
-			<Typography variant="body2" gutterBottom title={`sha256 ${plugin.package?.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
-				Code sha256: <code>{shortHash(plugin.package?.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
+			<Typography variant="body2" gutterBottom title={`sha256 ${current.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
+				Code sha256: <code>{shortHash(current.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
+				{links.compare !== undefined && (
+					<>
+						{" ("}
+						<MaybeLink href={links.compare}>changes</MaybeLink>)
+					</>
+				)}
 			</Typography>
 			<UpdateRegistryStatus plugin={plugin} update={update} />
-			<Typography variant="body2" gutterBottom>
-				Until you update, the version you have keeps running. The new code runs with the same access to TIDAL as the plugin has now. Unless the
-				registry verified it, nobody checked what it does: update only if you trust the author and {plugin.url}.
+			<Typography variant="body2">
+				Update only if you trust the author and <LunaLink href={plugin.url}>{plugin.url}</LunaLink>
 			</Typography>
-			{files.length !== 0 && (
-				<Typography variant="body2" gutterBottom>
-					Native code (runs in TIDAL's main process): {files.join(", ")}. Changed native files ask for permission again, unless you allowed this
-					plugin for all versions.
-				</Typography>
-			)}
-			{added.length !== 0 && (
-				<Typography variant="body2" sx={{ color: "warning.main" }} gutterBottom>
-					New native files: {added.join(", ")}
-				</Typography>
-			)}
-			{removed.length !== 0 && <Typography variant="body2">Removed native files: {removed.join(", ")}</Typography>}
+			<AllVersionsWarning url={plugin.url} onAskAgain={onAskAgain} />
 		</>
 	);
 };
@@ -93,15 +147,23 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 
 	const onClick = React.useCallback(async () => {
 		if (update === undefined) return;
+		// Answers the user chose to revoke in the dialog ("Ask again"), revoked only if they update
+		let revoke: string[] = [];
 		const { confirmed } = await confirm({
 			title: `Update ${plugin.name}?`,
-			description: <UpdateDetails plugin={plugin} update={update} />,
+			description: <UpdateDetails plugin={plugin} update={update} onAskAgain={(keys) => (revoke = keys)} />,
 			confirmationText: "Update",
 			cancellationText: "Not now",
 		});
 		// One revoked while the dialog was open is refused by acceptUpdate, with a message
 		if (!confirmed) return;
 		setUpdating(true);
+		try {
+			for (const key of revoke) await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key);
+		} catch (err) {
+			// The update still applies: files already revoked ask when it loads, the rest keep their answer
+			plugin.trace.msg.err.withContext("Couldn't revoke all of the plugin's native permissions")(err);
+		}
 		try {
 			// The update the user was shown, even if a newer one arrived meanwhile
 			await plugin.acceptUpdate(update);
@@ -124,18 +186,11 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			</Tooltip>
 		);
 	return (
-		<Tooltip title={`Update to ${update.version ?? "a new version"}`}>
+		<Tooltip title={`Update plugin${update.version === undefined ? "" : ` to ${update.version}`}`}>
 			<span>
-				<Button
-					size="small"
-					variant="outlined"
-					disabled={updating}
-					onClick={onClick}
-					startIcon={<SystemUpdateAltIcon />}
-					sx={{ marginLeft: 1, color: green[400], borderColor: green[400] }}
-				>
-					Update
-				</Button>
+				<IconButton aria-label={`Update ${plugin.name}`} disabled={updating} onClick={onClick} sx={{ color: green[400] }}>
+					<SystemUpdateAltIcon />
+				</IconButton>
 			</span>
 		</Tooltip>
 	);

@@ -6,7 +6,7 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
-import { codeToImport, isCoreUrl, isDevUrl, nativeFileChanges, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
+import { allowedForAllVersions, codeToImport, isCoreUrl, isDevUrl, sha256Hex, updateLinks, updateWaitsForUser } from "./helpers/pluginUpdates";
 import {
 	asSentence,
 	changedDependency,
@@ -49,6 +49,8 @@ export type PluginPackage = {
 	};
 	description?: React.ReactNode;
 	version?: string;
+	/** The commit the plugin was built from, when its CI set it (build/plugins/buildSource.ts) */
+	commit?: string;
 	dependencies?: string[];
 	devDependencies?: string[];
 	code?: string;
@@ -687,8 +689,10 @@ export class LunaPlugin {
 		const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: update.rawSha256 });
 		return decision.load ? undefined : decision.revoked;
 	}
-	/** The native files of an update and which it adds or removes, for display (see helpers/pluginUpdates) */
-	public static readonly nativeFileChanges = nativeFileChanges;
+	/** Links to the source of an update and what it changes, for display (see helpers/pluginUpdates) */
+	public static readonly updateLinks = updateLinks;
+	/** The plugin's native permission answers that hold for all versions (see helpers/pluginUpdates) */
+	public static readonly allowedForAllVersions = allowedForAllVersions;
 
 	private static readonly announcedUpdates: Set<string> = new Set();
 	private static announceTimeout?: ReturnType<typeof setTimeout>;

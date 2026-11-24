@@ -4,7 +4,17 @@ import { test } from "node:test";
 
 import { createHash } from "node:crypto";
 
-import { codeToImport, isDevUrl, nativeFileChanges, nativeFileNames, sha256Hex, updateWaitsForUser } from "./pluginUpdates";
+import {
+	allowedForAllVersions,
+	codeToImport,
+	comparePage,
+	isDevUrl,
+	releaseOf,
+	sha256Hex,
+	sourceRepo,
+	updateLinks,
+	updateWaitsForUser,
+} from "./pluginUpdates";
 
 const installed = { codeChanged: true, hasCode: true, isDev: false, liveReload: false, isCore: false };
 
@@ -50,33 +60,79 @@ test("sha256Hex hashes the UTF-8 text", async () => {
 	assert.notEqual(await sha256Hex(codeToImport(code, "https://a/P")), await sha256Hex(codeToImport(code, "https://b/P")));
 });
 
-const register = (file: string) => `await __ipcRenderer.invoke("__Luna.registerNative", "${file}", "export const x = 1;");`;
+const A = "a".repeat(40);
+const B = "b".repeat(40);
+const RELEASE = "https://github.com/Inrixia/luna-plugins/releases/download/latest/@inrixia.VolumeScroll";
+const LATEST = { tag: "latest", page: "https://github.com/Inrixia/luna-plugins/releases/tag/latest" };
 
-test("finds the native files a bundle registers", () => {
-	const bundle = [
-		register("discord.native.ts"),
-		`const b = await __ipcRenderer.invoke( '__Luna.registerNative' , 'download.native.ts' , "code");`,
-		// The same file twice is listed once
-		register("discord.native.ts"),
-	].join("\n");
-	assert.deepEqual(nativeFileNames(bundle), ["discord.native.ts", "download.native.ts"]);
+test("finds the repository a plugin is built from", () => {
+	assert.equal(sourceRepo({ repository: { url: "git+https://git.cafe/me/plugins.git" } }, "https://x.example/P"), "https://git.cafe/me/plugins");
+	assert.equal(sourceRepo({ repository: "https://git.cafe/me/plugins" }, "https://x.example/P"), "https://git.cafe/me/plugins");
+	assert.equal(sourceRepo({ repository: "github:o/r" }, "https://x.example/P"), "https://github.com/o/r");
+	assert.equal(sourceRepo({ repository: "o/r" }, "https://x.example/P"), "https://github.com/o/r");
+	// The release the code downloads from wins over what the package claims
+	assert.equal(sourceRepo({ repository: { url: "https://github.com/x/benign" } }, RELEASE), "https://github.com/Inrixia/luna-plugins");
+	assert.equal(sourceRepo({ repository: { url: "javascript:alert(1)//a/b" } }, "https://x.example/P"), undefined);
+	assert.equal(sourceRepo({}, "https://x.example/P"), undefined);
 });
 
-test("ignores bundles without native code and other channels", () => {
-	assert.deepEqual(nativeFileNames(`fetch("https://example.com"); __ipcRenderer.invoke("__Luna.other", "x.native.ts", "");`), []);
-});
-
-test("unescapes the file name", () => {
-	assert.deepEqual(nativeFileNames(`__ipcRenderer.invoke("__Luna.registerNative", "we\\"ird.native.ts", "");`), [`we"ird.native.ts`]);
-});
-
-test("lists the native files an update adds and removes", () => {
-	const current = [register("a.native.ts"), register("b.native.ts")].join("\n");
-	const update = [register("b.native.ts"), register("c.native.ts")].join("\n");
-	assert.deepEqual(nativeFileChanges(current, update), {
-		files: ["b.native.ts", "c.native.ts"],
-		added: ["c.native.ts"],
-		removed: ["a.native.ts"],
+test("finds the release a plugin url downloads from", () => {
+	assert.deepEqual(releaseOf(RELEASE), LATEST);
+	assert.deepEqual(releaseOf("https://git.cafe/me/p/releases/download/v1.2/P"), { tag: "v1.2", page: "https://git.cafe/me/p/releases/tag/v1.2" });
+	assert.deepEqual(releaseOf("https://github.com/o/r/releases/download/plugin/v1.2/P"), {
+		tag: "plugin/v1.2",
+		page: "https://github.com/o/r/releases/tag/plugin%2Fv1.2",
 	});
-	assert.deepEqual(nativeFileChanges("", ""), { files: [], added: [], removed: [] });
+	assert.equal(releaseOf("https://github.com/o/r/releases/download/%E0/P"), undefined);
+	assert.equal(releaseOf("http://127.0.0.1:3000/P"), undefined);
+});
+
+test("compares two commits only when both are known and differ", () => {
+	const repo = "https://github.com/o/r";
+	assert.equal(comparePage(repo, A, B), `${repo}/compare/${A}...${B}`);
+	assert.equal(comparePage(repo, A, A), undefined);
+	assert.equal(comparePage(repo, A, undefined), undefined);
+	assert.equal(comparePage(repo, "../x", B), undefined);
+	assert.equal(comparePage(undefined, A, B), undefined);
+});
+
+test("update links: commits when the builds name them, and the rolling release", () => {
+	const repo = "https://github.com/Inrixia/luna-plugins";
+	assert.deepEqual(updateLinks(RELEASE, { commit: A }, { commit: B, repository: { url: "https://github.com/x/benign" } }), {
+		from: `${repo}/commit/${A}`,
+		to: `${repo}/commit/${B}`,
+		compare: `${repo}/compare/${A}...${B}`,
+		release: LATEST,
+	});
+});
+
+test("update links: the installed version's repository wins over the update's", () => {
+	const current = { repository: { url: "https://git.cafe/me/p" }, commit: A };
+	const links = updateLinks("https://x.example/P", current, { repository: { url: "https://evil.example/x/y" }, commit: B });
+	assert.equal(links.compare, `https://git.cafe/me/p/compare/${A}...${B}`);
+});
+
+test("update links: a rolling release is linked as the release, a version tag as the version", () => {
+	assert.deepEqual(updateLinks(RELEASE, {}, { version: "1.3.0" }), { from: undefined, to: undefined, compare: undefined, release: LATEST });
+	const tagged = "https://github.com/o/r/releases/download/v1.3.0/P";
+	assert.deepEqual(updateLinks(tagged, {}, { version: "1.3.0" }), {
+		from: undefined,
+		to: "https://github.com/o/r/releases/tag/v1.3.0",
+		compare: undefined,
+		release: undefined,
+	});
+	assert.deepEqual(updateLinks("https://x.example/P", {}, {}), { from: undefined, to: undefined, compare: undefined, release: undefined });
+});
+
+test("finds the plugin's answers allowed for all versions", () => {
+	const entries = [
+		{ key: "1", fileName: "a.native.ts", url: "https://x/P", answer: "allowUpdates" },
+		{ key: "2", fileName: "b.native.ts", url: "https://x/P", answer: "allow" },
+		{ key: "3", fileName: "c.native.ts", claimedUrl: "https://x/P", answer: "allowUpdates" },
+		{ key: "4", fileName: "a.native.ts", url: "https://y/P", answer: "allowUpdates" },
+	];
+	assert.deepEqual(
+		allowedForAllVersions(entries, "https://x/P").map(({ key }) => key),
+		["1", "3"],
+	);
 });

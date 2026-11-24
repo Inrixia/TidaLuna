@@ -3,6 +3,8 @@ import type { Plugin } from "esbuild";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { basename, dirname } from "path";
 
+import { buildSource } from "./buildSource";
+
 export const writeBundlePlugin = (pluginPackagePath?: string): Plugin => ({
 	name: "writeBundlePlugin",
 	setup(build) {
@@ -21,6 +23,7 @@ export const writeBundlePlugin = (pluginPackagePath?: string): Plugin => ({
 						outputFile.path.replace(/\.mjs$/, ".json"),
 						JSON.stringify({
 							...pluginPackage,
+							...buildSource(process.env, pluginPackage),
 							hash: outputFile.hash,
 						}),
 					);
