@@ -1,4 +1,5 @@
 // Pure decisions about Luna's own native code, kept apart so they can be tested without Electron.
+import semverParse from "semver/functions/parse";
 
 export type CoreNativeRule = "allow" | "deny" | "confirm";
 // Core native exports page code may not call, or only after the user confirms in Luna's confirmation window
@@ -24,24 +25,14 @@ export const coreNativeArgsError = (exportName: string, args: unknown[]): string
 };
 
 /**
- * Compares two release versions like "1.25.0" or "1.25.0-beta": negative if `a` is older, 0 if the same, positive if
- * newer. A pre-release is older than its release.
+ * Compares two release versions like "1.25.0" or "1.25.0-beta" by semver: negative if `a` is older, 0 if the same,
+ * positive if newer. A pre-release is older than its release. A tag that isn't a version at all (`isReleaseVersion`
+ * only checks it can't point anywhere else) compares as 0, so nothing is claimed about it.
  */
 export const compareVersions = (a: string, b: string): number => {
-	const parse = (version: string) => {
-		const [main, ...pre] = version.replace(/^v/, "").split("-");
-		return { parts: main.split(".").map((part) => Number.parseInt(part, 10) || 0), pre: pre.join("-") };
-	};
-	const left = parse(a);
-	const right = parse(b);
-	for (let i = 0; i < Math.max(left.parts.length, right.parts.length); i++) {
-		const diff = (left.parts[i] ?? 0) - (right.parts[i] ?? 0);
-		if (diff !== 0) return diff;
-	}
-	if (left.pre === right.pre) return 0;
-	if (left.pre === "") return 1;
-	if (right.pre === "") return -1;
-	return left.pre.localeCompare(right.pre, "en", { numeric: true });
+	const left = semverParse(a, { loose: true });
+	const right = semverParse(b, { loose: true });
+	return left === null || right === null ? 0 : left.compare(right);
 };
 
 /**

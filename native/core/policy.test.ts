@@ -32,6 +32,15 @@ describe("core native rules", () => {
 		expect(compareVersions("1.9.0", "1.10.0") < 0).toBeTruthy();
 		expect(compareVersions("1.25.0-beta.2", "1.25.0-beta.10") < 0).toBeTruthy();
 		expect(compareVersions("v1.2.3", "1.2.3")).toBe(0);
+		expect(compareVersions("1.25.0-beta", "1.25.0-beta")).toBe(0);
+		expect(compareVersions("1.26.0", "1.25.9") > 0).toBeTruthy();
+	});
+
+	it("claims nothing about a tag that is not a version", () => {
+		expect(compareVersions("latest", "1.2.3")).toBe(0);
+		expect(compareVersions("1.2.3", "nightly-2026")).toBe(0);
+		const [, lines] = coreNativeQuestion("update", ["latest"], "1.25.0");
+		expect(lines.join(" ")).not.toMatch(/older/);
 	});
 
 	it("refuses update arguments that would fail before asking", () => {
