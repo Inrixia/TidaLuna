@@ -85,5 +85,11 @@ declare global {
 		netSettings(): Promise<{ strictMedia: boolean }>;
 		/** Turning it off asks the user */
 		setStrictMedia(on: boolean): Promise<boolean>;
+		/** Asks the user to allow a plugin store's origin (native/core/stores.ts); false if they didn't */
+		allowStore(url: string): Promise<boolean>;
+		/** The origins Luna reads plugins from: default stores, allowed ones, installed plugins' */
+		storeOrigins(): Promise<string[]>;
+		/** The store origins the page's connect-src had at its load: readable now */
+		pageStores(): Promise<string[]>;
 	};
 }

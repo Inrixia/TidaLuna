@@ -17,6 +17,7 @@ import { askerFor, choiceAskerFor } from "./confirmWindow";
 import { derivedHosts, derivedHostsReady } from "./derivedHostsMain";
 import { legacyAllows, legacyHosts, legacyListLoaded, legacyListReady } from "./legacyListMain";
 import { boundedCache } from "./policy";
+import { baselineEntries } from "../cspReportOnly";
 import { cspSources } from "./hosts";
 import { createNet, type AskHost, type HostAnswer } from "./net";
 import { createRegistry, type PluginPackage } from "./registry";
@@ -73,6 +74,7 @@ export const registry = () =>
 		legacyHosts,
 		derivedHosts,
 		derivedReady: derivedHostsReady,
+		storeBaseline: baselineEntries,
 		wasMigrated: () => existsSync(migratedFile()),
 		markMigrated: () => {
 			mkdirSync(path.dirname(migratedFile()), { recursive: true });
@@ -119,6 +121,8 @@ ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => thenChanged([url],
 ipcHandle("__LunaCore.disable", (_, url: unknown) => thenChanged([url], () => registry().disable(url)));
 ipcHandle("__LunaCore.uninstall", (_, url: unknown) => thenChanged([url], () => registry().uninstall(url)));
 ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => thenChanged([from, to], () => registry().moveUrl(from, to)));
+ipcHandle("__LunaCore.allowStore", (event, url: unknown) => registry().allowStore(url, askerFor(event.sender)));
+ipcHandle("__LunaCore.storeOrigins", () => registry().storeOrigins());
 
 // luna.fetch (net.ts). Node's fetch, not Electron's net: no session and no cookie jar, so no cookies of the user's
 // account are sent, and none a response sets reach another plugin. It doesn't use the system's proxy settings
@@ -179,12 +183,25 @@ export const pluginPageHosts = (): string[] => {
 		return [];
 	}
 };
+/** Store origins Luna reads plugins from (stores.ts): the page's connect-src lists them for Luna's own store reads */
+export const pluginStoreOrigins = (): string[] => {
+	try {
+		return registry().storeOrigins();
+	} catch (err) {
+		console.error("[Luna.core] Can't read the store origins for the page's CSP:", err);
+		return [];
+	}
+};
 /** The same as CSP sources (injector.ts, when the TIDAL shell loads: a plugin enabled later is in it from the next reload) */
 export const pluginCspHosts = (): string[] => cspSources(pluginPageHosts());
 /** The entries the page's connect-src was built from at its last load: render/src/pageNet.ts reads them */
 let pageConnect: string[] = [];
 export const setPageConnect = (entries: string[]) => void (pageConnect = entries);
 ipcHandle("__LunaCore.pageConnect", () => pageConnect);
+/** The store origins in that connect-src: what Luna's UI can read now, without a reload (plugins/ui allowSource.ts) */
+let pageStores: string[] = [];
+export const setPageStores = (origins: string[]) => void (pageStores = origins);
+ipcHandle("__LunaCore.pageStores", () => pageStores);
 
 // #region Network settings
 const netSettingsFile = () => path.join(app.getPath("userData"), "luna-core", "net-settings.json");

@@ -12,7 +12,7 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
-import { netSettings, pluginPageHosts, setPageConnect } from "./core/registryMain";
+import { netSettings, pluginPageHosts, pluginStoreOrigins, setPageConnect, setPageStores } from "./core/registryMain";
 import { cspSources } from "./core/hosts";
 import { baselineEntries, enforcedPolicy, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
@@ -163,13 +163,17 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		const headers = new Headers(res.headers);
 		// The hosts enabled plugins may reach are listed too: what is still reported is what no plugin declared
 		const pluginHosts = pluginPageHosts();
-		const pluginSources = cspSources(pluginHosts);
+		// Plus the store origins, for Luna's own reads of store.json and plugin packages (core/stores.ts). Page plugins'
+		// own requests to them still go through luna.fetch and their hosts (pageConnect doesn't list them)
+		const storeOrigins = pluginStoreOrigins();
+		const pluginSources = [...cspSources(pluginHosts), ...storeOrigins];
 		if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy(tidalPolicy, pluginSources));
 		// Strict network: page code reaches only TIDAL, Luna and the plugins' accepted hosts (cspReportOnly.ts enforcedPolicy).
 		// A host allowed later reaches the page from its next load; until then render/src/pageNet.ts sends page plugins'
 		// fetches to it through luna.fetch
 		headers.set("Content-Security-Policy", enforcedPolicy(pluginSources, netSettings()));
 		setPageConnect([...baselineEntries, ...pluginHosts]);
+		setPageStores(storeOrigins);
 		body = body.replace(
 			/(<meta http-equiv="Content-Security-Policy")|(<script type="module" crossorigin src="(.*?)">)/g,
 			(match, cspMatch, scriptMatch, src) => {

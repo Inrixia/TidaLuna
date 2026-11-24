@@ -13,6 +13,7 @@ import { parseBundle, worldFilePrefix } from "../worldBundle";
 import { declaredHosts, hostsDiff, isLocalEntry, parseHostEntry, sameHosts, settingKeyOf } from "./hosts";
 import { isCoreUrl, isDevUrl, nativesDiff } from "./policy";
 import { pluginIdOf, servedSha256 } from "./legacyList";
+import { defaultStoreOrigins, storeOriginOf, storeUrlAllowed } from "./stores";
 
 // #region Types
 export type PluginPackage = {
@@ -96,6 +97,8 @@ export type CoreState = {
 	legacyFirst?: Record<string, string>;
 	/** Url -> host entry (`https://api.example.com`) -> the user's runtime answer (net.ts) */
 	netGrants?: Record<string, Record<string, HostGrant>>;
+	/** Store origins the user allowed (stores.ts): Luna reads plugins there, and the page's connect-src lists them */
+	storeOrigins?: string[];
 };
 export type PendingUpdate = {
 	version?: string;
@@ -152,6 +155,11 @@ export type RegistryDeps = {
 	wasMigrated?(): boolean;
 	markMigrated?(): void | Promise<void>;
 	write(state: CoreState): void | Promise<void>;
+	/**
+	 * The page's baseline hosts (cspReportOnly.ts baselineEntries): with them, a plugin is installed or moved to only from
+	 * a store origin (stores.ts storeUrlAllowed). Without them any url is fetched (tests)
+	 */
+	storeBaseline?: string[];
 	fetchPackage(url: string): Promise<PluginPackage>;
 	fetchCode(url: string): Promise<string>;
 	/** The text of `${url}.world.json` */
@@ -279,6 +287,23 @@ export const createRegistry = (deps: RegistryDeps) => {
 		state.legacyFirst !== null && typeof state.legacyFirst === "object" ? state.legacyFirst : (state.legacyFirst = {});
 	const netGrants: Record<string, Record<string, HostGrant>> =
 		state.netGrants !== null && typeof state.netGrants === "object" ? state.netGrants : (state.netGrants = {});
+	const allowedStores: string[] = Array.isArray(state.storeOrigins)
+		? (state.storeOrigins = state.storeOrigins.filter((origin): origin is string => storeOriginOf(origin) === origin))
+		: (state.storeOrigins = []);
+	/** Luna's default stores, the ones the user allowed and the origins of installed plugins */
+	const storeOrigins = (): string[] => {
+		const origins = new Set([...defaultStoreOrigins, ...allowedStores]);
+		for (const url of Object.keys(state.plugins)) {
+			const origin = storeOriginOf(url);
+			if (origin !== undefined) origins.add(origin);
+		}
+		return [...origins];
+	};
+	/** Main fetches what page code names as a plugin url: only from a store origin, or it would reach any host for it */
+	const fromStore = (url: string) => {
+		if (deps.storeBaseline === undefined || storeUrlAllowed(url, storeOrigins(), deps.storeBaseline)) return;
+		throw new Error(`[Luna.core] ${storeOriginOf(url) ?? url} isn't a plugin store you allowed: allow its store in Luna Settings first`);
+	};
 	// Plugins from before this format kept their list in `legacy`: the registry's signed list replaces it
 	delete (state as { legacy?: unknown }).legacy;
 	let saving: Promise<unknown> = Promise.resolve();
@@ -531,6 +556,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const install = async (url: string, ask: Ask): Promise<boolean> => {
 		// Installing an installed plugin enables it
 		if (state.plugins[url] !== undefined) return enable(url, ask);
+		fromStore(url);
 		await ready();
 		const version = withDerived(await fetchVersion(url));
 		const lines = describe(url, version, legacyWouldRun(url, undefined, version), legacyNetWouldRun(url, undefined, version));
@@ -610,6 +636,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (record === undefined || from === to) return false;
 		if (isDevUrl(from) || isDevUrl(to) || isCoreUrl(to)) throw new Error(`[Luna.core] Can't move ${from} to ${to}`);
 		if (state.plugins[to] !== undefined) throw new Error(`[Luna.core] ${to} is already installed`);
+		fromStore(to);
 		let found: Version | undefined;
 		try {
 			found = await fetchVersion(to);
@@ -775,6 +802,28 @@ export const createRegistry = (deps: RegistryDeps) => {
 		 * declared or derived hosts that were confirmed, the hosts the old format list carries for listed plugins, and
 		 * "always" answers. Never `{setting:}` entries: page code can write any setting
 		 */
+		storeOrigins,
+		/** The user allows a store's origin (asked in Luna's window): its plugins can be installed, from TIDAL's next load listed */
+		allowStore: async (url: unknown, ask: Ask): Promise<boolean> => {
+			const origin = storeOriginOf(url);
+			if (origin === undefined) throw new Error(`[Luna.core] Not a store url: ${String(url)}`);
+			// GitHub and the other https hosts of the baseline are in the page's connect-src already; a dev port on this computer
+			// isn't (main fetches dev plugins without asking, the page reads a dev store only once it's allowed)
+			if (storeOrigins().includes(origin) || (deps.storeBaseline !== undefined && storeUrlAllowed(origin, [], deps.storeBaseline) && !isDevUrl(origin)))
+				return true;
+			const allowed = await ask({
+				title: `Allow the plugin store ${origin}?`,
+				lines: [
+					"Luna then lists and installs plugins from it. Each plugin still asks before it's installed.",
+					"TIDAL's page may read from this address: it takes effect when TIDAL reloads.",
+				],
+				confirmText: "Allow store",
+			});
+			if (!allowed) return false;
+			if (!allowedStores.includes(origin)) allowedStores.push(origin);
+			await save();
+			return true;
+		},
 		pageHosts: (): string[] => {
 			const hosts = new Set<string>();
 			for (const record of Object.values(state.plugins)) {

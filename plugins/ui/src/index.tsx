@@ -14,6 +14,7 @@ import { currentSettingsTab, LunaPage } from "./SettingsPage";
 export { currentSettingsTab, SettingsTabs } from "./SettingsPage";
 export type { SettingsTabContent, SettingsTabDefinition, SettingsTabOverride, SettingsTabProps } from "./SettingsPage";
 import { addToStores, normalizeStoreUrl, storeUrls } from "./SettingsPage/PluginStoreTab";
+import { allowSource } from "./SettingsPage/allowSource";
 import { fetchReleases } from "./SettingsPage/SettingsTab/LunaClientUpdate";
 
 import { pkg } from "../../lib.native/src/index.native";
@@ -74,7 +75,8 @@ ipcRenderer.onOpenUrl(unloads, async (reqUrl) => {
 					confirmationText: "Add store",
 					cancellationText: "Cancel",
 				});
-				if (res.confirmed) addToStores(value);
+				// Luna core asks too, in its own window: TIDAL's page may read from the store's origin (SettingsPage/allowSource.ts)
+				if (res.confirmed && (await allowSource(value)) !== "denied") addToStores(value);
 			}
 			return;
 		case "settings/plugins":

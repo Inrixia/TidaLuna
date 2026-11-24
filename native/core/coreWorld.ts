@@ -193,6 +193,9 @@ export const exposeCore = () => {
 		forgetGrant: (url: unknown, entry: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.forgetGrant", url, entry),
 		netSettings: (): Promise<{ strictMedia: boolean }> => ipcRenderer.invoke("__LunaCore.netSettings"),
 		setStrictMedia: (on: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.setStrictMedia", on),
+		allowStore: (url: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.allowStore", url),
+		storeOrigins: (): Promise<string[]> => ipcRenderer.invoke("__LunaCore.storeOrigins"),
+		pageStores: (): Promise<string[]> => ipcRenderer.invoke("__LunaCore.pageStores"),
 	});
 };
 // #endregion

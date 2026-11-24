@@ -7,6 +7,7 @@ import { LunaPlugin } from "@luna/core";
 
 import { Messager } from "@luna/core";
 import { addToStores } from ".";
+import { allowSource, reloadToRead } from "../allowSource";
 
 const successSx = {
 	"& .MuiOutlinedInput-root:hover:not(.Mui-focused) .MuiOutlinedInput-notchedOutline": {
@@ -37,10 +38,14 @@ export const InstallFromUrl = React.memo(() => {
 		try {
 			// Sanity check url
 			const url = new URL(urlValue).href;
+			// A new origin: the user allows it in Luna's window, readable once TIDAL reloads
+			const access = await allowSource(url);
+			if (access === "denied") return setErr(`Not allowed: ${new URL(url).origin}`);
+			if (access === "reload" && !url.endsWith("/store.json")) return setErr(reloadToRead(url));
 			let successMessage;
 			if (url.endsWith("/store.json")) {
 				if (addToStores(url) === false) return setErr("Store already added");
-				successMessage = `Added store ${url}!`;
+				successMessage = access === "reload" ? `Added store ${url}. ${reloadToRead(url)}` : `Added store ${url}!`;
 			} else {
 				const plugin = await LunaPlugin.fromStorage({ url });
 				if (!plugin.installed) await plugin.install();

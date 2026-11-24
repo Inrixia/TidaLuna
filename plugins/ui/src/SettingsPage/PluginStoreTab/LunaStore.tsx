@@ -6,7 +6,10 @@ import Grid from "@mui/material/Grid";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
+import Button from "@mui/material/Button";
+
 import { LunaTrashButton, SpinningButton } from "../../components";
+import { allowSource, reloadToRead } from "../allowSource";
 import { LunaPluginHeader } from "../PluginsTab/LunaPluginHeader";
 import { LunaStorePlugin } from "./LunaStorePlugin";
 
@@ -20,10 +23,19 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	const [pkg, setPackage] = React.useState<StorePackage | undefined>(undefined);
 
 	const disabled = loading; // Disable controls while loading
+	// The page can't read the store's origin yet (strict network): the user may allow it
+	const [blocked, setBlocked] = React.useState(false);
+	const allow = React.useCallback(async () => {
+		const access = await allowSource(`${url}/store.json`);
+		if (access === "denied") return;
+		setBlocked(false);
+		if (access === "reload") setLoadError(reloadToRead(url));
+	}, [url]);
 
 	const fetchPackage = React.useCallback(async () => {
 		setLoading(true);
 		setLoadError(undefined);
+		setBlocked(false);
 		try {
 			const response = await fetch(`${url}/store.json`);
 			if (!response.ok) throw new Error(`Failed to fetch package: ${response.statusText}`);
@@ -33,6 +45,8 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 			// The local dev store is only up while developing plugins
 			if (url !== "http://127.0.0.1:3000") console.error("Error fetching package:", error);
 			setLoadError(error.message || "Unknown error occurred");
+			// A network error, not an answer: maybe the page's connect-src doesn't list the store
+			if (error instanceof TypeError) __LunaCore.pageStores().then((origins) => setBlocked(!origins.includes(new URL(url).origin)), () => {});
 			setPackage(undefined); // Clear package on error
 		} finally {
 			setLoading(false);
@@ -81,6 +95,7 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 				desc={desc}
 				children={
 					<>
+						{blocked && <Button size="small" variant="outlined" onClick={allow} children="Allow store" />}
 						<SpinningButton title="Reload store" spin={loading} disabled={disabled} onClick={fetchPackage} />
 						<LunaTrashButton disabled={isLocalDevStore} title="Remove store" onClick={onRemove} />
 					</>

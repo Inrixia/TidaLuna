@@ -1078,3 +1078,58 @@ describe("core registry network modes", () => {
 		assert.deepStrictEqual(registry.pageHosts(), []);
 	});
 });
+
+describe("core registry store origins", () => {
+	const BASELINE = ["github.com", "*.githubusercontent.com"];
+	it("installs and moves only from a store origin, and asks before it allows a new one", async () => {
+		const { deps, serve } = fakeDeps();
+		const registry = createRegistry({ ...deps, storeBaseline: BASELINE });
+		const EVIL = "https://evil.example/secret/plugin";
+		serve(EVIL, "v1");
+		const yes = asker(true);
+		await assert.rejects(registry.install(EVIL, yes), /isn't a plugin store you allowed/);
+		assert.strictEqual(yes.asked.length, 0, "refused before anything is fetched or asked");
+		// GitHub and dev plugins need nothing
+		const GH = "https://github.com/a/b/releases/download/latest/plugin";
+		serve(GH, "v1");
+		serve(DEV_URL, "v1");
+		assert.strictEqual(await registry.install(GH, asker(true)), true);
+		assert.strictEqual(await registry.install(DEV_URL, asker(true)), true);
+		await assert.rejects(registry.moveUrl(GH, EVIL), /isn't a plugin store you allowed/);
+		// The user says no, then yes
+		const no = asker(false);
+		assert.strictEqual(await registry.allowStore(`${EVIL}/store.json`, no), false);
+		assert.match(no.asked[0].title, /Allow the plugin store https:\/\/evil\.example\?/);
+		assert.strictEqual(registry.storeOrigins().includes("https://evil.example"), false);
+		assert.strictEqual(await registry.allowStore(EVIL, yes), true);
+		assert.ok(registry.storeOrigins().includes("https://evil.example"));
+		assert.strictEqual(await registry.install(EVIL, asker(true)), true);
+		// Allowed once: not asked again
+		const again = asker(false);
+		assert.strictEqual(await registry.allowStore(EVIL, again), true);
+		assert.strictEqual(again.asked.length, 0);
+	});
+	it("lists Luna's default stores and installed plugins' origins, and keeps allowed ones", async () => {
+		const { deps, serve, writes } = fakeDeps();
+		const registry = createRegistry({ ...deps, storeBaseline: BASELINE });
+		assert.ok(registry.storeOrigins().includes("https://release.radiant-lyrics.org"));
+		assert.ok(registry.storeOrigins().includes("http://127.0.0.1:3000"));
+		serve(DEV_URL.replace("3000", "3005"), "v1");
+		await registry.install(DEV_URL.replace("3000", "3005"), asker(true));
+		assert.ok(registry.storeOrigins().includes("http://127.0.0.1:3005"));
+		// GitHub needs no answer; a dev port on this computer does (the page's connect-src doesn't list it)
+		const gh = asker(false);
+		assert.strictEqual(await registry.allowStore("https://github.com/a/b/releases/download/latest/store.json", gh), true);
+		assert.strictEqual(gh.asked.length, 0);
+		const dev = asker(true);
+		assert.strictEqual(await registry.allowStore("http://127.0.0.1:4000/store.json", dev), true);
+		assert.strictEqual(dev.asked.length, 1);
+		await assert.rejects(registry.allowStore("file:///C:/x", dev), /Not a store url/);
+		const reread = createRegistry({ ...fakeDeps(writes.at(-1)!).deps, storeBaseline: BASELINE });
+		assert.ok(reread.storeOrigins().includes("http://127.0.0.1:4000"));
+		// A stored list that isn't one is dropped
+		const bad = createRegistry({ ...fakeDeps({ version: 1, plugins: {}, storeOrigins: ["https://ok.example", "javascript:x", 1 as never] }).deps });
+		assert.ok(bad.storeOrigins().includes("https://ok.example"));
+		assert.strictEqual(bad.storeOrigins().includes("javascript:x"), false);
+	});
+});
