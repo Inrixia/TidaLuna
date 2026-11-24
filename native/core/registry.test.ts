@@ -291,7 +291,7 @@ describe("core registry", () => {
 		assert.deepStrictEqual(trust, ["Update only if you trust the author and ", { text: RELEASE, href: `${RELEASE}.json` }]);
 	});
 
-	it("keeps the version the user has when the confirmation fails (Ask again couldn't revoke)", async () => {
+	it("keeps the version the user has when the confirmation is rejected (as when its Ask again action fails)", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });
 		const registry = createRegistry(deps);
