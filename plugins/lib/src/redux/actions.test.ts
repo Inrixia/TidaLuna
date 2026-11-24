@@ -16,6 +16,23 @@ describe("actions", () => {
 		expect(result).toBe("dispatched");
 	});
 
+	test("an action passes all its arguments to TIDAL's builder", async () => {
+		// actions.ts copies the builders once at import: seed a spy builder, then load a fresh copy of the module
+		vi.resetModules();
+		const core = await import("@luna/core");
+		const builder = vi.fn((a: unknown, b: unknown) => ({ type: "test/TWO_ARGS", payload: [a, b] }));
+		core.buildActions["test/TWO_ARGS"] = builder;
+		const dispatch = vi.spyOn(core.reduxStore, "dispatch").mockReturnValue(undefined as never);
+		try {
+			const fresh = (await import("./actions")).actions as unknown as Record<string, (...args: unknown[]) => unknown>;
+			fresh["test/TWO_ARGS"](1, 2);
+			expect(builder).toHaveBeenCalledExactlyOnceWith(1, 2);
+			expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: "test/TWO_ARGS", payload: [1, 2] });
+		} finally {
+			delete core.buildActions["test/TWO_ARGS"];
+		}
+	});
+
 	test("there is an action for each builder TIDAL had made when actions.ts was imported", () => {
 		expect(Object.keys(actions).sort()).toEqual(Object.keys(buildActions).sort());
 	});

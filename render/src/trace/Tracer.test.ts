@@ -71,6 +71,7 @@ describe("Tracer", () => {
 		// Messager imports the store before it dispatches
 		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(3));
 		// test/setup-dom.ts seeds the message builders as (payload) => ({ type, payload })
+		// The warn severity "MESSAGE_WARN" (not "WARN", unlike "INFO"/"ERROR") looks like a mistake in Messager.Warn; pinned as it is today
 		expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
 			{ type: "message/MESSAGE_INFO", payload: { message: "[p] info 1", category: "OTHER", severity: "INFO" } },
 			{ type: "message/MESSAGE_WARN", payload: { message: "[p] warn", category: "OTHER", severity: "MESSAGE_WARN" } },
