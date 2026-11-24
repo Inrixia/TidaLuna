@@ -31,7 +31,7 @@ const load = async (files?: Record<string, string>) => {
 	const electron = (await import("electron")) as unknown as typeof import("../../test/harness/electron");
 	electron.setUserDataDir(userData);
 	if (files !== undefined)
-		vi.mocked(electron.net.fetch).mockImplementation(async (url: unknown) => {
+		(electron.net.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: unknown) => {
 			const body = files[String(url)];
 			return body === undefined ? new Response("", { status: 404 }) : new Response(body);
 		});
