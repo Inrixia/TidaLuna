@@ -69,6 +69,8 @@ const maxUrlLength = 8192;
 const methods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 // Not sent on to another origin after a redirect, as browsers do
 const crossOriginDropped = ["authorization", "cookie", "proxy-authorization"];
+// Headers about the connection: a plugin can't set them (`host` would make the server see a name that wasn't checked)
+const connectionHeaders = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "te", "trailer", "proxy-connection"];
 // Headers about the body, dropped with it when a redirect continues as GET
 const bodyHeaders = ["content-type", "content-encoding", "content-language", "content-location", "content-length"];
 // The encodings fetch decodes: their content-encoding/content-length describe the encoded body, not the one handed on
@@ -183,6 +185,7 @@ export const createNet = (deps: NetDeps) => {
 		if (rawHeaders !== undefined && (typeof rawHeaders !== "object" || rawHeaders === null)) refuse("headers must be an object");
 		for (const [name, value] of Object.entries(rawHeaders ?? {})) {
 			if (typeof value !== "string") refuse(`header ${name} must be a string`);
+			if (connectionHeaders.includes(name.toLowerCase())) refuse(`header ${name} can't be set`);
 			headers[name] = value;
 		}
 		const key = entry.plugin;

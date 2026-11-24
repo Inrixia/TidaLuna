@@ -100,6 +100,10 @@ describe("luna.fetch", () => {
 		await assert.rejects(net.fetch("https://store/compat", "page", { url: "not a url" }), /Not a url/);
 		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://a.org/", method: "CONNECT" }), /method CONNECT/);
 		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://a.org/", headers: { a: 1 } }), /header a/);
+		await assert.rejects(
+			net.fetch("https://store/compat", "page", { url: "https://a.org/", headers: { Host: "localhost" } }),
+			/header Host can't be set/,
+		);
 		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://a.org/", body: { a: 1 } }), /string or bytes/);
 	});
 
