@@ -41,26 +41,73 @@ export const sha256Hex = async (text: string): Promise<string> => {
 	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
-/**
- * Names of the native files a plugin bundle registers (the call build/plugins/lunaNativePlugin.ts emits, as LunaPlugin.loadExports finds it).
- * For display only: the native permission window (native/NativeModule/trust.ts) still checks each file's code before it runs.
- * native/NativeModule/permissions/verifySource.ts nativeFilesOf reads the same call, but needs Node's vm and crypto, which the renderer lacks.
- */
-export const nativeFileNames = (code: string): string[] => {
-	const names = new Set<string>();
-	for (const match of code.matchAll(/__ipcRenderer\.invoke\(\s*(["'`])__Luna\.registerNative\1\s*,\s*(["'`])((?:\\.|(?!\2)[^\\])*)\2\s*,/g)) {
-		names.add(match[3].replace(/\\(.)/g, "$1"));
+/** An http(s) url as given, or undefined for anything else (links shown in the update dialog) */
+const httpUrl = (text: unknown): URL | undefined => {
+	if (typeof text !== "string") return undefined;
+	try {
+		const url = new URL(text);
+		return url.protocol === "https:" || url.protocol === "http:" ? url : undefined;
+	} catch {
+		return undefined;
 	}
-	return [...names];
 };
 
-/** The native files of an update, and which of them it adds or removes compared to the code that runs now */
-export const nativeFileChanges = (currentCode: string, updateCode: string): { files: string[]; added: string[]; removed: string[] } => {
-	const before = nativeFileNames(currentCode);
-	const files = nativeFileNames(updateCode);
+/** `https://host/owner/repo` of a url whose path starts with /owner/repo, `.git` dropped */
+const repoBase = (url: URL | undefined): string | undefined => {
+	const [owner, repo] = url?.pathname.split("/").filter(Boolean) ?? [];
+	if (url === undefined || owner === undefined || repo === undefined) return undefined;
+	return `${url.origin}/${owner}/${repo.replace(/\.git$/, "")}`;
+};
+
+/** A GitHub or Gitea/Forgejo release asset url: `https://host/owner/repo/releases/download/<tag>/<file>` */
+const releaseAsset = (url: string): { repo: string; tag: string } | undefined => {
+	const parsed = httpUrl(url);
+	const match = parsed?.pathname.match(/^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\//);
+	if (parsed === undefined || match === null || match === undefined) return undefined;
+	return { repo: `${parsed.origin}/${match[1]}/${match[2]}`, tag: decodeURIComponent(match[3]) };
+};
+
+/**
+ * The web page of the repository a plugin is built from: `repository.url` of its package (`git+https://...git` too),
+ * else the repository of the release its url downloads from, else its homepage's first two path parts
+ */
+export const sourceRepo = (pkg: { repository?: { url?: string }; homepage?: string }, url: string): string | undefined =>
+	repoBase(httpUrl(pkg.repository?.url?.replace(/^git\+/, ""))) ?? releaseAsset(url)?.repo ?? repoBase(httpUrl(pkg.homepage));
+
+/** The release page a plugin url downloads from (GitHub, Gitea and Forgejo use the same paths) */
+export const releasePage = (url: string): string | undefined => {
+	const asset = releaseAsset(url);
+	return asset === undefined ? undefined : `${asset.repo}/releases/tag/${encodeURIComponent(asset.tag)}`;
+};
+
+const isCommit = (commit: unknown): commit is string => typeof commit === "string" && /^[0-9a-f]{7,40}$/i.test(commit);
+
+/** The page of a commit's files, when the package names the commit it was built from */
+export const commitPage = (repo: string | undefined, commit: unknown): string | undefined =>
+	repo !== undefined && isCommit(commit) ? `${repo}/tree/${commit}` : undefined;
+
+/** What changed between the commits two builds were made from (`/compare/a...b` on GitHub, Gitea and Forgejo) */
+export const comparePage = (repo: string | undefined, from: unknown, to: unknown): string | undefined =>
+	repo !== undefined && isCommit(from) && isCommit(to) && from !== to ? `${repo}/compare/${from}...${to}` : undefined;
+
+/** A native permission answer as `__Luna.nativePermissions.list` returns it (native/NativeModule/trust.ts) */
+export type PermissionEntry = { key: string; fileName: string; url?: string; claimedUrl?: string; answer: string };
+
+/** The plugin's native files the user allowed for all versions: an update's code for them runs without asking again */
+export const allowedForAllVersions = <T extends PermissionEntry>(entries: T[], url: string): T[] =>
+	entries.filter((entry) => entry.answer === "allowUpdates" && (entry.url ?? entry.claimedUrl) === url);
+
+type SourceInfo = { repository?: { url?: string }; homepage?: string; commit?: string };
+
+/**
+ * Links for an update of the plugin at `url`: each version's source (its commit, else for the new one the release it
+ * downloads from) and the compare of the two commits. Undefined where the packages don't say.
+ */
+export const updateLinks = (url: string, current: SourceInfo, update: SourceInfo): { from?: string; to?: string; compare?: string } => {
+	const repo = sourceRepo(update, url) ?? sourceRepo(current, url);
 	return {
-		files,
-		added: files.filter((name) => !before.includes(name)),
-		removed: before.filter((name) => !files.includes(name)),
+		from: commitPage(repo, current.commit),
+		to: commitPage(repo, update.commit) ?? releasePage(url),
+		compare: comparePage(repo, current.commit, update.commit),
 	};
 };

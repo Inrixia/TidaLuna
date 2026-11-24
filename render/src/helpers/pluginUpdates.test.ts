@@ -4,7 +4,17 @@ import { test } from "node:test";
 
 import { createHash } from "node:crypto";
 
-import { codeToImport, isDevUrl, nativeFileChanges, nativeFileNames, sha256Hex, updateWaitsForUser } from "./pluginUpdates";
+import {
+	allowedForAllVersions,
+	codeToImport,
+	comparePage,
+	isDevUrl,
+	releasePage,
+	sha256Hex,
+	sourceRepo,
+	updateLinks,
+	updateWaitsForUser,
+} from "./pluginUpdates";
 
 const installed = { codeChanged: true, hasCode: true, isDev: false, liveReload: false, isCore: false };
 
@@ -50,33 +60,56 @@ test("sha256Hex hashes the UTF-8 text", async () => {
 	assert.notEqual(await sha256Hex(codeToImport(code, "https://a/P")), await sha256Hex(codeToImport(code, "https://b/P")));
 });
 
-const register = (file: string) => `await __ipcRenderer.invoke("__Luna.registerNative", "${file}", "export const x = 1;");`;
+const A = "a".repeat(40);
+const B = "b".repeat(40);
+const RELEASE = "https://github.com/Inrixia/luna-plugins/releases/download/latest/@inrixia.VolumeScroll";
 
-test("finds the native files a bundle registers", () => {
-	const bundle = [
-		register("discord.native.ts"),
-		`const b = await __ipcRenderer.invoke( '__Luna.registerNative' , 'download.native.ts' , "code");`,
-		// The same file twice is listed once
-		register("discord.native.ts"),
-	].join("\n");
-	assert.deepEqual(nativeFileNames(bundle), ["discord.native.ts", "download.native.ts"]);
+test("finds the repository a plugin is built from", () => {
+	assert.equal(sourceRepo({ repository: { url: "git+https://git.cafe/me/plugins.git" } }, RELEASE), "https://git.cafe/me/plugins");
+	assert.equal(sourceRepo({}, RELEASE), "https://github.com/Inrixia/luna-plugins");
+	assert.equal(
+		sourceRepo({ homepage: "https://github.com/Inrixia/luna-plugins#VolumeScroll" }, "https://x.example/P"),
+		"https://github.com/Inrixia/luna-plugins",
+	);
+	assert.equal(sourceRepo({ repository: { url: "javascript:alert(1)//a/b" } }, "https://x.example/P"), undefined);
+	assert.equal(sourceRepo({ homepage: "https://example.com" }, "https://x.example/P"), undefined);
 });
 
-test("ignores bundles without native code and other channels", () => {
-	assert.deepEqual(nativeFileNames(`fetch("https://example.com"); __ipcRenderer.invoke("__Luna.other", "x.native.ts", "");`), []);
+test("links the release a plugin url downloads from", () => {
+	assert.equal(releasePage(RELEASE), "https://github.com/Inrixia/luna-plugins/releases/tag/latest");
+	assert.equal(releasePage("https://git.cafe/me/p/releases/download/v1.2/P"), "https://git.cafe/me/p/releases/tag/v1.2");
+	assert.equal(releasePage("http://127.0.0.1:3000/P"), undefined);
 });
 
-test("unescapes the file name", () => {
-	assert.deepEqual(nativeFileNames(`__ipcRenderer.invoke("__Luna.registerNative", "we\\"ird.native.ts", "");`), [`we"ird.native.ts`]);
+test("compares two commits only when both are known and differ", () => {
+	const repo = "https://github.com/o/r";
+	assert.equal(comparePage(repo, A, B), `${repo}/compare/${A}...${B}`);
+	assert.equal(comparePage(repo, A, A), undefined);
+	assert.equal(comparePage(repo, A, undefined), undefined);
+	assert.equal(comparePage(repo, "../x", B), undefined);
+	assert.equal(comparePage(undefined, A, B), undefined);
 });
 
-test("lists the native files an update adds and removes", () => {
-	const current = [register("a.native.ts"), register("b.native.ts")].join("\n");
-	const update = [register("b.native.ts"), register("c.native.ts")].join("\n");
-	assert.deepEqual(nativeFileChanges(current, update), {
-		files: ["b.native.ts", "c.native.ts"],
-		added: ["c.native.ts"],
-		removed: ["a.native.ts"],
+test("update links: commits when the builds name them, else the release", () => {
+	const repo = "https://github.com/Inrixia/luna-plugins";
+	assert.deepEqual(updateLinks(RELEASE, { commit: A }, { commit: B }), {
+		from: `${repo}/tree/${A}`,
+		to: `${repo}/tree/${B}`,
+		compare: `${repo}/compare/${A}...${B}`,
 	});
-	assert.deepEqual(nativeFileChanges("", ""), { files: [], added: [], removed: [] });
+	assert.deepEqual(updateLinks(RELEASE, {}, {}), { from: undefined, to: `${repo}/releases/tag/latest`, compare: undefined });
+	assert.deepEqual(updateLinks("https://x.example/P", {}, {}), { from: undefined, to: undefined, compare: undefined });
+});
+
+test("finds the plugin's answers allowed for all versions", () => {
+	const entries = [
+		{ key: "1", fileName: "a.native.ts", url: "https://x/P", answer: "allowUpdates" },
+		{ key: "2", fileName: "b.native.ts", url: "https://x/P", answer: "allow" },
+		{ key: "3", fileName: "c.native.ts", claimedUrl: "https://x/P", answer: "allowUpdates" },
+		{ key: "4", fileName: "a.native.ts", url: "https://y/P", answer: "allowUpdates" },
+	];
+	assert.deepEqual(
+		allowedForAllVersions(entries, "https://x/P").map(({ key }) => key),
+		["1", "3"],
+	);
 });

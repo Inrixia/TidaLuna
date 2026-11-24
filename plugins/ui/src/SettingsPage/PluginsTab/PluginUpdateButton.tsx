@@ -1,44 +1,95 @@
 import React from "react";
 
 import { LunaPlugin, type PluginPackage } from "@luna/core";
+import { ipcRenderer } from "@luna/lib";
 import { useConfirm } from "material-ui-confirm";
 
+import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
+import Link from "@mui/material/Link";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
+import type { NativePermissionEntry } from "../../../../../native/NativeModule/trust";
+
 /** First 12 hex digits, enough to tell versions apart and compare with a published hash */
 const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slice(0, 12));
 
-/** What the update changes that the user should know about before running it */
+const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
+	href === undefined ? (
+		<>{children}</>
+	) : (
+		<Link href={href} target="_blank" rel="noreferrer">
+			{children}
+		</Link>
+	);
+
+/**
+ * The plugin's native files allowed for all versions: the update's native code runs without asking. "Ask again"
+ * revokes those answers (as Luna Settings > Native permissions does), so they ask the next time they load.
+ */
+const AllVersionsWarning = ({ url }: { url: string }) => {
+	const [entries, setEntries] = React.useState<NativePermissionEntry[]>([]);
+	const refresh = React.useCallback(
+		async () => setEntries(LunaPlugin.allowedForAllVersions(await ipcRenderer.invoke("__Luna.nativePermissions.list"), url)),
+		[url],
+	);
+	React.useEffect(() => void refresh().catch(() => {}), [refresh]);
+	const askAgain = React.useCallback(async () => {
+		for (const { key } of entries) await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key);
+		await refresh();
+	}, [entries, refresh]);
+
+	if (entries.length === 0) return null;
+	return (
+		<Alert
+			severity="warning"
+			sx={{ marginTop: 1 }}
+			action={
+				<Button color="inherit" size="small" onClick={askAgain}>
+					Ask again
+				</Button>
+			}
+		>
+			Native code allowed for all versions ({entries.map(({ fileName }) => fileName).join(", ")}): the update's runs without asking.
+		</Alert>
+	);
+};
+
+/** What the update changes, with links to its source where the packages say */
 const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginPackage }) => {
-	const { files, added, removed } = LunaPlugin.nativeFileChanges(plugin.code ?? "", update.code ?? "");
+	const current: Partial<PluginPackage> = plugin.package ?? {};
+	const links = LunaPlugin.updateLinks(plugin.url, current, update);
 	return (
 		<>
 			<Typography variant="body2" gutterBottom>
-				<b>{plugin.package?.version ?? "?"}</b> → <b>{update.version ?? "?"}</b>
+				<MaybeLink href={links.from}>
+					<b>{current.version ?? "?"}</b>
+				</MaybeLink>
+				{" → "}
+				<MaybeLink href={links.to}>
+					<b>{update.version ?? "?"}</b>
+				</MaybeLink>
 			</Typography>
-			<Typography variant="body2" gutterBottom title={`sha256 ${plugin.package?.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
-				Code sha256: <code>{shortHash(plugin.package?.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
+			<Typography variant="body2" gutterBottom title={`sha256 ${current.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
+				Code sha256: <code>{shortHash(current.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
+				{links.compare !== undefined && (
+					<>
+						{" ("}
+						<MaybeLink href={links.compare}>changes</MaybeLink>)
+					</>
+				)}
 			</Typography>
-			<Typography variant="body2" gutterBottom>
-				Until you update, the version you have keeps running. The new code runs with the same access to TIDAL as the plugin has now. Luna doesn't
-				check what it does: update only if you trust the author and {plugin.url}.
+			<Typography variant="body2">
+				Update only if you trust the author and{" "}
+				<Link href={plugin.url} target="_blank" rel="noreferrer">
+					{plugin.url}
+				</Link>
 			</Typography>
-			{files.length !== 0 && (
-				<Typography variant="body2" gutterBottom>
-					Native code (runs in TIDAL's main process): {files.join(", ")}. Changed native files ask for permission again, unless you allowed this
-					plugin for all versions.
-				</Typography>
-			)}
-			{added.length !== 0 && (
-				<Typography variant="body2" sx={{ color: "warning.main" }} gutterBottom>
-					New native files: {added.join(", ")}
-				</Typography>
-			)}
-			{removed.length !== 0 && <Typography variant="body2">Removed native files: {removed.join(", ")}</Typography>}
+			<AllVersionsWarning url={plugin.url} />
 		</>
 	);
 };
@@ -71,18 +122,11 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 
 	if (update === undefined) return null;
 	return (
-		<Tooltip title={`Update to ${update.version ?? "a new version"}`}>
+		<Tooltip title={`Update plugin${update.version === undefined ? "" : ` to ${update.version}`}`}>
 			<span>
-				<Button
-					size="small"
-					variant="outlined"
-					disabled={updating}
-					onClick={onClick}
-					startIcon={<SystemUpdateAltIcon />}
-					sx={{ marginLeft: 1, color: green[400], borderColor: green[400] }}
-				>
-					Update
-				</Button>
+				<IconButton aria-label={`Update ${plugin.name}`} disabled={updating} onClick={onClick} sx={{ color: green[400] }}>
+					<SystemUpdateAltIcon />
+				</IconButton>
 			</span>
 		</Tooltip>
 	);
