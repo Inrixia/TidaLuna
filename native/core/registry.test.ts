@@ -561,6 +561,20 @@ describe("core registry", () => {
 		assert.strictEqual(second.nativeOwner("a.native.ts", "native a"), undefined);
 	});
 
+	it("waits for the list before saying whether old-format natives will run", async () => {
+		const { deps, serve, list } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry({
+			...deps,
+			// The list arrives while the registry waits for it
+			legacyReady: async () => list(URL, "v1"),
+		});
+		const ask = asker(true);
+		assert.strictEqual(await registry.install(URL, ask), true);
+		assert.match(ask.asked[0].lines.join("\n"), /any plugin or script in the page can call its native functions/);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+	});
+
 	it("takes a plugin off the old format when an update changes only its world", async () => {
 		const { deps, serve, serveWorld, served } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });

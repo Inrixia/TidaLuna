@@ -237,6 +237,7 @@ describe("old native format list", () => {
 		const first = signed(doc(1, [A, B]));
 		let served = first;
 		let locked = true;
+		let time = 0;
 		let cache = JSON.stringify({ list: first.bytes.toString("base64"), sig: first.sig });
 		const store = createLegacyStore({
 			readCache: () => cache,
@@ -246,6 +247,7 @@ describe("old native format list", () => {
 			},
 			fetchList: async () => served,
 			publicKey: pub,
+			now: () => time,
 		});
 		assert.strictEqual(store.allows("b.mjs", B.sha256), true);
 		served = signed(doc(2, [A]));
@@ -255,10 +257,15 @@ describe("old native format list", () => {
 		served = first;
 		await assert.rejects(store.refresh(), /rollback/);
 		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
-		// Writable again: the same list is cached on the next refresh, so a start offline keeps it
+		// Not tried again before the wait
 		locked = false;
-		served = signed(doc(2, [A]));
-		await store.refresh();
+		store.allows("a.mjs", A.sha256);
+		assert.strictEqual(JSON.parse(cache).list, first.bytes.toString("base64"));
+		time = 30000;
+		// Writable again, and offline: the next check writes it (no fetch needed), so a start offline keeps it
+		locked = false;
+		served = { bytes: Buffer.from("offline"), sig: "" };
+		store.allows("a.mjs", A.sha256);
 		const offline = createLegacyStore({
 			readCache: () => cache,
 			writeCache: () => {},

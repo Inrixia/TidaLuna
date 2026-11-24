@@ -99,6 +99,8 @@ export type RegistryDeps = {
 	 * store and the sha256 of the served code. Without it no plugin runs the old format (dev urls aside)
 	 */
 	legacyAllows?(id: string, servedSha256: string): boolean;
+	/** Resolves once the list is loaded, or no longer waited for (legacyList.ts ready): what the confirmations say needs it */
+	legacyReady?(): Promise<void>;
 	/** The page handed over its plugins once already (kept apart from the state: a lost state file doesn't allow another) */
 	wasMigrated?(): boolean;
 	markMigrated?(): void | Promise<void>;
@@ -366,6 +368,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 	};
 
 	const enable = async (url: string, ask: Ask): Promise<boolean> => {
+		await deps.legacyReady?.();
 		const record = state.plugins[url];
 		if (record === undefined) return false;
 		if (record.enabled) return true;
@@ -389,6 +392,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const install = async (url: string, ask: Ask): Promise<boolean> => {
 		// Installing an installed plugin enables it
 		if (state.plugins[url] !== undefined) return enable(url, ask);
+		await deps.legacyReady?.();
 		const version = await fetchVersion(url);
 		const lines = describe(url, version, legacyWouldRun(url, undefined, version));
 		if (!(await ask({ title: `Install ${version.package.name}?`, lines, confirmText: "Install" }))) return false;
@@ -402,6 +406,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 	};
 
 	const acceptUpdate = async (url: string, ask: Ask): Promise<boolean> => {
+		await deps.legacyReady?.();
 		const record = state.plugins[url];
 		const { accepted, pending } = record ?? {};
 		if (record === undefined || accepted === undefined || pending === undefined) return false;

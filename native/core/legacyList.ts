@@ -119,11 +119,11 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * mid-write can't leave a copy that fails its check (and with it the "only shrinks" rule).
  */
 export const createLegacyStore = (deps: LegacyStoreDeps) => {
-	let current: { list: LegacyList; bytes: Buffer } | undefined;
+	let current: { list: LegacyList; bytes: Buffer; sig: string } | undefined;
 	/** `${id}\n${sha256}` of the current list */
 	let allowed = new Set<string>();
-	const use = (list: LegacyList, bytes: Buffer) => {
-		current = { list, bytes };
+	const use = (list: LegacyList, bytes: Buffer, sig: string) => {
+		current = { list, bytes, sig };
 		allowed = new Set(list.entries.map((e) => `${e.id}\n${e.sha256}`));
 	};
 
@@ -148,7 +148,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		try {
 			const cached = JSON.parse(text);
 			const bytes = Buffer.from(String(cached?.list), "base64");
-			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes);
+			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes, String(cached?.sig));
 			cachedBytes = bytes;
 			cache = "ok";
 		} catch (err) {
@@ -159,11 +159,29 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		}
 	};
 
+	const now = deps.now ?? Date.now;
+	const retryMs = deps.retryMs ?? [30000, 120000, 600000];
+	/** When to write the current list to the cache again, while the cache holds an older one */
+	let writeAt = 0;
+	/** The current list to the cache, if it doesn't hold it yet (writing failed): needs no fetch, so an offline start keeps it */
+	const writeCurrent = () => {
+		if (current === undefined || cachedBytes?.equals(current.bytes)) return;
+		const { bytes, sig } = current;
+		try {
+			deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
+			cachedBytes = bytes;
+		} catch (err) {
+			writeAt = now() + retryMs[0];
+			deps.log?.(`[Luna.core] The old native format list can't be cached now: ${(err as Error)?.message ?? err}`);
+		}
+	};
+
 	/** Fetches the registry's list once; throws if it can't be used */
 	const refresh = async () => {
 		loadCache();
 		if (cache === "unread") throw new Error("the cached list can't be read yet: not replaced");
 		if (cache === "broken") throw new Error("the cached list fails its check: not replaced");
+		writeCurrent();
 		const { bytes, sig } = await deps.fetchList();
 		loadCache();
 		const next = parseLegacyList(bytes, sig, deps.publicKey);
@@ -171,20 +189,13 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		if (!replaces.ok) throw new Error(`refused: ${replaces.reason}`);
 		// A removal under the same serial is still a removal: only the same bytes change nothing
 		if (current !== undefined && current.bytes.equals(bytes) && cachedBytes?.equals(bytes)) return;
-		// Used at once, even if it can't be cached: a smaller list must apply now. The cache is written again on each
-		// refresh until it holds it
-		if (current === undefined || !current.bytes.equals(bytes)) use(next, bytes);
-		try {
-			deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
-			cachedBytes = bytes;
-		} catch (err) {
-			deps.log?.(`[Luna.core] The old native format list can't be cached now: ${(err as Error)?.message ?? err}`);
-		}
+		// Used at once, even if it can't be cached: a smaller list must apply now. Writing it is tried again shortly (on a
+		// check) and on each refresh until the cache holds it
+		if (current === undefined || !current.bytes.equals(bytes)) use(next, bytes, sig);
+		writeCurrent();
 		deps.log?.(`[Luna.core] Old native format list: serial ${next.serial}, ${next.entries.length} plugins`);
 	};
 
-	const now = deps.now ?? Date.now;
-	const retryMs = deps.retryMs ?? [30000, 120000, 600000];
 	let first: Promise<void> | undefined;
 	/** While no list was accepted: when to fetch again (a cache that can't be read yet: on the next call) */
 	let retryAt: number | undefined;
@@ -207,6 +218,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();
 			void start();
+			if (now() >= writeAt) writeCurrent();
 			return allowed.has(`${id}\n${servedSha256}`);
 		},
 		/**
