@@ -112,4 +112,27 @@ describe("interceptActionResp", () => {
 		expect(interceptors["playbackControls/PAUSE"]).toBeUndefined();
 		expect(Object.keys(interceptors)).toEqual([]);
 	});
+
+	test("leaves no timers running after it resolves", async () => {
+		vi.useFakeTimers();
+		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/SEEK"]);
+		await vi.advanceTimersByTimeAsync(0);
+
+		tidalAction("playbackControls/SEEK")(1);
+		await expect(response).resolves.toBe(1);
+
+		// neither the 5s response timeout nor the timers unloadSet races its unloads against are left
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	test("leaves no timers running after it rejects on timeout", async () => {
+		vi.useFakeTimers();
+		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/SEEK"]);
+		const rejected = expect(response).rejects.toThrow("[interceptActionResp.TIMEOUT]");
+
+		await vi.advanceTimersByTimeAsync(5_000);
+		await rejected;
+
+		expect(vi.getTimerCount()).toBe(0);
+	});
 });
