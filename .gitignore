@@ -3,6 +3,9 @@ dist/
 result
 result-original
 
+# Tests
+coverage/
+
 # IDEs
 .idea/
 

@@ -5,6 +5,8 @@ packages:
 
 overrides:
   yaml@<1.10.3: ">=1.10.3"
+  # vitest asks for ^6.2.3, which resolves to a release newer than the minimumReleaseAge policy allows
+  tinybench: 6.2.4
 
 allowBuilds:
   "@biomejs/biome": true
