@@ -76,6 +76,9 @@ importers:
       mime:
         specifier: ^4.1.2
         version: 4.1.2
+      sanitize-filename:
+        specifier: ^1.6.5
+        version: 1.6.5
     devDependencies:
       electron:
         specifier: ^45.4.1

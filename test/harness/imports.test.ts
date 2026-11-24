@@ -6,22 +6,25 @@ import { describe, expect, test } from "vitest";
  * test of that module would fail with a confusing error.
  */
 const modules = [
+	"../../plugins/lib/src/caches",
 	"../../plugins/lib/src/classes/Album",
 	"../../plugins/lib/src/classes/Artist",
-	"../../plugins/lib/src/classes/AudioCache",
+	"../../plugins/lib/src/classes/AudioStreams",
 	"../../plugins/lib/src/classes/ContextMenu",
 	"../../plugins/lib/src/classes/ContentBase",
 	"../../plugins/lib/src/classes/ImageOverrides",
 	"../../plugins/lib/src/classes/MediaItem/MediaItem",
 	"../../plugins/lib/src/classes/MediaItem/MediaItem.tags",
 	"../../plugins/lib/src/classes/MediaItem/MediaItems",
+	"../../plugins/lib/src/classes/MusicBrainz",
+	"../../plugins/lib/src/classes/NativeCache",
+	"../../plugins/lib/src/classes/PlaybackInfo",
 	"../../plugins/lib/src/classes/Playlist",
 	"../../plugins/lib/src/classes/PlayState",
 	"../../plugins/lib/src/classes/Quality",
 	"../../plugins/lib/src/classes/Shortcut",
 	"../../plugins/lib/src/classes/StyleTag",
 	"../../plugins/lib/src/classes/TidalApi",
-	"../../plugins/lib/src/helpers/brainzJson",
 	"../../plugins/lib/src/helpers/listenerError",
 	"../../plugins/lib/src/helpers/parseDate",
 	"../../plugins/lib/src/helpers/safeTimeout",
@@ -33,7 +36,8 @@ const modules = [
 	"../../render/src/helpers/findModule",
 	"../../render/src/helpers/resolvePath",
 	"../../render/src/helpers/unloadSet",
-	"../../render/src/requestCache",
+	"../../render/src/caches",
+	"../../render/src/SharedRequests",
 	"../../render/src/trace",
 ];
 

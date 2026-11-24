@@ -73,7 +73,7 @@ const track = (id: redux.ItemId, fields: Partial<redux.Track> = {}): redux.Track
 	}) as redux.Track;
 
 const makeMediaItem = (id: redux.ItemId, fields: Partial<redux.Track> = {}) =>
-	new MediaItem(id, { type: "track", item: track(id, fields) }, "track", {});
+	new MediaItem(id, { type: "track", item: track(id, fields) }, "track");
 
 /**
  * `ContentBase` reads TIDAL's content slices directly, so a slice a lookup needs has to exist even when it is empty.

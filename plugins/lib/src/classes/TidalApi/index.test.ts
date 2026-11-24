@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { requestCache, tidalModules } from "@luna/core";
+import { sharedRequests, tidalModules } from "@luna/core";
 
 import { resetTidalState, setTidalState } from "../../../../../test/harness/tidalStore";
 
@@ -46,7 +46,7 @@ let openApi: MockedOpenApi;
 
 beforeEach(() => {
 	// Separate tests must not answer each other's requests, and `queryArgs` keeps what it read the first time
-	requestCache.clear();
+	sharedRequests.clear();
 	TidalApi.queryArgs.clear();
 	resetTidalState();
 	vi.stubGlobal("fetch", fetchMock);

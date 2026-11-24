@@ -1,39 +1,78 @@
 import React from "react";
+import { store as obyStore } from "oby";
 
-import { audioCache, offlineCache, type AudioCacheExtra } from "@luna/lib";
-import { requestCache, unloadSet, type LunaUnloads } from "@luna/core";
+import { Cache } from "@luna/core";
+import { AudioStreams } from "@luna/lib";
 
-import Typography from "@mui/material/Typography";
+import Box from "@mui/material/Box";
+import Stack from "@mui/material/Stack";
 
-import { formatBytes, LunaCacheSetting, LunaSettings } from "../../components";
+import { LunaCacheSetting, LunaNumberSetting, LunaSettings } from "../../components";
+
+const nativePrefix = "native:";
+
+/** The main process caches (audio, offline) first, they hold the most */
+const listCaches = () =>
+	[...Cache.controls.values()].sort((a, b) => Number(b.key.startsWith(nativePrefix)) - Number(a.key.startsWith(nativePrefix)));
+
+const AudioWindow = React.memo(() => {
+	const [ahead, setAhead] = React.useState(AudioStreams.settings.ahead);
+	const [behind, setBehind] = React.useState(AudioStreams.settings.behind);
+	React.useEffect(
+		() =>
+			obyStore.on(AudioStreams.settings, () => {
+				setAhead(AudioStreams.settings.ahead);
+				setBehind(AudioStreams.settings.behind);
+			}),
+		[],
+	);
+	return (
+		<Stack spacing={1}>
+			<LunaNumberSetting
+				title="Tracks ahead"
+				desc="Upcoming queue tracks to prefetch and cache in the background"
+				min={0}
+				max={20}
+				value={ahead}
+				onNumber={(value) => {
+					AudioStreams.settings.ahead = value;
+					AudioStreams.updateWindowSoon();
+				}}
+			/>
+			<LunaNumberSetting
+				title="Tracks behind"
+				desc="Previous queue tracks to keep prefetched and cached"
+				min={0}
+				max={20}
+				value={behind}
+				onNumber={(value) => {
+					AudioStreams.settings.behind = value;
+					AudioStreams.updateWindowSoon();
+				}}
+			/>
+		</Stack>
+	);
+});
 
 export const LunaCacheSettings = React.memo(() => {
-	const [requests, setRequests] = React.useState(requestCache.stats());
+	// Main process caches are added once their proxies are, plugins add caches too
+	const [caches, setCaches] = React.useState(listCaches);
 	React.useEffect(() => {
-		const unloads: LunaUnloads = new Set();
-		requestCache.onStats(unloads, setRequests);
-		return () => void unloadSet(unloads);
+		const stop = Cache.onControlAdded(new Set(), () => setCaches(listCaches()));
+		// One added between the first render and this effect
+		setCaches(listCaches());
+		return stop;
 	}, []);
 
 	return (
-		<LunaSettings title="Cache" desc="Audio of tracks played, hovered and next in the queue, and TIDAL's requests">
-			<LunaCacheSetting
-				cache={audioCache}
-				title="Audio"
-				desc="Never more than 75% of free disk space."
-				entries="tracks"
-				details={({ extra }) => (
-					<Typography variant="body2" sx={{ paddingLeft: 2 }}>
-						Audio: {formatBytes((extra as AudioCacheExtra).servedBytes)} played from the cache, {formatBytes((extra as AudioCacheExtra).fetchedBytes)}{" "}
-						fetched
-						{(extra as AudioCacheExtra).fetching.length !== 0 && `, fetching ${(extra as AudioCacheExtra).fetching.length} tracks`} this session
-					</Typography>
-				)}
-			/>
-			<LunaCacheSetting cache={offlineCache} title="Offline" desc="Pages and images kept for offline use." entries="responses" />
-			<Typography variant="body2" sx={{ paddingLeft: 2 }}>
-				Requests: {requests.entries} cached, {requests.served} answered from the cache, {requests.fetched} fetched this session
-			</Typography>
+		<LunaSettings title="Cache" desc="What Luna keeps so TIDAL loads, plays and works offline without fetching it again">
+			<Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))", gap: 2, paddingBottom: 1 }}>
+				{caches.map((cache) => (
+					<LunaCacheSetting key={cache.key} cache={cache}>
+						{cache.key === "native:audio" && <AudioWindow />}
+					</LunaCacheSetting>
+				))}
+			</Box>
 		</LunaSettings>
 	);
 });

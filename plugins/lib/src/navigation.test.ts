@@ -11,7 +11,7 @@ import type { DataRoute, DataRouter } from "./helpers/router";
  */
 
 // #region Fetch, location and IPC stubs
-// requestCache captures `globalThis.fetch` when it is first imported, so the server has to be in place before any import
+// sharedRequests captures `globalThis.fetch` when it is first imported, so the server has to be in place before any import
 // of @luna/core. `navigation.ts` is imported dynamically after it, and derives page urls from `location`.
 const bodies = new Map<string, string>();
 const requests: string[] = [];
@@ -53,7 +53,7 @@ const emitIpc = (channel: string, ...args: unknown[]) => {
 
 vi.useFakeTimers();
 
-const { interceptors, Messager, requestCache, tidalModules } = await import("@luna/core");
+const { interceptors, Messager, sharedRequests, tidalModules } = await import("@luna/core");
 
 /** TIDAL's minified React Router `matchPath`: the helper recognises it by its source, which is faked here (see router.test.ts) */
 type MatchPathPattern = { path: string; caseSensitive: boolean; end: boolean };
@@ -186,12 +186,14 @@ describe("the request cache", () => {
 	test("clears the cache when the session logs out", async () => {
 		json("/v1/albums/1005", { album: 1005 });
 		await fetch("https://api.tidal.com/v1/albums/1005");
-		expect(requestCache.stats().entries).toBeGreaterThan(0);
+		expect(sharedRequests.stats().entries).toBeGreaterThan(0);
 
 		// The logout action is not cancelled, the cache is only dropped
 		expect(runInterceptors("session/LOGOUT", undefined)).toBe(false);
 
-		expect(requestCache.stats().entries).toBe(0);
+		// `clear` waits for the cache to be ready
+		await flush();
+		expect(sharedRequests.stats().entries).toBe(0);
 		await fetch("https://api.tidal.com/v1/albums/1005");
 		expect(requests).toEqual(["GET /v1/albums/1005", "GET /v1/albums/1005"]);
 	});
@@ -207,7 +209,6 @@ describe("the request cache", () => {
 });
 
 describe("revalidating the page that is open", () => {
-
 	test("does not re-run them for another page's response", async () => {
 		setPath("/album/2001");
 		json("/v1/albums/2002", { v: 1 });

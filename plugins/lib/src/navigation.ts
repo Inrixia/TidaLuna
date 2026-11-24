@@ -1,4 +1,4 @@
-import { Messager, ReactiveStore, recursiveSearch, requestCache, tidalModules } from "@luna/core";
+import { Messager, ReactiveStore, recursiveSearch, sharedRequests, tidalModules } from "@luna/core";
 
 import { getRouter, matchRoutes, type DataRoute, type DataRouter } from "./helpers/router";
 import { safeTimeout } from "./helpers/safeTimeout";
@@ -35,23 +35,24 @@ for (const pattern of [
 	/^https:\/\/(api|desktop)\.tidal\.com\/v2\/(artist|home|feed|my-collection)\//,
 	/^https:\/\/openapi\.tidal\.com\/v2\/(playlists|albums|artists|userCollection\w*)\//,
 ]) {
-	requestCache.register(unloads, { pattern, swr: true });
+	sharedRequests.register(unloads, { pattern, swr: true });
 }
-redux.intercept("session/LOGOUT", unloads, () => requestCache.clear());
+redux.intercept("session/LOGOUT", unloads, () => sharedRequests.clear());
 
 // Re-run the page's loaders when data it shows changed, they get the new response from the cache
 let cancelRevalidate: (() => void) | undefined;
 // The ids in `pathname` (e.g. a playlist's uuid), otherwise its last segment (e.g. explore, albums)
-const isForPage = (url: string, pathname = location.pathname) => {
-	const lower = url.toLowerCase();
+const isForPage = (key: string, pathname = location.pathname) => {
+	const lower = key.toLowerCase();
 	const segments = pathname.toLowerCase().split("/").filter(Boolean);
 	const ids = segments.filter((segment) => /\d/.test(segment));
 	const keys = ids.length !== 0 ? ids : segments[0] === "search" ? ["search"] : segments.length !== 0 ? segments.slice(-1) : ["home"];
 	return keys.some((segment) => lower.includes(segment));
 };
-requestCache.onChange(unloads, (url) => {
+// Called with the cache key (host, path and query) of the response that changed
+sharedRequests.onChange(unloads, (key) => {
 	// A change to another page (e.g. one prefetched on hover) mustn't reset the scroll of this one
-	if (!isForPage(url)) return;
+	if (!isForPage(key)) return;
 	cancelRevalidate?.();
 	cancelRevalidate = safeTimeout(
 		unloads,

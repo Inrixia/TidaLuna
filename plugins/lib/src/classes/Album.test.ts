@@ -8,9 +8,10 @@ import { Artist } from "./Artist";
 import { ContentBase } from "./ContentBase";
 import { TidalApi } from "./TidalApi";
 
-// MusicBrainz is a network call: `brainzJson` is stubbed so `brainzAlbum`, `title`, `upc` and `brainzId` can be driven
-vi.mock("../helpers/brainzJson", () => ({ brainzJson: vi.fn() }));
-import { brainzJson } from "../helpers/brainzJson";
+// MusicBrainz is a network call: `musicBrainz.json` is stubbed so `brainzAlbum`, `title`, `upc` and `brainzId` can be driven
+vi.mock("../caches", async (importActual) => ({ ...(await importActual<typeof import("../caches")>()), musicBrainz: { json: vi.fn() } }));
+import { musicBrainz } from "../caches";
+const brainzJson = musicBrainz.json;
 
 /**
  * `ContentBase` caches instances by itemId for the life of the process, so every test uses its own ids.

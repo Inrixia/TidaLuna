@@ -10,7 +10,7 @@ import { finalizeDashDownload, finalizeHlsDownload } from "./MediaItem.finalizeD
 
 import { download, downloadProgress } from "./MediaItem.download.native";
 
-import type { PlaybackInfo, VideoPlaybackInfo } from "../../helpers";
+import type { TrackPlaybackInfo, VideoPlaybackInfo } from "../PlaybackInfo";
 import type * as redux from "../../redux";
 import type { MetaTags } from "./MediaItem.tags";
 
@@ -42,14 +42,14 @@ afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
-const btsInfo = (trackId: redux.ItemId): PlaybackInfo =>
+const btsInfo = (trackId: redux.ItemId): TrackPlaybackInfo =>
 	({
 		trackId,
 		manifestMimeType: "application/vnd.tidal.bts",
 		manifest: { mimeType: "audio/flac", urls: ["https://cdn.example/1"] },
-	}) as unknown as PlaybackInfo;
-const dashInfo = (trackId: redux.ItemId): PlaybackInfo =>
-	({ trackId, manifestMimeType: "application/dash+xml", manifest: { dash: true } }) as unknown as PlaybackInfo;
+	}) as unknown as TrackPlaybackInfo;
+const dashInfo = (trackId: redux.ItemId): TrackPlaybackInfo =>
+	({ trackId, manifestMimeType: "application/dash+xml", manifest: { dash: true } }) as unknown as TrackPlaybackInfo;
 const hlsInfo = (videoId: redux.ItemId): VideoPlaybackInfo =>
 	({
 		videoId,
@@ -106,8 +106,8 @@ describe("download", () => {
 		const [, options] = fetchStream.mock.calls[0];
 		expect(options).toMatchObject({ tags });
 		expect(await readFile(path, "utf8")).toBe("fragment");
-		// The raw fragments are left untouched by the (stubbed) remuxer: it is handed the file that was written
-		expect(finalizeDash).toHaveBeenCalledWith(path, tags);
+		// Remux runs on the .part file before atomic rename to final path
+		expect(finalizeDash).toHaveBeenCalledWith(`${path}.part`, tags);
 		expect(finalizeHls).not.toHaveBeenCalled();
 	});
 
@@ -124,7 +124,7 @@ describe("download", () => {
 		release();
 		await expect(pending).resolves.toBe(path);
 
-		expect(finalizeHls).toHaveBeenCalledWith(path, undefined);
+		expect(finalizeHls).toHaveBeenCalledWith(`${path}.part`, undefined);
 		expect(finalizeDash).not.toHaveBeenCalled();
 		expect(await downloadProgress(videoId)).toBeUndefined();
 		// It is not tracked under the nonexistent track id

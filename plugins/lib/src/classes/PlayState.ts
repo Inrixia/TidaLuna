@@ -43,13 +43,20 @@ export class PlayState {
 		return redux.store.getState().playQueue;
 	}
 
+	/** The quality TIDAL's settings stream at */
+	public static get streamingQuality(): redux.AudioQuality {
+		return redux.store.getState().settings.quality.streaming;
+	}
+
 	/**
 	 * The current playback position in seconds from the active player.
 	 * Unlike `playTime` (from Redux state), this is the live player position.
 	 */
 	public static get currentTime(): number {
 		// The module, not its player: TIDAL swaps activePlayer between shaka and its native player by quality
-		this.playerModule ??= findModuleByProperty<{ activePlayer: { currentTime: number } }>((key, value) => key === "activePlayer" && typeof value === "object" && value !== null && "currentTime" in value);
+		this.playerModule ??= findModuleByProperty<{ activePlayer: { currentTime: number } }>(
+			(key, value) => key === "activePlayer" && typeof value === "object" && value !== null && "currentTime" in value,
+		);
 		return this.playerModule?.activePlayer?.currentTime ?? 0;
 	}
 	public static nextMediaItem() {
@@ -59,6 +66,22 @@ export class PlayState {
 	public static previousMediaItem() {
 		const previousMediaItem = this.playQueue.elements[this.playQueue.currentIndex - 1]?.mediaItemId;
 		return MediaItem.fromId(previousMediaItem);
+	}
+	/** The id of the playing item, or the queue's current one before playback starts */
+	public static get currentId(): redux.ItemId | undefined {
+		return this.playbackContext?.actualProductId ?? this.playQueue.elements[this.playQueue.currentIndex]?.mediaItemId;
+	}
+	/** The ids of up to `ahead` items after and `behind` items before the current one in the play queue, nearest first */
+	public static queueWindow(ahead: number, behind: number): redux.ItemId[] {
+		const { elements, currentIndex } = this.playQueue;
+		const ids: redux.ItemId[] = [];
+		for (let distance = 1; distance <= Math.max(ahead, behind); distance++) {
+			const next = distance <= ahead ? elements[currentIndex + distance] : undefined;
+			const previous = distance <= behind ? elements[currentIndex - distance] : undefined;
+			if (next !== undefined) ids.push(next.mediaItemId);
+			if (previous !== undefined) ids.push(previous.mediaItemId);
+		}
+		return ids;
 	}
 
 	public static get state() {
@@ -78,8 +101,8 @@ export class PlayState {
 		if (shuffleItems)
 			return shuffle
 				? redux.actions["playQueue/ENABLE_SHUFFLE_MODE_AND_SHUFFLE_ITEMS"]({
-					shuffleSeed: Math.random(),
-				})
+						shuffleSeed: Math.random(),
+					})
 				: redux.actions["playQueue/DISABLE_SHUFFLE_MODE_AND_UNSHUFFLE_ITEMS"]();
 
 		if (shuffle !== this.shuffle) shuffle ? redux.actions["playQueue/ENABLE_SHUFFLE_MODE"]() : redux.actions["playQueue/DISABLE_SHUFFLE_MODE"]();
@@ -181,7 +204,6 @@ export class PlayState {
 				}
 			}
 		});
-
 	}
 
 	private static currentMediaItem?: MediaItem;

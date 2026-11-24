@@ -11,12 +11,15 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 
 import Module, { createRequire } from "module";
 
-import { rewritePlayerMessage } from "./audioCache";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
-import { staleIfError } from "./offlineCache";
+import { nativeCaches, rewritePlayerMessage } from "./caches";
+import type { OfflineResponses } from "./OfflineResponses";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
 import { tidalMainHosts } from "./tidalHosts";
+
+/** Fetches through the offline responses once the main process caches are open */
+const staleIfError = async (...args: Parameters<OfflineResponses["staleIfError"]>) => (await nativeCaches).offline.staleIfError(...args);
 
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 
@@ -213,7 +216,9 @@ const tidalModuleHandler = async (req: Request): Promise<Response> => {
 	const url = new URL(req.url);
 	if (!tidalMainHosts.has(url.host)) return new Response(null, { status: 403 });
 	const origin = `https://${url.host}`;
-	const res = await staleIfError(origin + url.pathname + url.search, () => electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }));
+	const res = await staleIfError(origin + url.pathname + url.search, () =>
+		electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }),
+	);
 	// shortcut: every .js is taken for a module, TIDAL's workers are inline blobs, check if a classic script ever loads from here
 	if (!res.ok || !url.pathname.endsWith(".js")) {
 		const headers = new Headers(res.headers);
@@ -256,11 +261,14 @@ electron.app.whenReady().then(async () => {
 	});
 });
 
-// #region Audio cache
-// TIDAL's player message handler (native/app/main/playback/player/PlayerController.js) gets audio urls that point at the cache, see audioCache.ts
+// #region AudioStreams
+// TIDAL's player message handler (native/app/main/playback/player/PlayerController.js) gets audio urls that point at AudioStreams, see native/AudioStreams
 const ipcOn = electron.ipcMain.on.bind(electron.ipcMain);
 electron.ipcMain.on = ((channel, listener) =>
-	ipcOn(channel, channel !== "player.message" ? listener : (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message))) as typeof electron.ipcMain.on;
+	ipcOn(
+		channel,
+		channel !== "player.message" ? listener : (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message),
+	)) as typeof electron.ipcMain.on;
 // #endregion
 
 // #region Proxied BrowserWindow

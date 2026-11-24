@@ -2,9 +2,9 @@ import { parseStream, type IAudioMetadata } from "music-metadata";
 
 import { fetchMediaItemStream, type FetchProgress } from "../../../../lib.native/src/index.native";
 
-import type { PlaybackInfo } from "../../helpers";
+import type { TrackPlaybackInfo } from "../PlaybackInfo/PlaybackInfo.types";
 
-export const parseStreamFormat = async (playbackInfo: PlaybackInfo): Promise<{ format: IAudioMetadata["format"]; bytes?: number }> => {
+export const parseStreamFormat = async (playbackInfo: TrackPlaybackInfo): Promise<{ format: IAudioMetadata["format"]; bytes?: number }> => {
 	const progress: FetchProgress = {};
 	const isDash = playbackInfo.manifestMimeType === "application/dash+xml";
 	// For DASH, only fetch init segment (contains metadata without media data)
@@ -18,7 +18,7 @@ export const parseStreamFormat = async (playbackInfo: PlaybackInfo): Promise<{ f
 	const { format } = await parseStream(stream, { mimeType });
 	return { format, bytes: progress.total };
 };
-export const getStreamBytes = async (playbackInfo: PlaybackInfo): Promise<any> => {
+export const getStreamBytes = async (playbackInfo: TrackPlaybackInfo): Promise<any> => {
 	const progress: FetchProgress = {};
 	const stream = await fetchMediaItemStream(playbackInfo, { progress, reqInit: { method: "HEAD" } });
 	// Consume the entire stream to ensure we get the total bytes

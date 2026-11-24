@@ -67,7 +67,7 @@ export default defineConfig({
 				test: {
 					name: "node",
 					environment: "node",
-					include: ["native/**/*.test.ts", "build/**/*.test.ts"],
+					include: ["native/**/*.test.ts", "build/**/*.test.ts", "cache/**/*.test.ts"],
 					setupFiles: [resolvePath("./test/setup-node.ts")],
 					// Under coverage instrumentation a file with a heavy import graph is far slower than its dry run
 					testTimeout: 30_000,
@@ -93,6 +93,7 @@ export default defineConfig({
 			// from TIDAL at runtime rather than from package.json (see test/harness/ui.ts).
 			include: [
 				"build/**",
+				"cache/**",
 				"native/**",
 				"plugins/lib/src/**",
 				"render/src/**",

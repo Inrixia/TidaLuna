@@ -1,5 +1,13 @@
 import type { AnyRecord, MaybePromise } from "@inrixia/helpers";
-import { createStore as createIdbStore, del as idbDel, get as idbGet, keys as idbKeys, set as idbSet, type UseStore } from "idb-keyval";
+import {
+	createStore as createIdbStore,
+	del as idbDel,
+	entries as idbEntries,
+	get as idbGet,
+	keys as idbKeys,
+	set as idbSet,
+	type UseStore,
+} from "idb-keyval";
 import { store as obyStore } from "oby";
 import { coreTrace, type Tracer } from "./trace";
 
@@ -58,6 +66,11 @@ export class ReactiveStore {
 		return value;
 	}
 
+	/** Where the values are, for the UI (see `CacheStore`) */
+	public get location() {
+		return `IndexedDB ${this.idbName}`;
+	}
+
 	public get<T>(key: string): Promise<T | undefined> {
 		return idbGet<T>(key, this.idbStore);
 	}
@@ -84,20 +97,21 @@ export class ReactiveStore {
 		return idbKeys(this.idbStore);
 	}
 
-	public async dump(): Promise<Record<string, unknown>>
-	{
+	/** Every key and value in one transaction, so a Cache loads its records in one read instead of one per key */
+	public entries<T>(): Promise<[string, T][]> {
+		return idbEntries<string, T>(this.idbStore);
+	}
+
+	public async dump(): Promise<Record<string, unknown>> {
 		const allKeys = await this.keys();
 		const data: Record<string, unknown> = {};
-		for (const key of allKeys)
-			data[key] = await this.get(key);
+		for (const key of allKeys) data[key] = await this.get(key);
 
 		return data;
 	}
 
-	public async clear()
-	{
+	public async clear() {
 		const allKeys = await this.keys();
-		for (const key of allKeys)
-			await this.del(key);
+		for (const key of allKeys) await this.del(key);
 	}
 }

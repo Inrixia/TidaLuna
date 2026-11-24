@@ -1,6 +1,6 @@
-import { requestCache, type Tracer } from "@luna/core";
+import { sharedRequests, type Tracer } from "@luna/core";
 
-import { memoize, memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
+import { memoizeArgless, Semaphore, sleep, statusOK, type Memoized, type VoidLike } from "@inrixia/helpers";
 import { createAPIClient } from "@tidal-music/api";
 import type { CredentialsProvider } from "@tidal-music/common";
 
@@ -58,7 +58,7 @@ export class TidalApi {
 		return `countryCode=${store.session.countryCode}&deviceType=DESKTOP&locale=${locale}`;
 	});
 	static {
-		requestCache.register(unloads, {
+		sharedRequests.register(unloads, {
 			pattern: /^https:\/\/(api|desktop)\.tidal\.com\/v1\/(tracks|videos)\/\d+\/playbackinfo\?/,
 			// TIDAL requests its quality setting, plugins the quality it actually got (PlayState.playbackContext.actualAudioQuality)
 			extraUrls: (url, info) => {
@@ -74,11 +74,16 @@ export class TidalApi {
 			// uses the session id it sends, the response carries it back
 			respond: (info, headers) => ({ ...(<object>info), streamingSessionId: headers.get("x-tidal-streamingsessionid") ?? undefined }),
 		});
-		requestCache.register(unloads, { pattern: /^https:\/\/(api|desktop)\.tidal\.com\/v1\/(tracks|albums|artists|playlists)\/[\w-]+(\/lyrics)?\?/ });
+		// Items and album pages, the same requests TIDAL makes for them (e.g. LOAD_SINGLE_MEDIA_ITEM, an album page's tracks), so either answers the other
+		sharedRequests.register(unloads, {
+			pattern: /^https:\/\/(api|desktop)\.tidal\.com\/v1\/((tracks|videos|albums|artists|playlists)\/[\w-]+(\/lyrics)?|pages\/album)\?/,
+		});
+		// Lyrics and ISRC lookups of the OpenAPI, which Luna makes itself (TIDAL's player doesn't)
+		sharedRequests.register(unloads, { pattern: /^https:\/\/openapi\.tidal\.com\/v2\/tracks(\/\d+)?\?.*(include=lyrics|filter\[isrc\])/ });
 	}
-	/** Cached GET of TIDAL's v1 api, shared with concurrent and matching TIDAL requests, see `requestCache` */
+	/** Cached GET of TIDAL's v1 api, shared with concurrent and matching TIDAL requests, see `sharedRequests` */
 	public static fetch<T>(url: string): Promise<T | undefined> {
-		return requestCache.get<T>(url, async () => {
+		return sharedRequests.request<T>(url, async () => {
 			// Retry a failed request once with a 1s delay
 			let retry = true;
 			while (true) {
@@ -97,6 +102,9 @@ export class TidalApi {
 
 	public static async track(trackId: redux.ItemId) {
 		return this.fetch<redux.Track>(`https://desktop.tidal.com/v1/tracks/${trackId}?${this.queryArgs()}`);
+	}
+	public static async video(videoId: redux.ItemId) {
+		return this.fetch<redux.Video>(`https://desktop.tidal.com/v1/videos/${videoId}?${this.queryArgs()}`);
 	}
 
 	// Lock to two concurrent requests
@@ -132,11 +140,16 @@ export class TidalApi {
 		return lyrics ?? this.openApiLyrics(trackId);
 	}
 	/** Lyrics from the OpenAPI, in the shape of the v1 API's lyrics */
-	private static openApiLyrics = memoize(async (trackId: redux.ItemId): Promise<redux.Lyrics | undefined> => {
+	private static openApiLyrics(trackId: redux.ItemId): Promise<redux.Lyrics | undefined> {
+		const countryCode = redux.store.getState().session.countryCode;
+		// The url only keys the shared request, the client makes its own
+		return sharedRequests.request(`https://openapi.tidal.com/v2/tracks/${trackId}?countryCode=${countryCode}&include=lyrics`, () =>
+			this.fetchOpenApiLyrics(trackId, countryCode),
+		);
+	}
+	private static async fetchOpenApiLyrics(trackId: redux.ItemId, countryCode: string): Promise<redux.Lyrics | undefined> {
 		const resp = await this.openApi
-			.GET("/tracks/{id}", {
-				params: { path: { id: String(trackId) }, query: { countryCode: redux.store.getState().session.countryCode, include: ["lyrics"] } },
-			})
+			.GET("/tracks/{id}", { params: { path: { id: String(trackId) }, query: { countryCode, include: ["lyrics"] } } })
 			.then((res) => this.openApiData(res))
 			.catch(() => undefined);
 		const lyrics = resp?.included?.find((item): item is TApiLyrics => item.type === "lyrics")?.attributes;
@@ -151,7 +164,7 @@ export class TidalApi {
 			subtitles: lyrics.lrcText || null,
 			isRightToLeft: lyrics.direction === "RIGHT_TO_LEFT",
 		};
-	});
+	}
 	public static async artist(artistId: redux.ItemId) {
 		return this.fetch<redux.Artist>(`https://desktop.tidal.com/v1/artists/${artistId}?${this.queryArgs()}`);
 	}
@@ -160,9 +173,7 @@ export class TidalApi {
 		return this.fetch<redux.Album>(`https://desktop.tidal.com/v1/albums/${albumId}?${this.queryArgs()}`);
 	}
 	public static async albumItems(albumId: redux.ItemId) {
-		const albumPage = await this.fetch<AlbumPage>(
-			`https://desktop.tidal.com/v1/pages/album?albumId=${albumId}&${this.queryArgs()}`,
-		);
+		const albumPage = await this.fetch<AlbumPage>(`https://desktop.tidal.com/v1/pages/album?albumId=${albumId}&${this.queryArgs()}`);
 		for (const row of albumPage?.rows ?? []) {
 			for (const module of row.modules) {
 				if (module.type === "ALBUM_ITEMS" && module.pagedList) {
@@ -251,13 +262,15 @@ export class TidalApi {
 	}
 
 	/** A page of the tracks with `isrc`, the page after `cursor` or the first one */
-	private static isrcPage = memoize((isrc: string, cursor: string | undefined) =>
-		this.openApi
-			.GET("/tracks", {
-				params: { query: { countryCode: redux.store.getState().session.countryCode, "filter[isrc]": [isrc], "page[cursor]": cursor } },
-			})
-			.then((res) => this.openApiData(res)),
-	);
+	private static isrcPage(isrc: string, cursor: string | undefined): Promise<TApiTracks | undefined> {
+		const countryCode = redux.store.getState().session.countryCode;
+		const url = `https://openapi.tidal.com/v2/tracks?countryCode=${countryCode}&filter[isrc]=${encodeURIComponent(isrc)}&page[cursor]=${cursor ?? ""}`;
+		return sharedRequests.request(url, () =>
+			this.openApi
+				.GET("/tracks", { params: { query: { countryCode, "filter[isrc]": [isrc], "page[cursor]": cursor } } })
+				.then((res) => this.openApiData(res)),
+		);
+	}
 	public static async *isrc(isrc: string): AsyncIterable<TApiTrack> {
 		let resp: TApiTracks | VoidLike = await this.isrcPage(isrc, undefined);
 		while (true) {
