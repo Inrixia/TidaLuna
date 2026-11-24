@@ -15,7 +15,8 @@
 			"@luna/lib.native": ["./plugins/lib.native/src/index.native.ts"],
 			"@luna/core": ["./render/src/index.ts"],
 			"@luna/ui": ["./plugins/ui/src/index.tsx"],
-			"@luna/dev": ["./plugins/dev/src/index.ts"]
+			"@luna/dev": ["./plugins/dev/src/index.ts"],
+			"test/*": ["./test/*"]
 		}
 	}
 }
