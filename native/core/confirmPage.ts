@@ -146,7 +146,23 @@ export const fitLines = (lines: string[]) => {
 		if (last >= 0 && packed[last].length + 1 + line.length <= MAX_TEXT) packed[last] += ` ${line}`;
 		else packed.push(line);
 	}
-	return packed.length <= MAX_LINES ? packed : [...packed.slice(0, MAX_LINES - 1), packed.slice(MAX_LINES - 1).join(" ")];
+	if (packed.length <= MAX_LINES) return packed;
+	// The last line takes what fits and counts the rest: confirmRequest would cut it without saying how much
+	const rest = packed.slice(MAX_LINES - 1);
+	let last = "";
+	let taken = 0;
+	for (const line of rest) {
+		const more = ` and ${rest.length - taken - 1} more lines`;
+		const next = last === "" ? line : `${last} ${line}`;
+		if (next.length + more.length > MAX_TEXT) break;
+		last = next;
+		taken++;
+	}
+	const left = rest.length - taken;
+	return [
+		...packed.slice(0, MAX_LINES - 1),
+		left === 0 ? last : `${last}${last === "" ? "" : " …"} and ${left} more line${left === 1 ? "" : "s"}`.trim(),
+	];
 };
 
 /** Checks a request that came over IPC: strings only, long texts are cut */

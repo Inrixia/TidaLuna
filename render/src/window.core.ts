@@ -88,6 +88,8 @@ declare global {
 			answer?: import("../../native/core/net").HostAnswer;
 			/** Luna didn't keep the answer (an IPv6 address, a single-label name, the registry failed): never in the page's CSP */
 			notKept?: true;
+			/** Reached through luna.fetch only (net.ts FetchOnly): never in the page's CSP */
+			fetchOnly?: import("../../native/core/net").FetchOnly;
 		}>;
 		/** The host entries the page's enforced connect-src was built from when it loaded */
 		pageConnect(): Promise<string[]>;

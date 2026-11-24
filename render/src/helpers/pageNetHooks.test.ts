@@ -134,6 +134,20 @@ describe("pageNetHooks", () => {
 		assert.deepEqual(calls.blocked, ["P x.example you denied x.example"]);
 	});
 
+	it("says a host only luna.fetch reaches won't work after a reload", async () => {
+		for (const [why, text] of [
+			["setting", /server from its settings/],
+			["resolves-local", /resolves to a local address/],
+		] as const) {
+			const { page, net, calls } = setup({ askHost: async () => ({ allowed: true, notKept: true, fetchOnly: why }) });
+			await net.ready;
+			new page.WebSocket("wss://jf.example.com/s");
+			await net.lastAsk();
+			assert.match(calls.blocked[0], text);
+			assert.deepEqual(calls.warned, []);
+		}
+	});
+
 	it("hands askHost the plugin's settings", async () => {
 		const seen: unknown[] = [];
 		const { page, net } = setup({

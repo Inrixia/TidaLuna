@@ -3,7 +3,7 @@ import { toNetRequest, toResponse } from "./netMessages";
 import { isLoopback, pageAllowsUrl } from "./pageNetRules";
 
 type Plugin = { url: string; name: string };
-type AskResult = { allowed: boolean; reason?: string; answer?: string; notKept?: true };
+type AskResult = { allowed: boolean; reason?: string; answer?: string; notKept?: true; fetchOnly?: "setting" | "resolves-local" };
 
 export type PageNetTarget = {
 	fetch: typeof fetch;
@@ -84,18 +84,32 @@ export const installPageNet = (page: PageNetTarget, deps: PageNetDeps) => {
 		const plugin = deps.callingPlugin();
 		if (plugin === undefined) return;
 		// The CSP violation of this request is this toast's (one toast for it, named after the plugin)
-		toasted.set(url.host, Date.now());
+		const now = Date.now();
+		for (const [host, at] of toasted) if (now - at >= TOASTED_MS) toasted.delete(host);
+		toasted.set(url.host, now);
 		return connectReady.then(async () => {
 			if (pageAllows(url)) return;
 			// Mixed content: TIDAL's https page can't reach plain http/ws but on loopback, whatever the user answers
 			if ((url.protocol === "http:" || url.protocol === "ws:") && !isLoopback(url.hostname))
 				return deps.blocked(plugin.name, url.host, `the page can't reach plain ${url.protocol.slice(0, -1)} hosts: its ${kind} needs luna.fetch`);
-			const { allowed, reason, answer, notKept } = await deps
+			const { allowed, reason, answer, notKept, fetchOnly } = await deps
 				.askHost(plugin.url, url.href, await deps.settingsFor(plugin))
 				.catch((err): AskResult => ({ allowed: false, reason: String(err?.message ?? err) }));
 			// This attempt was blocked by the page's CSP either way; an "always" answer, or a host accepted after the page
 			// loaded (no answer: a plugin enabled or updated since), is in it from the next load
 			if (!allowed) deps.blocked(plugin.name, url.host, reason);
+			else if (fetchOnly === "setting")
+				deps.blocked(
+					plugin.name,
+					url.host,
+					`a server from its settings is reached through luna.fetch only: its ${kind} can't reach it from the page`,
+				);
+			else if (fetchOnly === "resolves-local")
+				deps.blocked(
+					plugin.name,
+					url.host,
+					`it resolves to a local address, reached through luna.fetch only: its ${kind} can't reach it from the page`,
+				);
 			else if (notKept) deps.blocked(plugin.name, url.host, `Luna can't keep an answer for this host, so its ${kind} can't reach it from the page`);
 			else if (answer === "always" || answer === undefined)
 				deps.warn(`${plugin.name} may reach ${url.host}: its ${kind} works once TIDAL reloads (Ctrl+R)`);

@@ -98,8 +98,14 @@ const crossOriginDropped = ["authorization", "cookie", "proxy-authorization"];
 const connectionHeaders = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "te", "trailer", "proxy-connection"];
 // Headers about the body, dropped with it when a redirect continues as GET
 const bodyHeaders = ["content-type", "content-encoding", "content-language", "content-location", "content-length"];
-// The encodings fetch decodes: their content-encoding/content-length describe the encoded body, not the one handed on
+// The encodings fetch may decode: their content-encoding/content-length describe the encoded body, not the one handed on.
+// It only gets those it asked for (accept-encoding is its own, fetchFor): zstd only where it can decode it
 const decodedEncodings = new Set(["gzip", "x-gzip", "deflate", "br", "zstd"]);
+/**
+ * Why a host a page request may reach never gets into the page's CSP: a public server from the plugin's settings
+ * (the CSP is built without them), or a public name that resolves to a local address (asked each start)
+ */
+export type FetchOnly = "setting" | "resolves-local";
 /** Request bodies larger than this are refused (they are held in the main process) */
 const maxRequestBytes = 32 * 1024 * 1024;
 /** Requests one plugin may have in flight, and all plugins together */
@@ -205,7 +211,7 @@ export const createNet = (deps: NetDeps) => {
 		ask: AskHost | undefined,
 		settings: Record<string, unknown> | undefined,
 		answered?: (answer: HostAnswer) => void,
-		{ redirected = false, page = false }: { redirected?: boolean; page?: boolean } = {},
+		{ redirected = false, page = false, fetchOnly }: { redirected?: boolean; page?: boolean; fetchOnly?: (why: FetchOnly) => void } = {},
 	): Promise<string | undefined> => {
 		const schemes = page ? ["http:", "https:", "ws:", "wss:"] : ["http:", "https:"];
 		if (!schemes.includes(url.protocol)) return `${url.protocol} urls can't be fetched`;
@@ -234,7 +240,9 @@ export const createNet = (deps: NetDeps) => {
 			if (keptAsWritten || hostAllowed(allowed, url)) {
 				if ((keptAsWritten && isLocalHost(url.hostname)) || localEntryAllows(allowed, url)) return undefined;
 			} else if (hostAllowed(fromSettings, url) && !isLocalHost(url.hostname)) {
-				// The server in a setting: a public one is allowed as it is, a local one is asked below
+				// The server in a setting: a public one is allowed as it is, a local one is asked below. The page's CSP is
+				// built in main, without the page's settings: it never has it
+				fetchOnly?.("setting");
 			} else {
 				const reason = hostAllowed(fromSettings, url)
 					? "local-setting"
@@ -269,11 +277,13 @@ export const createNet = (deps: NetDeps) => {
 			if (addresses.some(isLocalHost)) {
 				// A server the user runs under a public name (split DNS, a home server): asked, never let through silently
 				const key = `${pluginUrl}\n${answerEntry(url)}\nlocal`;
-				if (resolvedLocalAllowed.has(key)) return undefined;
+				// Answers for it last until restart and never reach the page's CSP (it would let the name through whatever it resolves to)
+				if (resolvedLocalAllowed.has(key)) return void fetchOnly?.("resolves-local");
 				if (resolvedLocalDenied.has(key)) return local;
 				const answer = await askOnce(pluginUrl, plugin, url, "resolves-local", ask);
 				if (answer === "once" || answer === "always") {
 					answered?.(answer);
+					fetchOnly?.("resolves-local");
 					return undefined;
 				}
 				return answer === "deny" ? `you denied ${url.host} for ${plugin.name}` : local;
@@ -349,6 +359,9 @@ export const createNet = (deps: NetDeps) => {
 		for (const [name, value] of Object.entries(rawHeaders ?? {})) {
 			if (typeof value !== "string") refuse(`header ${name} must be a string`);
 			if (connectionHeaders.includes(name.toLowerCase())) refuse(`header ${name} can't be set`);
+			// Left to fetch, as a browser does: it asks only for the encodings it decodes (decodedEncodings), so a body
+			// comes decoded whatever the plugin would ask for
+			if (name.toLowerCase() === "accept-encoding") continue;
 			headers[name] = value;
 		}
 		const key = entry.plugin;
@@ -478,7 +491,7 @@ export const createNet = (deps: NetDeps) => {
 			ask?: AskHost,
 			/** As for fetch: the plugin's settings its `{setting:<key>}` entries name */
 			settings?: unknown,
-		): Promise<{ allowed: boolean; reason?: string; answer?: HostAnswer; notKept?: true }> => {
+		): Promise<{ allowed: boolean; reason?: string; answer?: HostAnswer; notKept?: true; fetchOnly?: FetchOnly }> => {
 			const plugin = typeof pluginUrl === "string" ? deps.hostsOf(pluginUrl) : undefined;
 			let url: URL;
 			try {
@@ -487,6 +500,7 @@ export const createNet = (deps: NetDeps) => {
 			} catch {
 				return { allowed: false, reason: "not a url" };
 			}
+			let fetchOnly: FetchOnly | undefined;
 			const entry: NetLogEntry = {
 				time: (deps.now ?? Date.now)(),
 				plugin: clip(typeof pluginUrl === "string" ? pluginUrl : typeof pluginUrl),
@@ -506,12 +520,14 @@ export const createNet = (deps: NetDeps) => {
 							ask,
 							settings as Record<string, unknown> | undefined,
 							(answer) => (entry.asked = answer),
-							{ page: true },
+							{ page: true, fetchOnly: (why) => (fetchOnly = why) },
 						);
 			entry.allowed = reason === undefined;
 			if (reason !== undefined) entry.error = reason;
 			record(entry, plugin !== undefined);
 			if (reason !== undefined) return { allowed: false, reason };
+			if (fetchOnly !== undefined)
+				return { allowed: true, ...(entry.asked === undefined ? {} : { answer: entry.asked }), notKept: true, fetchOnly };
 			// Allowed only in memory ("only now", or an answer that couldn't be kept): the page's CSP, built from kept grants,
 			// never has it
 			const key = `${pluginUrl}\n${answerEntry(url)}`;

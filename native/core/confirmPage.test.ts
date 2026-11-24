@@ -192,8 +192,10 @@ describe("core confirmation page", () => {
 		// Short lines share one, so no text is cut
 		assert.deepEqual(fitLines(many), [many.join(" ")]);
 		const long = Array.from({ length: 14 }, (_, i) => `${i}`.padEnd(400, "x"));
-		assert.deepEqual(fitLines(long), [...long.slice(0, 11), long.slice(11).join(" ")]);
+		// What doesn't fit the last line is counted there, not cut off unsaid
+		assert.deepEqual(fitLines(long), [...long.slice(0, 11), `${long[11]} … and 2 more lines`]);
 		assert.equal(confirmRequest("T", fitLines(long), "Go").lines.length, 12);
+		assert.ok(fitLines(long).every((line) => line.length <= 600));
 		assert.deepEqual(fitLines(["a"]), ["a"]);
 		assert.throws(() => confirmRequest(1, [], "Go"));
 		assert.throws(() => confirmRequest("T", "a", "Go"));

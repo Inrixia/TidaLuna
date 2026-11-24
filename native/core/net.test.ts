@@ -111,6 +111,12 @@ describe("luna.fetch", () => {
 		await assert.rejects(net.fetch("https://store/compat", "page", { url: "https://a.org/", body: { a: 1 } }), /string or bytes/);
 	});
 
+	it("leaves accept-encoding to fetch, which decodes what it asks for", async () => {
+		const { net, calls } = fakeNet(plugins, { "https://a.org/": () => new Response("ok") });
+		await net.fetch("https://store/compat", "page", { url: "https://a.org/", headers: { "Accept-Encoding": "zstd", "x-a": "b" } });
+		assert.deepEqual(calls[0].headers, { "x-a": "b" });
+	});
+
 	it("checks every redirect hop against the hosts", async () => {
 		const redirect =
 			(location: string, status = 302) =>
@@ -644,6 +650,9 @@ describe("luna.fetch prompts", () => {
 		const never: AskHost = async () => assert.fail("not asked");
 		assert.deepEqual(await net.ask("https://store/s", "https://jf.example.com/Sessions", never, { server: "https://jf.example.com" }), {
 			allowed: true,
+			// The page's CSP is built without the page's settings: only luna.fetch reaches it
+			notKept: true,
+			fetchOnly: "setting",
 		});
 	});
 

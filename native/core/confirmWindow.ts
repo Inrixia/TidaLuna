@@ -32,6 +32,9 @@ const hostGate = confirmGate();
 export const HOST_WAIT_MS = 5 * 60_000;
 /** Host questions that waited for TIDAL ask one at a time once it's back (the gate lets only a few wait at once) */
 const afterWait = oneAtATime();
+/** Host questions waiting for TIDAL at most: past them a plugin's request is refused at once, as before the wait */
+export const MAX_WAITING = 10;
+let waiting = 0;
 /** TIDAL windows whose blur ends the user's last answer counting as use (see confirmGate) */
 const watched = new WeakSet<BrowserWindow>();
 
@@ -209,8 +212,10 @@ export const choiceAskerFor = (sender: Electron.WebContents) => {
 		const request = { ...confirmRequest(title, fitLines(lines), "-"), choices };
 		let { choice, refused } = await askChoice(request, parent, recentUserInput);
 		// Asked while TIDAL isn't in use (a request in the background): the question waits until the user is back
-		if (refused === NOT_IN_USE && parent !== undefined && (await focusedWithin(parent, HOST_WAIT_MS))) {
-			({ choice, refused } = await afterWait(() => askChoice(request, parent, false)));
+		if (refused === NOT_IN_USE && parent !== undefined && waiting < MAX_WAITING) {
+			waiting++;
+			const back = await focusedWithin(parent, HOST_WAIT_MS).finally(() => waiting--);
+			if (back) ({ choice, refused } = await afterWait(() => askChoice(request, parent, false)));
 		}
 		if (refused === undefined) return choice;
 		throw notAsked(request.title, refused);

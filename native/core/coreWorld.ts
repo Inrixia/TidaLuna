@@ -191,7 +191,7 @@ export const exposeCore = () => {
 			pluginUrl: unknown,
 			target: unknown,
 			settings?: unknown,
-		): Promise<{ allowed: boolean; reason?: string; answer?: string; notKept?: true }> =>
+		): Promise<{ allowed: boolean; reason?: string; answer?: string; notKept?: true; fetchOnly?: string }> =>
 			ipcRenderer.invoke("__LunaCore.askHost", pluginUrl, target, settings),
 		pageConnect: (): Promise<string[]> => ipcRenderer.invoke("__LunaCore.pageConnect"),
 		forgetGrant: (url: unknown, entry: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.forgetGrant", url, entry),
