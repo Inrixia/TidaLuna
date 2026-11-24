@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { nativeFileName } from "../build/plugins/lunaNativePlugin";
 import { buildWorld, pageNativeNames } from "../build/plugins/lunaWorldPlugin";
 import { isBundle, parseBundle } from "./worldBundle";
 
@@ -28,6 +29,35 @@ test("pageNativeNames finds the registerNative calls lunaNativePlugin emits", ()
 	const code = `const c=await __ipcRenderer.invoke("__Luna.registerNative","Pkg/a.native.ts","code");await __ipcRenderer.invoke( '__Luna.registerNative' , 'Pkg/b\\'s.native.ts', "x");`;
 	assert.deepEqual(pageNativeNames(code), ["Pkg/a.native.ts", "Pkg/b's.native.ts"]);
 	assert.deepEqual(pageNativeNames(`__ipcRenderer.invoke("__Luna.registerNativeFrom", "u", "Pkg/a.native.ts")`), []);
+});
+
+test("nativeFileName names a native file the same on POSIX and Windows, with a relative or absolute entry point", () => {
+	const { posix, win32 } = path;
+	// esbuild's entryPoint is relative to the working directory, also for a file outside it (a temp folder)
+	assert.equal(nativeFileName("../../../tmp/w/src/size.native.ts", "/tmp/w/src/index.ts", "Pkg", "/home/u/repo", posix), "Pkg/size.native.ts");
+	assert.equal(nativeFileName("plugins/x/src/a/b.native.ts", "plugins/x/src/index.ts", "Pkg", "/home/u/repo", posix), "Pkg/a/b.native.ts");
+	assert.equal(nativeFileName("plugins/x/src/index.native.ts", "plugins/x/src/index.native.ts", "Pkg", "/home/u/repo", posix), "Pkg");
+	// Outside the plugin's folder: kept as it is
+	assert.equal(
+		nativeFileName("plugins/lib.native/src/index.native.ts", "plugins/x/src/index.ts", "Pkg", "/home/u/repo", posix),
+		"plugins/lib.native/src/index.native.ts",
+	);
+	// A folder that only starts with the same name isn't the plugin's
+	assert.equal(
+		nativeFileName("plugins/x/src2/a.native.ts", "plugins/x/src/index.ts", "Pkg", "/home/u/repo", posix),
+		"plugins/x/src2/a.native.ts",
+	);
+	assert.equal(
+		nativeFileName(
+			"C:/Users/u/AppData/Local/Temp/w/src/size.native.ts",
+			"C:\\Users\\u\\AppData\\Local\\Temp\\w\\src\\index.ts",
+			"Pkg",
+			"E:\\repo",
+			win32,
+		),
+		"Pkg/size.native.ts",
+	);
+	assert.equal(nativeFileName("plugins/x/src/a.native.ts", "plugins\\x\\src\\index.ts", "Pkg", "E:\\repo", win32), "Pkg/a.native.ts");
 });
 
 test("buildWorld turns native imports into calls over the world bridge", async () => {
