@@ -189,6 +189,13 @@ describe("bestQuality", () => {
 		expect(makeMediaItem(nextId(), { mediaMetadata: { tags: [] }, audioQuality: "LOW" }).bestQuality).toBe(Quality.Lowest);
 	});
 
+	test("ignores a tag with no known quality instead of reporting Lowest", () => {
+		const unknown = "NOT_A_TAG" as unknown as redux.MediaMetadataTag;
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: [unknown, "LOSSLESS"] }, audioQuality: "LOW" });
+
+		expect(mediaItem.bestQuality).toBe(Quality.High);
+	});
+
 	test("ignores the spatial tags, which say nothing about the quality of the stream", () => {
 		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: ["DOLBY_ATMOS", "LOSSLESS"] }, audioQuality: "LOSSLESS" });
 

@@ -96,6 +96,33 @@ describe("min/max", () => {
 	});
 });
 
+describe("min/max with undefined entries", () => {
+	const unknownTags = (...tags: string[]) => Quality.fromMetaTags(tags as unknown as redux.MediaMetadataTag[]);
+
+	test("ignore undefined entries mixed with defined ones", () => {
+		expect(Quality.max(undefined, Quality.High)).toBe(Quality.High);
+		expect(Quality.max(Quality.High, undefined, Quality.Low)).toBe(Quality.High);
+		expect(Quality.min(undefined, Quality.High)).toBe(Quality.High);
+		expect(Quality.min(Quality.MQA, undefined, Quality.Atmos)).toBe(Quality.Atmos);
+	});
+
+	test("ignore the entry an unknown tag leaves in fromMetaTags", () => {
+		expect(Quality.max(...unknownTags("NOT_A_TAG", "MQA"))).toBe(Quality.MQA);
+		expect(Quality.min(...unknownTags("NOT_A_TAG", "MQA"))).toBe(Quality.MQA);
+		expect(Quality.max(...unknownTags("LOSSLESS", "NOT_A_TAG", "HIRES_LOSSLESS"))).toBe(Quality.HiRes);
+		expect(Quality.min(...unknownTags("LOSSLESS", "NOT_A_TAG", "HIRES_LOSSLESS"))).toBe(Quality.High);
+	});
+
+	test("are Lowest when nothing is left to compare, as for no arguments", () => {
+		expect(Quality.max()).toBe(Quality.Lowest);
+		expect(Quality.min()).toBe(Quality.Lowest);
+		expect(Quality.max(undefined)).toBe(Quality.Lowest);
+		expect(Quality.min(undefined, undefined)).toBe(Quality.Lowest);
+		expect(Quality.max(...unknownTags("NOT_A_TAG"))).toBe(Quality.Lowest);
+		expect(Quality.min(...unknownTags("NOT_A_TAG"))).toBe(Quality.Lowest);
+	});
+});
+
 describe("getters", () => {
 	test.each([
 		["HiRes", Quality.HiRes, "HI_RES_LOSSLESS"],
