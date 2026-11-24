@@ -4,7 +4,7 @@ import TextField from "@mui/material/TextField";
 import MenuItem from "@mui/material/MenuItem";
 
 import { LunaPlugin, LunaRegistry } from "@luna/core";
-import { LunaSwitchSetting } from "../../components";
+import { LunaSettings, LunaSwitchSetting } from "../../components";
 import { LunaPluginSettings } from "./LunaPluginSettings";
 import { useRegistry } from "./RegistryBadge";
 import { ReloadAllPlugins } from "./ReloadAllPlugins";
@@ -14,12 +14,14 @@ import { installedPlugins, matchingPluginNames, watchInstalledPlugins } from "./
 const VerifiedUpdatesOnly = React.memo(() => {
 	const { verifiedUpdatesOnly } = useRegistry();
 	return (
-		<LunaSwitchSetting
-			title="Only verified updates"
-			desc="Offer a plugin update only when the Luna plugin registry verified that version. Unverified updates still show on the plugin's card, labelled."
-			checked={verifiedUpdatesOnly}
-			onChange={(_, checked) => LunaRegistry.setVerifiedUpdatesOnly(checked).catch(LunaRegistry.trace.err.withContext("setVerifiedUpdatesOnly"))}
-		/>
+		<LunaSettings title="Plugin updates">
+			<LunaSwitchSetting
+				title="Only verified updates"
+				desc="Offer a plugin update only when the Luna plugin registry verified that version. Unverified updates still show on the plugin's card, labelled."
+				checked={verifiedUpdatesOnly}
+				onChange={(_, checked) => LunaRegistry.setVerifiedUpdatesOnly(checked).catch(LunaRegistry.trace.err.withContext("setVerifiedUpdatesOnly"))}
+			/>
+		</LunaSettings>
 	);
 });
 
