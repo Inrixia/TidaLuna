@@ -407,7 +407,13 @@ export class LunaPlugin {
 	 * Are you sure you didnt mean disable() or reload()?
 	 * This will unload the plugin without disabling it!
 	 */
+	/** True while an unload is in flight, so a plugin reached twice runs its unload functions once */
+	private unloading = false;
 	private async unload(): Promise<void> {
+		// `window.close` unloads every plugin, while unload() also takes a plugin's dependants down, so the same plugin can
+		// be reached twice. Its unload functions aren't required to be idempotent, so only run them once.
+		if (this.unloading) return;
+		this.unloading = true;
 		const wasLoaded = this.exports !== undefined;
 		try {
 			this.loading._ = true;
@@ -419,6 +425,7 @@ export class LunaPlugin {
 			await unloadSet(this.exports?.unloads);
 		} finally {
 			this.exports = undefined;
+			this.unloading = false;
 			this.loading._ = false;
 			delete modules[this.name];
 			if (wasLoaded) this.trace.log("Unloaded");
