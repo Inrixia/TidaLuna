@@ -114,9 +114,11 @@ describe("addButton", () => {
 		const contextMenu = contextMenuElem({ template: false });
 		const button = ContextMenu.addButton(unloads);
 
-		// `querySelector` answers null rather than undefined, so the check for the template item never fires and the
-		// clone is attempted on null. Pinned as it is: a missing template item is a broken menu, not something to recover.
-		await expect(button.show(contextMenu)).rejects.toThrow(/Cannot read properties of null/);
+		// `querySelector` answers null for a menu without items, which must give the intended error and not a TypeError
+		const shown = button.show(contextMenu);
+		await expect(shown).rejects.toThrow("No buttons to clone off contextMenu found!");
+		await expect(shown).rejects.not.toBeInstanceOf(TypeError);
+		expect(button.elem).toBeUndefined();
 	});
 });
 
