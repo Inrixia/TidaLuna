@@ -132,7 +132,7 @@ const UpdateDetails = ({ plugin, update, onAskAgain }: { plugin: LunaPlugin; upd
 			</Typography>
 			<UpdateRegistryStatus plugin={plugin} update={update} />
 			<Typography variant="body2">
-				Update only if you trust the author and <LunaLink href={plugin.url}>{plugin.url}</LunaLink>
+				Update only if you trust the author and <LunaLink href={`${plugin.url}.json`}>{plugin.url}</LunaLink>
 			</Typography>
 			<AllVersionsWarning url={plugin.url} onAskAgain={onAskAgain} />
 		</>
