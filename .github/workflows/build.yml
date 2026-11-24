@@ -32,6 +32,10 @@ jobs:
    - name: Install dependencies 📥
      run: pnpm install
 
+   # Nothing downstream runs unless the tests pass: this step failing stops the build, the zip and the release
+   - name: Test
+     run: pnpm test
+
    - name: Build
      run: pnpm run build
 
