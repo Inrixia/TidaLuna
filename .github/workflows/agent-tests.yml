@@ -1,0 +1,77 @@
+name: "Agent tests"
+
+# Claude agent tests against a real TIDAL (.claude/agent-tests/README.md).
+# Manual only: each run costs API money (about $0.20-1 per scenario on Sonnet 5.5, $2-6 for all).
+# Needs a self-hosted runner labelled `tidal` with TIDAL installed and a test instance set up, and the ANTHROPIC_API_KEY secret.
+on:
+ workflow_dispatch:
+  inputs:
+   scenarios:
+    description: "Scenario names, space separated (empty = all)"
+    required: false
+    default: ""
+   model:
+    description: "Model"
+    required: false
+    default: "claude-sonnet-5-5"
+   budget:
+    description: "Max USD per scenario"
+    required: false
+    default: "1.5"
+
+concurrency:
+ group: agent-tests
+ cancel-in-progress: false
+
+jobs:
+ AgentTests:
+  runs-on: [self-hosted, tidal]
+  # Room for 6 scenarios at the 15 min per-scenario cap, plus install and build
+  timeout-minutes: 120
+  permissions:
+   contents: read
+  steps:
+   # clean: false keeps the ignored .tidal-test/ (test instance and earlier replies) that git clean -ffdx would delete
+   - uses: actions/checkout@v7
+     with:
+      clean: false
+
+   - name: Install pnpm 📥
+     uses: pnpm/action-setup@v6
+     with:
+      version: latest
+
+   - name: Install Node.js 📥
+     uses: actions/setup-node@v7
+     with:
+      cache: pnpm
+      node-version: lts/*
+
+   - name: Install dependencies 📥
+     run: pnpm install
+
+   - name: Build
+     run: pnpm run build
+
+   - name: Install Claude Code
+     run: npm install --global @anthropic-ai/claude-code
+
+   - name: Run agent tests
+     id: run
+     env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SCENARIOS: ${{ inputs.scenarios }}
+      MODEL: ${{ inputs.model }}
+      BUDGET: ${{ inputs.budget }}
+     shell: bash
+     run: node .claude/agent-tests/run.mjs --model "$MODEL" --budget "$BUDGET" $SCENARIOS
+
+   # Only verdicts and costs: replies can mention the test account, and artifacts of a public repo are public.
+   # The full replies stay on the runner in .tidal-test/agent-tests/. Only this run's, the folder keeps earlier ones (clean: false).
+   - name: Upload summary
+     if: always()
+     uses: actions/upload-artifact@v7
+     with:
+      name: agent-tests
+      path: ${{ steps.run.outputs.dir }}/summary.json
+      retention-days: 14
