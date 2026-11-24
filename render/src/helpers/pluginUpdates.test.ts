@@ -1,4 +1,3 @@
-// Run: pnpm exec tsx --test render/src/helpers/pluginUpdates.test.ts
 
 import { expect, test } from "vitest";
 
