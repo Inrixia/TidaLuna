@@ -202,7 +202,8 @@ const link = (text: string, href: string | undefined): string | ConfirmLink => (
 /**
  * What the update confirmation says: the versions and code hashes, linked to their source and what changed where the
  * packages say (updateLinks), `notes` (the world's hash, the old native format), whom to trust, and a warning with "Ask
- * again" if the plugin's native files were allowed for all versions
+ * again" if the plugin's native files that would run (`runs`: old-format ones that won't are left out) were allowed for
+ * all versions
  */
 export const updateQuestion = (
 	url: string,
@@ -211,6 +212,7 @@ export const updateQuestion = (
 	pending: Version,
 	deps: Pick<RegistryDeps, "allVersionsAnswers" | "revokeAllVersions">,
 	notes: string[] = [],
+	runs: string[] = pending.natives,
 ): ConfirmRequest => {
 	const links = updateLinks(url, accepted.package, pending.package);
 	const versions: ConfirmLine = [link(accepted.package.version ?? "?", links.from), " -> ", link(pending.package.version ?? "?", links.to)];
@@ -223,7 +225,7 @@ export const updateQuestion = (
 	const warning = (): ConfirmWarning | undefined => {
 		const files = deps
 			.allVersionsAnswers(url)
-			.filter((fileName) => pending.natives.includes(fileName))
+			.filter((fileName) => runs.includes(fileName))
 			// As describe() names them
 			.map((fileName) => (isWorldNative(fileName) ? fileName.slice(worldFilePrefix.length) : fileName));
 		if (files.length === 0) return undefined;
@@ -495,11 +497,14 @@ export const createRegistry = (deps: RegistryDeps) => {
 		// The world drives the plugin's natives: a change to it alone is shown too
 		if (accepted.package.worldHash !== pending.package.worldHash)
 			notes.push(`World sha256: ${shortHash(accepted.package.worldHash ?? "none")} -> ${shortHash(pending.package.worldHash ?? "none")}`);
-		notes.push(...legacyLines(url, pending, legacyWouldRun(url, accepted, pending)));
+		const legacyRunsAfter = legacyWouldRun(url, accepted, pending);
+		notes.push(...legacyLines(url, pending, legacyRunsAfter));
 		if (!isDevUrl(url) && legacyRuns(url, accepted) && legacyNativesOf(accepted).length !== 0)
 			notes.push("This plugin uses the old native format. After this update it can't any more, even if you go back to this version.");
 		// Operations on this url wait for the answer (serial): a newer update a load finds meanwhile waits for its own window
-		if (!(await ask(updateQuestion(url, record.name, accepted, pending, deps, notes)))) return false;
+		// Old-format files that won't run aren't named in the warning (legacyLines says they won't)
+		const runs = legacyRunsAfter === false ? pending.natives.filter(isWorldNative) : pending.natives;
+		if (!(await ask(updateQuestion(url, record.name, accepted, pending, deps, notes, runs)))) return false;
 		accept(record, pending);
 		record.pending = undefined;
 		await save();

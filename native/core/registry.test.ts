@@ -575,26 +575,26 @@ describe("core registry", () => {
 	});
 
 	it("warns when the plugin's native files are allowed for all versions, and asks again only if the user updates", async () => {
-		const { deps, serve, allVersions } = fakeDeps();
-		serve(URL, "v1", { "a.native.ts": "native a" });
+		const { deps, serveWorld, allVersions } = fakeDeps();
+		serveWorld(URL, "v1", { "w.native.ts": "world native" });
 		const registry = createRegistry(deps);
 		await registry.install(URL, asker(true));
-		serve(URL, "v2", { "a.native.ts": "native a2" });
+		serveWorld(URL, "v2", { "w.native.ts": "world native 2" });
 		await registry.load(URL);
 
 		const no = asker(false);
 		await registry.acceptUpdate(URL, no);
-		// Taken when the window shows: an answer given while it waited counts
-		allVersions.set(URL, ["a.native.ts", "gone.native.ts"]);
+		// Taken when the window shows: an answer given while it waited counts. As the trust store names them (native/worlds.ts)
+		allVersions.set(URL, ["world:w.native.ts", "world:gone.native.ts"]);
 		const warning = shownWarning(no.asked[0]);
 		// Only the update's own files
-		assert.strictEqual(warning?.text, "Native code allowed for all versions (a.native.ts): the update's runs without asking.");
+		assert.strictEqual(warning?.text, "Native code allowed for all versions (w.native.ts): the update's runs without asking.");
 		assert.strictEqual(warning?.action, "Ask again");
-		allVersions.set(URL, ["gone.native.ts"]);
+		allVersions.set(URL, ["world:gone.native.ts"]);
 		assert.strictEqual(shownWarning(no.asked[0]), undefined);
-		allVersions.set(URL, ["a.native.ts", "gone.native.ts"]);
+		allVersions.set(URL, ["world:w.native.ts", "world:gone.native.ts"]);
 		// The window runs it only when the user chose it and then confirmed (confirmWindow.ts)
-		assert.deepStrictEqual(allVersions.get(URL), ["a.native.ts", "gone.native.ts"]);
+		assert.deepStrictEqual(allVersions.get(URL), ["world:w.native.ts", "world:gone.native.ts"]);
 		await warning!.run();
 		assert.strictEqual(allVersions.get(URL), undefined);
 	});
@@ -1028,6 +1028,23 @@ describe("core registry", () => {
 		const ask = asker(false);
 		await registry.acceptUpdate(URL, ask);
 		assert.strictEqual(shownWarning(ask.asked[0])?.text, "Native code allowed for all versions (w.native.ts): the update's runs without asking.");
+	});
+
+	it("leaves old-format native files that won't run out of the all-versions warning", async () => {
+		const { deps, serve, list, allVersions } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		list(URL, "v1");
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		allVersions.set(URL, ["a.native.ts"]);
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		list(URL, "v2");
+		await registry.load(URL);
+		// Other code leaves the old format, listed or not: the window says it won't run, nothing to ask again for
+		const ask = asker(false);
+		await registry.acceptUpdate(URL, ask);
+		assert.match(ask.asked[0].lines.map(lineText).join(" "), /won't run/);
+		assert.strictEqual(shownWarning(ask.asked[0]), undefined);
 	});
 
 	it("moves a world plugin silently only when the new url serves the same world", async () => {
