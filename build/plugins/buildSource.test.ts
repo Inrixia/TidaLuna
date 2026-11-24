@@ -21,3 +21,8 @@ test("a local build or odd values add nothing", () => {
 	assert.deepEqual(buildSource({}, {}), {});
 	assert.deepEqual(buildSource({ GITHUB_SHA: "main", GITHUB_SERVER_URL: "http://github.com", GITHUB_REPOSITORY: "o/r/../x" }, {}), {});
 });
+
+test("a pull request build names no commit", () => {
+	assert.deepEqual(buildSource({ GITHUB_EVENT_NAME: "pull_request", GITHUB_SHA: SHA }, {}), {});
+	assert.deepEqual(buildSource({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_SHA: SHA }, {}), {});
+});

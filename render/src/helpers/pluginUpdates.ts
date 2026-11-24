@@ -68,16 +68,16 @@ const releaseAsset = (url: string): { repo: string; tag: string } | undefined =>
 };
 
 /**
- * The web page of the repository a plugin is built from: `repository.url` of its package (`git+https://...git` too),
- * else the repository of the release its url downloads from, else its homepage's first two path parts
+ * The web page of the repository a plugin is built from: the repository of the release its url downloads from (where
+ * the code really comes from), else the `repository.url` its package names (`git+https://...git` too)
  */
-export const sourceRepo = (pkg: { repository?: { url?: string }; homepage?: string }, url: string): string | undefined =>
-	repoBase(httpUrl(pkg.repository?.url?.replace(/^git\+/, ""))) ?? releaseAsset(url)?.repo ?? repoBase(httpUrl(pkg.homepage));
+export const sourceRepo = (pkg: { repository?: { url?: string } }, url: string): string | undefined =>
+	releaseAsset(url)?.repo ?? repoBase(httpUrl(typeof pkg.repository?.url === "string" ? pkg.repository.url.replace(/^git\+/, "") : undefined));
 
-/** The release page a plugin url downloads from (GitHub, Gitea and Forgejo use the same paths) */
-export const releasePage = (url: string): string | undefined => {
+/** The release a plugin url downloads from (GitHub, Gitea and Forgejo use the same paths) */
+export const releaseOf = (url: string): { tag: string; page: string } | undefined => {
 	const asset = releaseAsset(url);
-	return asset === undefined ? undefined : `${asset.repo}/releases/tag/${encodeURIComponent(asset.tag)}`;
+	return asset === undefined ? undefined : { tag: asset.tag, page: `${asset.repo}/releases/tag/${encodeURIComponent(asset.tag)}` };
 };
 
 const isCommit = (commit: unknown): commit is string => typeof commit === "string" && /^[0-9a-f]{7,40}$/i.test(commit);
@@ -97,17 +97,31 @@ export type PermissionEntry = { key: string; fileName: string; url?: string; cla
 export const allowedForAllVersions = <T extends PermissionEntry>(entries: T[], url: string): T[] =>
 	entries.filter((entry) => entry.answer === "allowUpdates" && (entry.url ?? entry.claimedUrl) === url);
 
-type SourceInfo = { repository?: { url?: string }; homepage?: string; commit?: string };
+type SourceInfo = { repository?: { url?: string }; version?: string; commit?: string };
 
 /**
- * Links for an update of the plugin at `url`: each version's source (its commit, else for the new one the release it
- * downloads from) and the compare of the two commits. Undefined where the packages don't say.
+ * Links for an update of the plugin at `url`. The repository is the release's, else the one the installed version
+ * named, else the update's (a package's commit and repository are what its build says, not checked against the code):
+ * - from / to: each version's commit, or the release when its tag is that version
+ * - release: the release the url downloads from when its tag is not the version (`latest`, `dev`: it moves on)
+ * - compare: the two builds' commits
  */
-export const updateLinks = (url: string, current: SourceInfo, update: SourceInfo): { from?: string; to?: string; compare?: string } => {
-	const repo = sourceRepo(update, url) ?? sourceRepo(current, url);
+export const updateLinks = (
+	url: string,
+	current: SourceInfo,
+	update: SourceInfo,
+): { from?: string; to?: string; compare?: string; release?: { tag: string; page: string } } => {
+	const repo = sourceRepo(current, url) ?? sourceRepo(update, url);
+	const release = releaseOf(url);
+	const versionRelease =
+		release !== undefined && update.version !== undefined && (release.tag === update.version || release.tag === `v${update.version}`)
+			? release.page
+			: undefined;
+	const to = commitPage(repo, update.commit) ?? versionRelease;
 	return {
 		from: commitPage(repo, current.commit),
-		to: commitPage(repo, update.commit) ?? releasePage(url),
+		to,
 		compare: comparePage(repo, current.commit, update.commit),
+		release: to === undefined ? release : undefined,
 	};
 };

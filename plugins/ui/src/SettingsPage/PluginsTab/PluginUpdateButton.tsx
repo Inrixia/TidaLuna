@@ -7,25 +7,19 @@ import { useConfirm } from "material-ui-confirm";
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
-import Link from "@mui/material/Link";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
 import type { NativePermissionEntry } from "../../../../../native/NativeModule/trust";
+import { LunaLink } from "../../components";
 
 /** First 12 hex digits, enough to tell versions apart and compare with a published hash */
 const shortHash = (sha256?: string) => (sha256 === undefined ? "?" : sha256.slice(0, 12));
 
 const MaybeLink = ({ href, children }: { href?: string; children: React.ReactNode }) =>
-	href === undefined ? (
-		<>{children}</>
-	) : (
-		<Link href={href} target="_blank" rel="noreferrer">
-			{children}
-		</Link>
-	);
+	href === undefined ? <>{children}</> : <LunaLink href={href}>{children}</LunaLink>;
 
 /**
  * The plugin's native files allowed for all versions: the update's native code runs without asking. "Ask again"
@@ -38,9 +32,15 @@ const AllVersionsWarning = ({ url }: { url: string }) => {
 		[url],
 	);
 	React.useEffect(() => void refresh().catch(() => {}), [refresh]);
+	const [error, setError] = React.useState<string>();
 	const askAgain = React.useCallback(async () => {
-		for (const { key } of entries) await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key);
-		await refresh();
+		try {
+			for (const { key } of entries) await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key);
+			setError(undefined);
+		} catch (err) {
+			setError(`Could not revoke: ${err instanceof Error ? err.message : String(err)}`);
+		}
+		await refresh().catch(() => {});
 	}, [entries, refresh]);
 
 	if (entries.length === 0) return null;
@@ -55,6 +55,12 @@ const AllVersionsWarning = ({ url }: { url: string }) => {
 			}
 		>
 			Native code allowed for all versions ({entries.map(({ fileName }) => fileName).join(", ")}): the update's runs without asking.
+			{error !== undefined && (
+				<>
+					<br />
+					{error}
+				</>
+			)}
 		</Alert>
 	);
 };
@@ -73,6 +79,12 @@ const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginP
 				<MaybeLink href={links.to}>
 					<b>{update.version ?? "?"}</b>
 				</MaybeLink>
+				{links.release !== undefined && (
+					<>
+						{" ("}
+						<LunaLink href={links.release.page}>release {links.release.tag}</LunaLink>)
+					</>
+				)}
 			</Typography>
 			<Typography variant="body2" gutterBottom title={`sha256 ${current.codeSha256 ?? "?"} → ${update.codeSha256 ?? "?"}`}>
 				Code sha256: <code>{shortHash(current.codeSha256)}</code> → <code>{shortHash(update.codeSha256)}</code>
@@ -84,10 +96,7 @@ const UpdateDetails = ({ plugin, update }: { plugin: LunaPlugin; update: PluginP
 				)}
 			</Typography>
 			<Typography variant="body2">
-				Update only if you trust the author and{" "}
-				<Link href={plugin.url} target="_blank" rel="noreferrer">
-					{plugin.url}
-				</Link>
+				Update only if you trust the author and <LunaLink href={plugin.url}>{plugin.url}</LunaLink>
 			</Typography>
 			<AllVersionsWarning url={plugin.url} />
 		</>
