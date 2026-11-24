@@ -25,18 +25,28 @@
     "format": "prettier -wc ./src",
     "watch": "rimraf ./dist && tsx ./esbuild.config.ts --watch",
     "build": "rimraf ./dist && tsx ./esbuild.config.ts",
-    "test": "tsx --test \"{build,native,render,plugins}/**/*.test.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "coverage:ci": "vitest run --coverage --reporter=default --reporter=json --outputFile.json=coverage/test-results.json",
+    "coverage:comment": "tsx test/coverageComment.ts",
+    "coverage:thresholds": "tsx test/raiseCoverageThresholds.ts",
+    "coverage:badge": "tsx test/coverageBadge.ts",
     "legacy-serial": "node scripts/legacyMinSerial.mjs"
   },
   "license": "MS-Pl",
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@vitest/coverage-v8": "5.1.1",
+    "fake-indexeddb": "^6.2.8",
     "happy-dom": "^21.0.4",
     "prettier": "^3.10.1",
+    "redux": "^5.0.1",
     "rimraf": "^6.1.4",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "5.1.1"
   },
   "dependencies": {
     "@inrixia/helpers": "^3.22.0",

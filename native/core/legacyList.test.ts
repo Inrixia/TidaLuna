@@ -1,5 +1,4 @@
-import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 
@@ -37,36 +36,35 @@ const base: LegacyList = parse(doc(1, [A, B]));
 
 describe("old native format list", () => {
 	it("accepts a list signed with the key, and nothing else", () => {
-		assert.strictEqual(base.entries.length, 2);
-		assert.throws(() => parse(doc(1, [A]), other), /signature does not verify/);
+		expect(base.entries.length).toBe(2);
+		expect(() => parse(doc(1, [A]), other)).toThrow(/signature does not verify/);
 		const { bytes, sig } = signed(doc(1, [A]));
 		// One byte changed after signing
-		assert.throws(() => parseLegacyList(Buffer.from(bytes.toString().replace("a.mjs", "c.mjs")), sig, pub), /signature/);
-		assert.throws(() => parseLegacyList(bytes, "", pub), /signature/);
+		expect(() => parseLegacyList(Buffer.from(bytes.toString().replace("a.mjs", "c.mjs")), sig, pub)).toThrow(/signature/);
+		expect(() => parseLegacyList(bytes, "", pub)).toThrow(/signature/);
 		// Another file the registry signs with the same key
-		assert.throws(() => parse(doc(1, [A], { kind: "trust" })), /kind "trust"/);
-		assert.throws(() => parse(doc(0, [A])), /serial/);
-		assert.throws(() => parse(doc(1, [{ ...A, sha256: "x" }])), /malformed/);
+		expect(() => parse(doc(1, [A], { kind: "trust" }))).toThrow(/kind "trust"/);
+		expect(() => parse(doc(0, [A]))).toThrow(/serial/);
+		expect(() => parse(doc(1, [{ ...A, sha256: "x" }]))).toThrow(/malformed/);
 	});
 
 	it("only shrinks: an added or changed entry, a rollback or another cut-off is refused", () => {
-		assert.deepStrictEqual(replacesList(undefined, base), { ok: true });
-		assert.deepStrictEqual(replacesList(base, parse(doc(2, [A]))), { ok: true });
-		assert.deepStrictEqual(replacesList(base, parse(doc(1, [A, B]))), { ok: true });
+		expect(replacesList(undefined, base)).toStrictEqual({ ok: true });
+		expect(replacesList(base, parse(doc(2, [A])))).toStrictEqual({ ok: true });
+		expect(replacesList(base, parse(doc(1, [A, B])))).toStrictEqual({ ok: true });
 
 		const C = entry("c.mjs", "code c");
-		assert.match((replacesList(base, parse(doc(2, [A, B, C]))) as { reason: string }).reason, /adds c\.mjs/);
+		expect((replacesList(base, parse(doc(2, [A, B, C]))) as { reason: string }).reason).toMatch(/adds c\.mjs/);
 		// An entry's hash changed is an entry added
-		assert.match((replacesList(base, parse(doc(2, [A, entry("b.mjs", "code b2")]))) as { reason: string }).reason, /adds b\.mjs/);
-		assert.match(
-			(replacesList(base, parse(doc(2, [A, { ...B, natives: { "x.native.ts": sha("x") } }]))) as { reason: string }).reason,
+		expect((replacesList(base, parse(doc(2, [A, entry("b.mjs", "code b2")]))) as { reason: string }).reason).toMatch(/adds b\.mjs/);
+		expect((replacesList(base, parse(doc(2, [A, { ...B, natives: { "x.native.ts": sha("x") } }]))) as { reason: string }).reason).toMatch(
 			/changes b\.mjs/,
 		);
 		const shrunk = parse(doc(3, [A]));
-		assert.match((replacesList(shrunk, parse(doc(2, [A]))) as { reason: string }).reason, /rollback/);
+		expect((replacesList(shrunk, parse(doc(2, [A]))) as { reason: string }).reason).toMatch(/rollback/);
 		// A replayed older, bigger list
-		assert.match((replacesList(shrunk, base) as { reason: string }).reason, /rollback/);
-		assert.match((replacesList(base, parse(doc(2, [A], { cutoff: "2027-01-01T00:00:00.000Z" }))) as { reason: string }).reason, /cut-off/);
+		expect((replacesList(shrunk, base) as { reason: string }).reason).toMatch(/rollback/);
+		expect((replacesList(base, parse(doc(2, [A], { cutoff: "2027-01-01T00:00:00.000Z" }))) as { reason: string }).reason).toMatch(/cut-off/);
 	});
 
 	it("keeps the cached list until a fetched one may replace it, and checks the cache's signature", async () => {
@@ -81,28 +79,28 @@ describe("old native format list", () => {
 				firstWaitMs: 50,
 			});
 		const store = make();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		expect(store.allows("a.mjs", A.sha256)).toBe(false);
 		await store.ready();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
 
 		// A grown list, or a rollback, is refused: the cache stays
 		const before = cache;
 		served = signed(doc(3, [A, B, entry("c.mjs", "code c")]));
-		await assert.rejects(store.refresh(), /adds c\.mjs/);
+		await expect(store.refresh()).rejects.toThrow(/adds c\.mjs/);
 		served = signed(doc(1, [A, B]));
-		await assert.rejects(store.refresh(), /rollback/);
-		assert.strictEqual(cache, before);
+		await expect(store.refresh()).rejects.toThrow(/rollback/);
+		expect(cache).toBe(before);
 
 		// A removal under the same serial applies
 		served = signed(doc(2, [A]));
 		await store.refresh();
-		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		expect(store.allows("b.mjs", B.sha256)).toBe(false);
 
 		// The next start reads the cache: a grown list is still refused
 		const restarted = make();
 		served = signed(doc(2, [A, B]));
-		await assert.rejects(restarted.refresh(), /adds b\.mjs/);
-		assert.strictEqual(restarted.allows("a.mjs", A.sha256), true);
+		await expect(restarted.refresh()).rejects.toThrow(/adds b\.mjs/);
+		expect(restarted.allows("a.mjs", A.sha256)).toBe(true);
 
 		// A cache edited by hand fails its check and isn't used
 		const edited = JSON.parse(cache!);
@@ -111,8 +109,8 @@ describe("old native format list", () => {
 		const tampered = make();
 		served = { bytes: Buffer.from("not json"), sig: "" };
 		await tampered.ready();
-		assert.strictEqual(tampered.allows("b.mjs", B.sha256), false);
-		assert.strictEqual(tampered.current(), undefined);
+		expect(tampered.allows("b.mjs", B.sha256)).toBe(false);
+		expect(tampered.current()).toBe(undefined);
 	});
 
 	it("takes no fetched list while the cache can't be read or fails its check: an older one can't come back", async () => {
@@ -130,13 +128,13 @@ describe("old native format list", () => {
 			fetchList: async () => older,
 			publicKey: pub,
 		});
-		await assert.rejects(store.refresh(), /can't be read yet/);
-		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		await expect(store.refresh()).rejects.toThrow(/can't be read yet/);
+		expect(store.allows("b.mjs", B.sha256)).toBe(false);
 		// Readable again: the cached serial 5 refuses the older list
 		locked = false;
-		await assert.rejects(store.refresh(), /rollback/);
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(writes.length, 0);
+		await expect(store.refresh()).rejects.toThrow(/rollback/);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
+		expect(writes.length).toBe(0);
 
 		cache = "{broken";
 		const broken = createLegacyStore({
@@ -145,9 +143,9 @@ describe("old native format list", () => {
 			fetchList: async () => older,
 			publicKey: pub,
 		});
-		await assert.rejects(broken.refresh(), /fails its check/);
-		assert.strictEqual(broken.allows("b.mjs", B.sha256), false);
-		assert.strictEqual(writes.length, 0);
+		await expect(broken.refresh()).rejects.toThrow(/fails its check/);
+		expect(broken.allows("b.mjs", B.sha256)).toBe(false);
+		expect(writes.length).toBe(0);
 	});
 
 	it("waits once for the first fetch when nothing is cached, and refuses meanwhile", async () => {
@@ -163,12 +161,12 @@ describe("old native format list", () => {
 		});
 		const started = Date.now();
 		await Promise.all([store.ready(), store.ready()]);
-		assert.ok(Date.now() - started < 1000);
-		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		expect(Date.now() - started < 1000).toBeTruthy();
+		expect(store.allows("a.mjs", A.sha256)).toBe(false);
 		release();
 		await fetched;
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
 	});
 
 	it("waits for a cache locked at the start, and reads it once it is free", async () => {
@@ -187,7 +185,7 @@ describe("old native format list", () => {
 			firstWaitMs: 5000,
 		});
 		await store.ready();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
 	});
 
 	it("fetches again while no list was ever accepted, after a growing wait", async () => {
@@ -212,26 +210,26 @@ describe("old native format list", () => {
 		await settle();
 		store.allows("a.mjs", A.sha256);
 		await settle();
-		assert.strictEqual(fetches, 1);
+		expect(fetches).toBe(1);
 		time = 100;
 		store.allows("a.mjs", A.sha256);
 		await settle();
-		assert.strictEqual(fetches, 2);
+		expect(fetches).toBe(2);
 		// The next wait is longer
 		time = 600;
 		online = true;
 		store.allows("a.mjs", A.sha256);
 		await settle();
-		assert.strictEqual(fetches, 2);
+		expect(fetches).toBe(2);
 		time = 1100;
 		store.allows("a.mjs", A.sha256);
 		await settle();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
 		// Accepted: no more fetches of its own (the 6 h refresh is legacyListMain's)
 		time = 99999;
 		store.allows("a.mjs", A.sha256);
 		await settle();
-		assert.strictEqual(fetches, 3);
+		expect(fetches).toBe(3);
 	});
 
 	it("applies a smaller list at once even if it can't be cached, and caches it once it can", async () => {
@@ -250,18 +248,18 @@ describe("old native format list", () => {
 			publicKey: pub,
 			now: () => time,
 		});
-		assert.strictEqual(store.allows("b.mjs", B.sha256), true);
+		expect(store.allows("b.mjs", B.sha256)).toBe(true);
 		served = signed(doc(2, [A]));
 		await store.refresh();
-		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		expect(store.allows("b.mjs", B.sha256)).toBe(false);
 		// Still the only-shrinks rule against the list in use
 		served = first;
-		await assert.rejects(store.refresh(), /rollback/);
-		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		await expect(store.refresh()).rejects.toThrow(/rollback/);
+		expect(store.allows("b.mjs", B.sha256)).toBe(false);
 		// Not tried again before the wait
 		locked = false;
 		store.allows("a.mjs", A.sha256);
-		assert.strictEqual(JSON.parse(cache).list, first.bytes.toString("base64"));
+		expect(JSON.parse(cache).list).toBe(first.bytes.toString("base64"));
 		time = 30000;
 		// Writable again, and offline: the next check writes it (no fetch needed), so a start offline keeps it
 		locked = false;
@@ -275,8 +273,8 @@ describe("old native format list", () => {
 			},
 			publicKey: pub,
 		});
-		assert.strictEqual(offline.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(offline.allows("b.mjs", B.sha256), false);
+		expect(offline.allows("a.mjs", A.sha256)).toBe(true);
+		expect(offline.allows("b.mjs", B.sha256)).toBe(false);
 	});
 
 	it("fetches again after an offline start with a cached list, and takes a removal once online", async () => {
@@ -297,14 +295,14 @@ describe("old native format list", () => {
 			now: () => time,
 		});
 		const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
-		assert.strictEqual(store.allows("b.mjs", B.sha256), true);
+		expect(store.allows("b.mjs", B.sha256)).toBe(true);
 		await settle();
 		online = true;
 		time = 100;
 		store.allows("b.mjs", B.sha256);
 		await settle();
-		assert.strictEqual(fetches, 2);
-		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		expect(fetches).toBe(2);
+		expect(store.allows("b.mjs", B.sha256)).toBe(false);
 	});
 
 	it("tries again soon after a fetched list that can't be used, and after a failed scheduled refresh", async () => {
@@ -327,8 +325,8 @@ describe("old native format list", () => {
 		time = 100;
 		store.allows("b.mjs", B.sha256);
 		await settle();
-		assert.strictEqual(fetches, 2);
-		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		expect(fetches).toBe(2);
+		expect(store.allows("b.mjs", B.sha256)).toBe(false);
 		// The scheduled refresh fails: the next check after the wait fetches again
 		served = { bytes: Buffer.from("offline"), sig: "" };
 		await store.refreshNow();
@@ -336,12 +334,12 @@ describe("old native format list", () => {
 		time = 150;
 		store.allows("a.mjs", A.sha256);
 		await settle();
-		assert.strictEqual(fetches, 3);
+		expect(fetches).toBe(3);
 		time = 200;
 		store.allows("a.mjs", A.sha256);
 		await settle();
-		assert.strictEqual(fetches, 4);
-		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		expect(fetches).toBe(4);
+		expect(store.allows("a.mjs", A.sha256)).toBe(false);
 	});
 
 	it("logs a cache that can't be read once, not on every check", async () => {
@@ -358,20 +356,20 @@ describe("old native format list", () => {
 			log: (message) => void logs.push(message),
 		});
 		for (let i = 0; i < 20; i++) {
-			assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+			expect(store.allows("a.mjs", A.sha256)).toBe(false);
 			await new Promise((resolve) => setTimeout(resolve, 0));
 		}
-		assert.strictEqual(logs.length, 1);
-		assert.match(logs[0], /can't be read now: EACCES/);
+		expect(logs.length).toBe(1);
+		expect(logs[0]).toMatch(/can't be read now: EACCES/);
 	});
 
 	it("needs a validUntil; a later list may be valid for less long (a wrong far-off date can't lock it)", () => {
-		assert.throws(() => parse(doc(1, [A], { validUntil: undefined })), /validUntil/);
-		assert.throws(() => parse(doc(1, [A], { validUntil: "soon" })), /validUntil/);
-		assert.throws(() => parse(doc(1, [A], { validUntil: 4102444800000 })), /validUntil/);
+		expect(() => parse(doc(1, [A], { validUntil: undefined }))).toThrow(/validUntil/);
+		expect(() => parse(doc(1, [A], { validUntil: "soon" }))).toThrow(/validUntil/);
+		expect(() => parse(doc(1, [A], { validUntil: 4102444800000 }))).toThrow(/validUntil/);
 		const later = parse(doc(2, [A, B], { validUntil: "2099-02-01T00:00:00.000Z" }));
-		assert.deepStrictEqual(replacesList(base, later), { ok: true });
-		assert.deepStrictEqual(replacesList(later, parse(doc(3, [A]))), { ok: true });
+		expect(replacesList(base, later)).toStrictEqual({ ok: true });
+		expect(replacesList(later, parse(doc(3, [A])))).toStrictEqual({ ok: true });
 	});
 
 	const DAY = 24 * 60 * 60 * 1000;
@@ -404,22 +402,22 @@ describe("old native format list", () => {
 		let served: object = doc(5, [A, B], { validUntil: until });
 		const { store, logs } = storeAt(time, doc(5, [A, B], { validUntil: until }), () => served);
 		await store.ready();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
 		// Past validUntil, within the skew: still grants
 		time.now = at(until) + 2 * DAY - 1;
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
 		time.now = at(until) + 2 * DAY;
-		assert.strictEqual(store.usable(), false);
-		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
-		assert.ok(logs.some((line) => /grants nothing until a fresh one is fetched: expired 2026-12-01/.test(line)));
+		expect(store.usable()).toBe(false);
+		expect(store.allows("a.mjs", A.sha256)).toBe(false);
+		expect(logs.some((line) => /grants nothing until a fresh one is fetched: expired 2026-12-01/.test(line))).toBeTruthy();
 		// The registry still serves the expired one: refused, nothing granted
-		await assert.rejects(store.refresh(), /refused: expired/);
-		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		await expect(store.refresh()).rejects.toThrow(/refused: expired/);
+		expect(store.allows("a.mjs", A.sha256)).toBe(false);
 		// A fresh one, signed again (a subset): grants again
 		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
 		await store.refresh();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
+		expect(store.allows("b.mjs", B.sha256)).toBe(false);
 	});
 
 	it("fetches at once when the list expires while running, not on the next scheduled refresh", async () => {
@@ -429,15 +427,15 @@ describe("old native format list", () => {
 		let served: object = doc(5, [A], { validUntil: until });
 		const { store } = storeAt(time, undefined, () => (fetches++, served));
 		await store.ready();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(fetches, 1);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
+		expect(fetches).toBe(1);
 		// Signed again meanwhile; the cached one runs out
 		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
 		time.now = at(until) + 3 * DAY;
-		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		expect(store.allows("a.mjs", A.sha256)).toBe(false);
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		assert.strictEqual(fetches, 2);
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		expect(fetches).toBe(2);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
 	});
 
 	it("one fetch at a time: checks while an expired list is being fetched again start no other", async () => {
@@ -452,17 +450,17 @@ describe("old native format list", () => {
 			return served;
 		});
 		await store.ready();
-		assert.strictEqual(fetches, 1);
+		expect(fetches).toBe(1);
 		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
 		slow = true;
 		time.now = at(until) + 3 * DAY;
-		for (let i = 0; i < 10; i++) assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		for (let i = 0; i < 10; i++) expect(store.allows("a.mjs", A.sha256)).toBe(false);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		for (let i = 0; i < 10; i++) store.allows("a.mjs", A.sha256);
-		assert.strictEqual(fetches, 2);
+		expect(fetches).toBe(2);
 		await new Promise((resolve) => setTimeout(resolve, 80));
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(fetches, 2);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
+		expect(fetches).toBe(2);
 	});
 
 	it("the scheduled refresh starts no second fetch while one runs", async () => {
@@ -478,12 +476,12 @@ describe("old native format list", () => {
 		await store.ready();
 		slow = true;
 		time.now = at(until) + 3 * DAY;
-		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		expect(store.allows("a.mjs", A.sha256)).toBe(false);
 		const scheduled = store.refreshNow();
-		assert.strictEqual(fetches, 2);
+		expect(fetches).toBe(2);
 		await scheduled;
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(fetches, 2);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
+		expect(fetches).toBe(2);
 	});
 
 	it("ready waits for the fetch when the list ran out while running (the confirmations can say what runs)", async () => {
@@ -493,12 +491,12 @@ describe("old native format list", () => {
 		let served: object = doc(5, [A], { validUntil: until });
 		const { store } = storeAt(time, undefined, () => (fetches++, served));
 		await store.ready();
-		assert.strictEqual(fetches, 1);
+		expect(fetches).toBe(1);
 		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
 		time.now = at(until) + 3 * DAY;
 		await store.ready();
-		assert.strictEqual(fetches, 2);
-		assert.strictEqual(store.usable(), true);
+		expect(fetches).toBe(2);
+		expect(store.usable()).toBe(true);
 	});
 
 	for (const by of ["allows", "refreshNow"] as const)
@@ -515,11 +513,11 @@ describe("old native format list", () => {
 			await store.ready();
 			slow = true;
 			time.now = at(until) + 3 * DAY;
-			if (by === "allows") assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+			if (by === "allows") expect(store.allows("a.mjs", A.sha256)).toBe(false);
 			else void store.refreshNow();
 			await store.ready();
-			assert.strictEqual(fetches, 2);
-			assert.strictEqual(store.usable(), true);
+			expect(fetches).toBe(2);
+			expect(store.usable()).toBe(true);
 		});
 
 	it("a list running out after a failed refresh still gets its fetch at once, and ready waits for it", async () => {
@@ -540,12 +538,12 @@ describe("old native format list", () => {
 		await store.ready();
 		online = false;
 		await store.refreshNow();
-		assert.strictEqual(fetches, 2);
+		expect(fetches).toBe(2);
 		online = true;
 		time.now = at(until) + 3 * DAY;
 		await store.ready();
-		assert.strictEqual(fetches, 3);
-		assert.strictEqual(store.usable(), true);
+		expect(fetches).toBe(3);
+		expect(store.usable()).toBe(true);
 	});
 
 	it("a cache expired at start: later checks don't make the first wait longer", async () => {
@@ -555,7 +553,7 @@ describe("old native format list", () => {
 		time.now += 40;
 		const t0 = Date.now();
 		await store.ready();
-		assert.ok(Date.now() - t0 < 35, `waited ${Date.now() - t0} ms`);
+		expect(Date.now() - t0 < 35, `waited ${Date.now() - t0} ms`).toBeTruthy();
 		await first;
 	});
 
@@ -566,9 +564,9 @@ describe("old native format list", () => {
 			doc(7, [A, C], { validUntil: "2027-02-01T00:00:00.000Z" }),
 		);
 		await store.ready();
-		assert.strictEqual(store.usable(), false);
-		await assert.rejects(store.refresh(), /adds c\.mjs/);
-		assert.strictEqual(store.allows("c.mjs", C.sha256), false);
+		expect(store.usable()).toBe(false);
+		await expect(store.refresh()).rejects.toThrow(/adds c\.mjs/);
+		expect(store.allows("c.mjs", C.sha256)).toBe(false);
 	});
 
 	it("waits on a start with an expired cache for a fresh list, like with none", async () => {
@@ -577,8 +575,8 @@ describe("old native format list", () => {
 			doc(6, [A], { validUntil: "2027-02-01T00:00:00.000Z" }),
 		);
 		await store.ready();
-		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(store.current()?.serial, 6);
+		expect(store.allows("a.mjs", A.sha256)).toBe(true);
+		expect(store.current()?.serial).toBe(6);
 	});
 
 	it("takes no list older than this build, fetched on a first start or cached", async () => {
@@ -586,30 +584,30 @@ describe("old native format list", () => {
 		// Nothing cached, an older signed list replayed: refused
 		const first = storeAt(time, undefined, () => doc(3, [A, B]), { minSerial: 4 });
 		await first.store.ready();
-		assert.strictEqual(first.store.allows("a.mjs", A.sha256), false);
-		assert.strictEqual(first.store.current(), undefined);
-		await assert.rejects(first.store.refresh(), /refused: serial 3 is older than this build \(4\)/);
+		expect(first.store.allows("a.mjs", A.sha256)).toBe(false);
+		expect(first.store.current()).toBe(undefined);
+		await expect(first.store.refresh()).rejects.toThrow(/refused: serial 3 is older than this build \(4\)/);
 		// A cache older than the build (written by an older Luna): the base, granting nothing until a newer list
 		let served: object = doc(3, [A, B]);
 		const cached = storeAt(time, doc(3, [A, B]), () => served, { minSerial: 4 });
 		await cached.store.ready();
-		assert.strictEqual(cached.store.allows("a.mjs", A.sha256), false);
+		expect(cached.store.allows("a.mjs", A.sha256)).toBe(false);
 		served = doc(4, [A]);
 		await cached.store.refresh();
-		assert.strictEqual(cached.store.allows("a.mjs", A.sha256), true);
-		assert.strictEqual(cached.store.allows("b.mjs", B.sha256), false);
+		expect(cached.store.allows("a.mjs", A.sha256)).toBe(true);
+		expect(cached.store.allows("b.mjs", B.sha256)).toBe(false);
 	});
 
 	it("allows exactly the listed code of a listed plugin", () => {
-		assert.strictEqual(listAllows(base, "https://example.com/store/a.mjs", "code a"), true);
+		expect(listAllows(base, "https://example.com/store/a.mjs", "code a")).toBe(true);
 		// Served from another store (it moved): the id and the code decide
-		assert.strictEqual(listAllows(base, "https://example.org/x/a.mjs", "code a"), true);
+		expect(listAllows(base, "https://example.org/x/a.mjs", "code a")).toBe(true);
 		// The sourceURL line Luna adds doesn't count
-		assert.strictEqual(listAllows(base, "https://example.com/store/a.mjs", "code a\n//# sourceURL=https://example.com/store/a.mjs"), true);
+		expect(listAllows(base, "https://example.com/store/a.mjs", "code a\n//# sourceURL=https://example.com/store/a.mjs")).toBe(true);
 		// An update
-		assert.strictEqual(listAllows(base, "https://example.com/store/a.mjs", "code a2"), false);
+		expect(listAllows(base, "https://example.com/store/a.mjs", "code a2")).toBe(false);
 		// Listed code under another name
-		assert.strictEqual(listAllows(base, "https://example.com/store/c.mjs", "code a"), false);
-		assert.strictEqual(listAllows(undefined, "https://example.com/store/a.mjs", "code a"), false);
+		expect(listAllows(base, "https://example.com/store/c.mjs", "code a")).toBe(false);
+		expect(listAllows(undefined, "https://example.com/store/a.mjs", "code a")).toBe(false);
 	});
 });

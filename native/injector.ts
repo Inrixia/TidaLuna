@@ -12,6 +12,7 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
+import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
@@ -155,6 +156,12 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		let body = await res.text();
 		// Only modify the Tidal SPA shell (contains CSP meta tag)
 		if (!body.includes('<meta http-equiv="Content-Security-Policy"')) return new Response(body, res);
+		// Report, don't enforce, TIDAL's policy (see cspReportOnly.ts). A response that already has a report-only policy keeps it
+		const headers = new Headers(res.headers);
+		if (!headers.has("Content-Security-Policy-Report-Only")) {
+			const tidalPolicy = tidalMetaPolicy(body);
+			if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyHeader(tidalPolicy));
+		}
 		body = body.replace(
 			/(<meta http-equiv="Content-Security-Policy")|(<script type="module" crossorigin src="(.*?)">)/g,
 			(match, cspMatch, scriptMatch, src) => {
@@ -171,7 +178,7 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 			},
 		);
 		lunaPages.add(reqUrl.origin + reqUrl.pathname);
-		return new Response(body, res);
+		return new Response(body, { status: res.status, statusText: res.statusText, headers });
 	}
 
 	// Fix tidal trying to bypass cors
