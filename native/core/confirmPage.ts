@@ -1,10 +1,21 @@
 // The page of Luna's confirmation window (confirmWindow.ts), kept apart so it can be tested without Electron.
 import { escapeHtml } from "../NativeModule/permissions/escapeHtml";
 
-export type ConfirmRequest = { title: string; lines: string[]; confirmText: string };
+/** A link in a confirmation: main opens its http(s) url in the browser (confirmWindow.ts) */
+export type ConfirmLink = { text: string; href: string };
+/** A line of text, or of text and links */
+export type ConfirmLine = string | (string | ConfirmLink)[];
+/**
+ * A warning above the buttons with a button of its own (revoke an answer, say). Clicking it chooses the action: `done`
+ * replaces the warning, and main calls `run` only if the user then confirms, before the answer counts.
+ */
+export type ConfirmWarning = { text: string; action: string; done: string; run: () => void | Promise<void> };
+export type ConfirmRequest = { title: string; lines: ConfirmLine[]; confirmText: string; warning?: ConfirmWarning };
 
 export const TITLE = "Luna";
 export const SUBMIT = "luna-core-confirm:";
+/** Title prefix of a click that doesn't answer: `link:<index>` or `action`, then `#<count>` so the same click twice changes the title */
+export const NOTE = "luna-core-note:";
 /**
  * The confirm button stays disabled this long after the window shows or gets the focus back: a click meant for TIDAL or
  * another window can't land on it
@@ -80,19 +91,61 @@ export const confirmGate = () => {
 	};
 };
 
-/** Checks a request that came over IPC: strings only, long texts are cut */
-export const confirmRequest = (title: unknown, lines: unknown, confirmText: unknown): ConfirmRequest => {
+/** An http(s) url, else undefined: the only links a confirmation opens */
+export const httpLink = (href: unknown): string | undefined => {
+	if (typeof href !== "string") return undefined;
+	try {
+		const { protocol } = new URL(href);
+		return protocol === "https:" || protocol === "http:" ? href : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+/** Checks a request: texts are strings (long ones cut), links http(s), a warning's run a function */
+export const confirmRequest = (title: unknown, lines: unknown, confirmText: unknown, warning?: unknown): ConfirmRequest => {
 	const text = (value: unknown) => {
 		if (typeof value !== "string") throw new Error("[Luna.core] Confirmation texts must be strings");
 		return value.length > MAX_TEXT ? `${value.slice(0, MAX_TEXT)}…` : value;
 	};
+	const part = (value: unknown): string | ConfirmLink => {
+		if (typeof value === "string") return text(value);
+		const { text: linkText, href } = (value ?? {}) as Partial<ConfirmLink>;
+		const link = httpLink(href);
+		if (link === undefined) throw new Error("[Luna.core] Confirmation links must be http(s)");
+		return { text: text(linkText), href: link };
+	};
+	const line = (value: unknown): ConfirmLine => (Array.isArray(value) ? value.map(part) : text(value));
 	if (!Array.isArray(lines) || lines.length > MAX_LINES) throw new Error("[Luna.core] Bad confirmation lines");
-	const request = { title: text(title), lines: lines.map(text), confirmText: text(confirmText) };
+	const request: ConfirmRequest = { title: text(title), lines: lines.map(line), confirmText: text(confirmText) };
 	if (request.title === "" || request.confirmText === "") throw new Error("[Luna.core] A confirmation needs a title and a button");
+	if (warning !== undefined) {
+		const { text: warningText, action, done, run } = warning as Partial<ConfirmWarning>;
+		if (typeof run !== "function") throw new Error("[Luna.core] A confirmation warning needs an action");
+		request.warning = { text: text(warningText), action: text(action), done: text(done), run };
+	}
 	return request;
 };
 
-export const buildConfirmHtml = ({ title, lines, confirmText }: ConfirmRequest) => `<!DOCTYPE html>
+/** The links of a request in the order the page numbers them (`link:<index>`) */
+export const confirmLinks = ({ lines }: Pick<ConfirmRequest, "lines">): string[] =>
+	lines.flatMap((line) => (typeof line === "string" ? [] : line.flatMap((part) => (typeof part === "string" ? [] : [part.href]))));
+
+const lineHtml = (line: ConfirmLine, next: () => number) =>
+	typeof line === "string"
+		? escapeHtml(line)
+		: line
+				.map((part) =>
+					typeof part === "string"
+						? escapeHtml(part)
+						: `<a href="#" data-link="${next()}" title="${escapeHtml(part.href)}">${escapeHtml(part.text)}</a>`,
+				)
+				.join("");
+
+export const buildConfirmHtml = ({ title, lines, confirmText, warning }: ConfirmRequest) => {
+	let links = 0;
+	const next = () => links++;
+	return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -112,17 +165,32 @@ button { font:inherit; border:none; cursor:pointer; padding:10px 20px; border-ra
 #cancel:hover { background:#353535; }
 #confirm { background:#f4f4f5; color:#0a0a0a; }
 #confirm:disabled { opacity:.4; cursor:default; }
+a { color:#5eead4; }
+.warning { display:flex; align-items:center; gap:12px; background:#3a2a08; color:#fcd34d; border-radius:6px; padding:10px 12px; margin-top:10px; overflow-wrap:anywhere; }
+.warning span { flex:1; }
+#warning-action { background:transparent; color:#fcd34d; border:1px solid #fcd34d; padding:6px 12px; font-size:13px; white-space:nowrap; }
 :focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
 </style>
 </head>
 <body>
 <div class="eyebrow">Luna</div>
 <h1>${escapeHtml(title)}</h1>
-${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("\n")}
+${lines.map((line) => `<p>${lineHtml(line, next)}</p>`).join("\n")}
+${warning === undefined ? "" : `<div class="warning"><span id="warning-text">${escapeHtml(warning.text)}</span><button id="warning-action">${escapeHtml(warning.action)}</button></div>`}
 <p class="by">Asked by Luna in its own window. Plugins and page scripts can't see or answer it.</p>
 <div class="actions"><button id="cancel">Cancel</button><button id="confirm" disabled>${escapeHtml(confirmText)}</button></div>
 <script>
 const submit = (answer) => (document.title = "${SUBMIT}" + answer);
+let notes = 0;
+const note = (what) => (document.title = "${NOTE}" + what + "#" + ++notes);
+for (const link of document.querySelectorAll("a[data-link]"))
+	link.addEventListener("click", (event) => (event.preventDefault(), note("link:" + link.dataset.link)));
+document.getElementById("warning-action")?.addEventListener("click", () => note("action"));
+// The user chose the warning's action: its text replaces the warning
+window.warningDone = (text) => {
+	document.getElementById("warning-text").textContent = text;
+	document.getElementById("warning-action").remove();
+};
 const confirmButton = document.getElementById("confirm");
 document.getElementById("cancel").addEventListener("click", () => submit("no"));
 confirmButton.addEventListener("click", () => submit("yes"));
@@ -134,3 +202,4 @@ window.disarm = () => (confirmButton.disabled = true);
 </script>
 </body>
 </html>`;
+};

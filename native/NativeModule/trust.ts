@@ -206,7 +206,7 @@ const pluginOf = (record: NativeRecord) => record.url ?? record.claimedUrl;
 // Revoking never grants anything, so the renderer may ask for it: the file is asked again the next time it loads, and
 // code of it that runs is denied Node modules until then. (A revoked denial is asked again too; any plugin can already
 // open permission windows with native code of its own.)
-ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => {
+const revoke = (key: string) => {
 	const { natives } = getStore();
 	const record: NativeRecord | undefined = natives[key];
 	if (record === undefined) return;
@@ -219,7 +219,19 @@ ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => {
 	}
 	saveStore();
 	resetLive();
-});
+};
+ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => revoke(key));
+
+/** The plugin's native files allowed for all versions: an update's code for them runs without asking (native/core/registry.ts) */
+export const allVersionsAnswers = (url: string): string[] =>
+	Object.values(getStore().natives)
+		.filter((record) => record.answer === "allowUpdates" && pluginOf(record) === url)
+		.map(({ fileName }) => fileName);
+
+/** Revokes the plugin's answers for all versions, so its native files ask again the next time they load */
+export const revokeAllVersions = (url: string) => {
+	for (const [key, record] of Object.entries(getStore().natives)) if (record.answer === "allowUpdates" && pluginOf(record) === url) revoke(key);
+};
 
 /** Uninstalling a plugin forgets its answers, so a reinstall asks again (native/core/registry.ts) */
 export const forgetAnswers = (url: string) => {

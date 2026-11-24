@@ -5,6 +5,7 @@ import {
 	ANSWER_IN_USE_MS,
 	buildConfirmHtml,
 	confirmGate,
+	confirmLinks,
 	confirmRequest,
 	COOL_DOWN_MS,
 	MAX_CANCELS,
@@ -122,5 +123,38 @@ describe("core confirmation page", () => {
 		assert.throws(() => confirmRequest("", [], "Go"));
 		assert.throws(() => confirmRequest("T", new Array(13).fill("a"), "Go"));
 		assert.equal(confirmRequest("x".repeat(700), [], "Go").title.length, 601);
+	});
+
+	it("takes http(s) links only, and a warning only with an action to run", () => {
+		const link = { text: "v2", href: "https://example.com/owner/repo/commit/abc1234" };
+		assert.deepEqual(confirmRequest("T", [["a ", link]], "Go").lines, [["a ", link]]);
+		assert.throws(() => confirmRequest("T", [[{ text: "x", href: "javascript:alert(1)" }]], "Go"));
+		assert.throws(() => confirmRequest("T", [[{ text: "x", href: "file:///C:/x" }]], "Go"));
+		assert.throws(() => confirmRequest("T", [[{ text: "x" }]], "Go"));
+		assert.throws(() => confirmRequest("T", [[1]], "Go"));
+		const run = () => {};
+		assert.equal(confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d", run }).warning?.run, run);
+		assert.throws(() => confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d" }));
+		assert.throws(() => confirmRequest("T", [], "Go", { text: 1, action: "Ask again", done: "d", run }));
+	});
+
+	it("numbers its links in the order main opens them, and escapes them", () => {
+		const request = confirmRequest(
+			"T",
+			["plain", ["a ", { text: "<b>one</b>", href: 'https://a.example/1?x="y"' }], [{ text: "two", href: "http://b.example/2" }]],
+			"Go",
+		);
+		assert.deepEqual(confirmLinks(request), ['https://a.example/1?x="y"', "http://b.example/2"]);
+		const html = buildConfirmHtml(request);
+		assert.match(html, /<a href="#" data-link="0" title="https:\/\/a\.example\/1\?x=&quot;y&quot;">&lt;b&gt;one&lt;\/b&gt;<\/a>/);
+		assert.match(html, /<a href="#" data-link="1" title="http:\/\/b\.example\/2">two<\/a>/);
+		assert.equal(html.includes("<b>one</b>"), false);
+	});
+
+	it("shows a warning with its own button only when there is one", () => {
+		const warning = { text: "<i>Allowed</i>", action: "Ask again", done: "Asks again", run: () => {} };
+		const html = buildConfirmHtml({ title: "T", lines: [], confirmText: "Go", warning });
+		assert.match(html, /<span id="warning-text">&lt;i&gt;Allowed&lt;\/i&gt;<\/span><button id="warning-action">Ask again<\/button>/);
+		assert.equal(buildConfirmHtml({ title: "T", lines: [], confirmText: "Go" }).includes('id="warning-text"'), false);
 	});
 });

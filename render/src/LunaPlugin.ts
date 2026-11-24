@@ -35,6 +35,8 @@ export type PluginPackage = {
 	};
 	description?: React.ReactNode;
 	version?: string;
+	/** The commit the plugin was built from, when its CI set it (build/plugins/buildSource.ts) */
+	commit?: string;
 	dependencies?: string[];
 	devDependencies?: string[];
 	code?: string;

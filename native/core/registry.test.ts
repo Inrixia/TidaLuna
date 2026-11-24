@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { createHash } from "node:crypto";
 
-import type { ConfirmRequest } from "./confirmPage";
+import type { ConfirmLine, ConfirmRequest } from "./confirmPage";
 import { createRegistry, type CoreState, type PluginPackage } from "./registry";
 
 const URL = "https://example.com/plugin";
@@ -15,6 +15,8 @@ const fakeDeps = (state: CoreState | null = null) => {
 	const serve = (url: string, hash: string, natives: Record<string, string> = {}, extra: Partial<PluginPackage> = {}) =>
 		served.set(url, { pkg: { name: `plugin ${hash}`, hash, version: hash, ...extra }, code: `code ${hash}`, natives });
 	const forgotten: string[] = [];
+	/** url -> native files allowed for all versions */
+	const allVersions = new Map<string, string[]>();
 	const writes: CoreState[] = [];
 	const nativesOf = new Map<string, Record<string, string>>();
 	const reads = { count: 0 };
@@ -37,9 +39,15 @@ const fakeDeps = (state: CoreState | null = null) => {
 			return nativesOf.get(code) ?? {};
 		},
 		forgetAnswers: (url: string) => void forgotten.push(url),
+		allVersionsAnswers: (url: string) => allVersions.get(url) ?? [],
+		revokeAllVersions: (url: string) => void allVersions.delete(url),
 	};
-	return { deps, serve, served, forgotten, writes, reads };
+	return { deps, serve, served, forgotten, writes, reads, allVersions };
 };
+
+/** A confirmation line as the page shows it */
+const lineText = (line: ConfirmLine) =>
+	typeof line === "string" ? line : line.map((part) => (typeof part === "string" ? part : part.text)).join("");
 
 /** An asker that answers `answer` and records what it was asked */
 const asker = (answer: boolean) => {
@@ -125,7 +133,8 @@ describe("core registry", () => {
 
 		const no = asker(false);
 		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
-		assert.ok(no.asked[0].lines.some((line) => line.includes("New native files: b.native.ts")));
+		assert.ok(no.asked[0].lines.map(lineText).includes(`Update only if you trust the author and ${URL}`));
+		assert.strictEqual(no.asked[0].warning, undefined);
 		assert.strictEqual(registry.info(URL)?.hash, "v1");
 
 		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
@@ -251,7 +260,55 @@ describe("core registry", () => {
 		assert.strictEqual((await registry.load(URL)).pending?.codeSha256, v2);
 		const ask = asker(false);
 		await registry.acceptUpdate(URL, ask);
-		assert.ok(ask.asked[0].lines.includes(`Code sha256: ${v1.slice(0, 12)} -> ${v2.slice(0, 12)}`));
+		assert.ok(ask.asked[0].lines.map(lineText).includes(`Code sha256: ${v1.slice(0, 12)} -> ${v2.slice(0, 12)}`));
+	});
+
+	it("links the update's versions, release and changes, and the plugin url", async () => {
+		const RELEASE = "https://github.com/owner/repo/releases/download/latest/plugin";
+		const [A, B] = ["a".repeat(40), "b".repeat(40)];
+		const { deps, serve } = fakeDeps();
+		serve(RELEASE, "v1", {}, { commit: A });
+		const registry = createRegistry(deps);
+		await registry.install(RELEASE, asker(true));
+		serve(RELEASE, "v2", {}, { commit: B });
+		await registry.load(RELEASE);
+		const ask = asker(false);
+		await registry.acceptUpdate(RELEASE, ask);
+		const [versions, hashes, trust] = ask.asked[0].lines;
+		assert.deepStrictEqual(versions, [
+			{ text: "v1", href: `https://github.com/owner/repo/commit/${A}` },
+			" -> ",
+			{ text: "v2", href: `https://github.com/owner/repo/commit/${B}` },
+			" (",
+			{ text: "release latest", href: "https://github.com/owner/repo/releases/tag/latest" },
+			")",
+		]);
+		assert.deepStrictEqual((hashes as Exclude<ConfirmLine, string>).slice(1), [
+			" (",
+			{ text: "changes", href: `https://github.com/owner/repo/compare/${A}...${B}` },
+			")",
+		]);
+		assert.deepStrictEqual(trust, ["Update only if you trust the author and ", { text: RELEASE, href: RELEASE }]);
+	});
+
+	it("warns when the plugin's native files are allowed for all versions, and asks again only if the user updates", async () => {
+		const { deps, serve, allVersions } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.load(URL);
+		allVersions.set(URL, ["a.native.ts"]);
+
+		const no = asker(false);
+		await registry.acceptUpdate(URL, no);
+		const warning = no.asked[0].warning;
+		assert.ok(warning?.text.includes("a.native.ts"));
+		assert.strictEqual(warning?.action, "Ask again");
+		// The window runs it only when the user chose it and then confirmed (confirmWindow.ts)
+		assert.deepStrictEqual(allVersions.get(URL), ["a.native.ts"]);
+		await warning!.run();
+		assert.strictEqual(allVersions.get(URL), undefined);
 	});
 
 	it("does nothing for Luna's own plugins and refuses non-plugin urls", async () => {

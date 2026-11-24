@@ -11,7 +11,7 @@ import path from "path";
 
 import { ipcHandle } from "../ipc";
 import { nativeSourcesOf } from "../NativeModule/permissions/verifySource";
-import { forgetAnswers } from "../NativeModule/trust";
+import { allVersionsAnswers, forgetAnswers, revokeAllVersions } from "../NativeModule/trust";
 import { askerFor } from "./confirmWindow";
 import { boundedCache } from "./policy";
 import { createRegistry, type PluginPackage } from "./registry";
@@ -74,6 +74,8 @@ export const registry = () =>
 			return sources;
 		},
 		forgetAnswers,
+		allVersionsAnswers,
+		revokeAllVersions,
 		log: (message) => console.log(message),
 	}));
 

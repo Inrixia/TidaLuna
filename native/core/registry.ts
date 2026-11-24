@@ -7,8 +7,9 @@
 // Kept apart from Electron (its IO comes in as RegistryDeps) so it can be tested.
 import { createHash } from "crypto";
 
-import type { ConfirmRequest } from "./confirmPage";
+import type { ConfirmLine, ConfirmLink, ConfirmRequest, ConfirmWarning } from "./confirmPage";
 import { isCoreUrl, isDevUrl, nativesDiff } from "./policy";
+import { updateLinks } from "./updateLinks";
 
 // #region Types
 export type PluginPackage = {
@@ -68,6 +69,10 @@ export type RegistryDeps = {
 	nativeSources(code: string): Record<string, string>;
 	/** Forgets the native permission answers given for a plugin (a reinstall asks again) */
 	forgetAnswers(url: string): void;
+	/** The plugin's native files allowed for all versions (an update's code for them runs without asking) */
+	allVersionsAnswers(url: string): string[];
+	/** Revokes those answers, so the files ask again */
+	revokeAllVersions(url: string): void;
 	log?: (message: string) => void;
 };
 // #endregion
@@ -95,6 +100,39 @@ export const describe = (url: string, version: Version): string[] => {
 	else lines.push("No native code: it runs in the page like other plugins.");
 	lines.push("Plugin code can read and change everything in TIDAL: only allow plugins you trust.");
 	return lines;
+};
+
+const link = (text: string, href: string | undefined): string | ConfirmLink => (href === undefined ? text : { text, href });
+
+/**
+ * What the update confirmation says: the versions and code hashes, linked to their source and what changed where the
+ * packages say (updateLinks), whom to trust, and a warning with "Ask again" if the plugin's native files were allowed
+ * for all versions
+ */
+export const updateQuestion = (
+	url: string,
+	name: string,
+	accepted: Version,
+	pending: Version,
+	deps: Pick<RegistryDeps, "allVersionsAnswers" | "revokeAllVersions">,
+): ConfirmRequest => {
+	const links = updateLinks(url, accepted.package, pending.package);
+	const versions: ConfirmLine = [link(accepted.package.version ?? "?", links.from), " -> ", link(pending.package.version ?? "?", links.to)];
+	if (links.release !== undefined) versions.push(" (", { text: `release ${links.release.tag}`, href: links.release.page }, ")");
+	const hashes: ConfirmLine = [`Code sha256: ${shortHash(accepted.codeSha256)} -> ${shortHash(pending.codeSha256)}`];
+	if (links.compare !== undefined) hashes.push(" (", { text: "changes", href: links.compare }, ")");
+	const lines: ConfirmLine[] = [versions, hashes, ["Update only if you trust the author and ", link(url, url)]];
+	const files = deps.allVersionsAnswers(url);
+	const warning: ConfirmWarning | undefined =
+		files.length === 0
+			? undefined
+			: {
+					text: `Native code allowed for all versions (${files.join(", ")}): the update's runs without asking.`,
+					action: "Ask again",
+					done: `If you update, ${files.join(", ")} will ask for permission again.`,
+					run: () => deps.revokeAllVersions(url),
+				};
+	return { title: `Update ${name}?`, lines, confirmText: "Update", warning };
 };
 
 export const pluginUrl = (url: unknown): string => {
@@ -232,17 +270,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 		const record = state.plugins[url];
 		const { accepted, pending } = record ?? {};
 		if (record === undefined || accepted === undefined || pending === undefined) return false;
-		const changes = info(url)!.pending!;
-		const lines = [
-			`${accepted.package.version ?? "?"} -> ${pending.package.version ?? "?"}`,
-			`Code sha256: ${shortHash(accepted.codeSha256)} -> ${shortHash(pending.codeSha256)}`,
-			"Until you update, the version you have keeps running.",
-			...describe(url, pending),
-		];
-		if (changes.added.length !== 0) lines.push(`New native files: ${changes.added.join(", ")}`);
-		if (changes.removed.length !== 0) lines.push(`Removed native files: ${changes.removed.join(", ")}`);
 		// Operations on this url wait for the answer (serial): a newer update a load finds meanwhile waits for its own window
-		if (!(await ask({ title: `Update ${record.name}?`, lines, confirmText: "Update" }))) return false;
+		if (!(await ask(updateQuestion(url, record.name, accepted, pending, deps)))) return false;
 		record.accepted = pending;
 		record.pending = undefined;
 		await save();

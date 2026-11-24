@@ -2,7 +2,7 @@ import React from "react";
 
 import { LunaPlugin } from "@luna/core";
 
-import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
@@ -26,18 +26,11 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 
 	if (update === undefined) return null;
 	return (
-		<Tooltip title={`Update to ${update.version ?? "a new version"}`}>
+		<Tooltip title={`Update plugin${update.version === undefined ? "" : ` to ${update.version}`}`}>
 			<span>
-				<Button
-					size="small"
-					variant="outlined"
-					disabled={updating}
-					onClick={onClick}
-					startIcon={<SystemUpdateAltIcon />}
-					sx={{ marginLeft: 1, color: green[400], borderColor: green[400] }}
-				>
-					Update
-				</Button>
+				<IconButton aria-label={`Update ${plugin.name}`} disabled={updating} onClick={onClick} sx={{ color: green[400] }}>
+					<SystemUpdateAltIcon />
+				</IconButton>
 			</span>
 		</Tooltip>
 	);
