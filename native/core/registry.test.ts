@@ -1269,14 +1269,14 @@ describe("core registry network modes", () => {
 		await registry.install(URL, asker(true));
 		const write = deps.write;
 		let calls = 0;
-		deps.write = async (next) => {
+		deps.write = (async (next: CoreState) => {
 			// The first write (the grant's) fails after a pause; the next one goes through
 			if (calls++ === 0) {
 				await new Promise((resolve) => setTimeout(resolve, 5));
 				throw new Error("disk full");
 			}
 			return write(next);
-		};
+		}) as unknown as typeof deps.write;
 		const failed = registry.grantHost(URL, "https://b.com", "always");
 		const other = registry.grantHost(URL, "https://c.com", "always");
 		assert.deepStrictEqual([await failed, await other], [false, true]);
