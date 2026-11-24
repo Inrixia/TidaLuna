@@ -177,10 +177,10 @@ export const describe = (url: string, version: Version, legacyRuns: boolean | "u
 };
 
 /**
- * An http(s) url with no spaces or control characters: the url goes into the code's `//# sourceURL=` line, where a line
- * break (also U+2028/U+2029, which end a line in JavaScript) would turn the rest of the url into code that runs
+ * An http(s) url with no control characters or line breaks: the url goes into the code's `//# sourceURL=` line, where a
+ * line break (also U+2028/U+2029, which end a line in JavaScript) would turn the rest of the url into code that runs
  */
-const isPluginUrl = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url) && !/[\s\p{Cc}]/u.test(url);
+const isPluginUrl = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url) && !/[\p{Cc}\u2028\u2029]/u.test(url);
 export const pluginUrl = (url: unknown): string => {
 	if (!isPluginUrl(url)) throw new Error(`[Luna.core] Not a plugin url: ${String(url).slice(0, 200)}`);
 	return url;
@@ -496,15 +496,12 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (state.plugins[from] !== record) return false;
 		const { accepted } = record;
 		const moved: CoreRecord = { ...record, url: to, pending: undefined };
-		// The same code and the same world (pinned with it): nothing new to review
-		if (
-			found !== undefined &&
-			accepted !== undefined &&
-			servedSha256(found.code) === servedSha256(accepted.code) &&
-			found.world === accepted.world
-		)
-			moved.accepted = found;
-		else if (found !== undefined && accepted !== undefined) moved.pending = found;
+		// The same code and the same world (pinned with it): nothing new to review. The accepted text keeps running as it
+		// is, with its sourceURL line naming the old url: the new url's line could close something the code leaves open
+		// (a trailing `/*`, a template literal) and run the rest of the url
+		const same =
+			found !== undefined && accepted !== undefined && servedSha256(found.code) === servedSha256(accepted.code) && found.world === accepted.world;
+		if (!same && found !== undefined && accepted !== undefined) moved.pending = found;
 		// One plugin at both urls: one that left the old format at either stays off it at both, and other code at `to`
 		// (now or later) leaves it at both
 		linkLegacy(from, to);
@@ -564,7 +561,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 
 	return {
 		list: (): CorePluginInfo[] => Object.keys(state.plugins).map((url) => info(url)!),
-		info: (url: unknown) => info(pluginUrl(url)),
+		info: (url: unknown) => (typeof url === "string" && state.plugins[url] !== undefined ? info(url) : info(pluginUrl(url))),
 		needsMigration: () => fresh,
 		migrate,
 		load: async (url: unknown) => {
@@ -578,8 +575,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 			const target = pluginUrl(to);
 			return forPlugin(false, (source) => moveUrl(source, target))(from);
 		},
-		disable: forPlugin(undefined, disable),
-		uninstall: forPlugin(undefined, uninstall),
+		// Also a plugin stored under a url refused now (installed before urls were checked): it can still be taken off
+		disable: (url: unknown) =>
+			typeof url === "string" && state.plugins[url] !== undefined ? serial(url, () => disable(url)) : forPlugin(undefined, disable)(url),
+		uninstall: (url: unknown) =>
+			typeof url === "string" && state.plugins[url] !== undefined ? serial(url, () => uninstall(url)) : forPlugin(undefined, uninstall)(url),
 
 		// #region Checks (see the top of this file)
 		isEnabled: (url: string) => state.plugins[url]?.enabled === true,
