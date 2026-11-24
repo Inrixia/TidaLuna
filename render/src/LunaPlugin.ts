@@ -477,8 +477,6 @@ export class LunaPlugin {
 	/**
 	 * Store the update and run it if the plugin is enabled.
 	 * @param update The update the user was shown. If the url has served a newer one since, that one becomes the pending update.
-	 */
-	/**
 	 * @param beforeLoad Runs right before the update is applied (the dialog's "Ask again" revokes there). If it throws,
 	 * the update is not applied
 	 */
