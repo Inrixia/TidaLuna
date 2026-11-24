@@ -27,7 +27,8 @@ const stateFile = () => path.join(userData, "luna-core", "plugins.json");
 const load = async (files?: Record<string, string>) => {
 	vi.resetModules();
 	handlers.clear();
-	const electron = await import("electron");
+	// The fake from test/harness (the `electron` alias), whose types are not electron's
+	const electron = (await import("electron")) as unknown as typeof import("../../test/harness/electron");
 	electron.setUserDataDir(userData);
 	if (files !== undefined)
 		vi.mocked(electron.net.fetch).mockImplementation(async (url: unknown) => {
