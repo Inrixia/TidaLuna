@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { networkBaseline, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
+import { baselineEntries, enforcedPolicy, networkBaseline, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 
 // TIDAL 2.48.0's meta policy (desktop.tidal.com, 2026-11-23)
 const tidal =
@@ -70,5 +70,25 @@ describe("reportOnlyPolicy", () => {
 			[...policy.keys()].filter((d) => !["connect-src", "img-src", "media-src", "frame-src"].includes(d)),
 			["object-src"],
 		);
+	});
+});
+
+describe("enforcedPolicy", () => {
+	it("limits connect-src to the baseline and the plugins' hosts, and leaves media open by default", () => {
+		const policy = enforcedPolicy(["https://api.example.com", "*.tidal.com"]);
+		assert.equal(policy, `connect-src ${[...networkBaseline, "https://api.example.com"].join(" ")}`);
+		assert.equal(policy.includes("img-src"), false);
+	});
+	it("adds img-src and media-src in strict media mode", () => {
+		const policy = enforcedPolicy([], { strictMedia: true });
+		const sources = networkBaseline.join(" ");
+		assert.equal(policy, `connect-src ${sources}; img-src ${sources}; media-src ${sources}`);
+	});
+	it("gives page code the baseline's host entries only", () => {
+		assert.ok(baselineEntries.includes("*.tidal.com"));
+		assert.ok(baselineEntries.includes("api.github.com"));
+		assert.equal(baselineEntries.includes("'self'"), false);
+		assert.equal(baselineEntries.includes("blob:"), false);
+		assert.equal(baselineEntries.includes("https://luna"), false);
 	});
 });

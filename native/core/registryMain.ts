@@ -13,11 +13,12 @@ import path from "path";
 import { ipcHandle } from "../ipc";
 import { nativeSourcesOf } from "../NativeModule/permissions/verifySource";
 import { forgetAnswers } from "../NativeModule/trust";
-import { askerFor } from "./confirmWindow";
-import { legacyAllows, legacyListLoaded, legacyListReady } from "./legacyListMain";
+import { askerFor, choiceAskerFor } from "./confirmWindow";
+import { derivedHosts, derivedHostsReady } from "./derivedHostsMain";
+import { legacyAllows, legacyHosts, legacyListLoaded, legacyListReady } from "./legacyListMain";
 import { boundedCache } from "./policy";
 import { cspSources } from "./hosts";
-import { createNet } from "./net";
+import { createNet, type AskHost, type HostAnswer } from "./net";
 import { createRegistry, type PluginPackage } from "./registry";
 
 const stateFile = () => path.join(app.getPath("userData"), "luna-core", "plugins.json");
@@ -69,6 +70,9 @@ export const registry = () =>
 		legacyAllows,
 		legacyReady: legacyListReady,
 		legacyLoaded: legacyListLoaded,
+		legacyHosts,
+		derivedHosts,
+		derivedReady: derivedHostsReady,
 		wasMigrated: () => existsSync(migratedFile()),
 		markMigrated: () => {
 			mkdirSync(path.dirname(migratedFile()), { recursive: true });
@@ -120,22 +124,98 @@ ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => thenChanged([
 // account are sent, and none a response sets reach another plugin. It doesn't use the system's proxy settings
 export const lunaNet = createNet({
 	hostsOf: (url) => registry().hostsOf(url),
+	grant: (pluginUrl, entry, grant) => registry().grantHost(pluginUrl, entry, grant),
 	fetch: (url, init) => fetch(url, init as RequestInit),
 	resolve: async (hostname) => (await lookup(hostname, { all: true })).map(({ address }) => address),
 });
-// The page names the plugin (render/src/lunaFetch.ts finds it from the stack): attribution, not a boundary, see net.ts
-ipcHandle("__LunaCore.fetch", (_, pluginUrl: unknown, request: unknown) => lunaNet.fetch(pluginUrl, "page", request));
-ipcHandle("__LunaCore.networkLog", () => lunaNet.log());
 
+const reasons: Record<string, string> = {
+	unlisted: "The plugin lists no hosts, and luna-registry has none for this version.",
+	"not-listed": "This host is not in the hosts you accepted for it.",
+	"local-setting": "A local address, from the server in one of its settings.",
+	redirect: "A host it was redirected to.",
+};
+/** Asks the user of `sender` about a host for luna.fetch (net.ts), in Luna's own window */
+export const hostAskerFor =
+	(sender: Electron.WebContents): AskHost =>
+	async (question) => {
+		const choice = await choiceAskerFor(sender)(
+			`Allow ${question.name} to connect to ${new URL(question.entry).host}?`,
+			[
+				`Plugin: ${question.name} (${question.plugin})`,
+				`Host: ${question.entry}`,
+				`Example: ${question.example}`,
+				reasons[question.reason] ?? "",
+				"Only now allows it until TIDAL restarts. Always and Deny are remembered for this plugin: Luna Settings > Network shows them and can take them back.",
+			],
+			[
+				{ id: "deny", label: "Deny" },
+				{ id: "once", label: "Only now" },
+				{ id: "always", label: "Always allow" },
+			],
+		);
+		return choice === "deny" || choice === "once" || choice === "always" ? (choice as HostAnswer) : undefined;
+	};
+
+// The page names the plugin (render/src/lunaFetch.ts finds it from the stack): attribution, not a boundary, see net.ts.
+// `settings`: the values of the plugin's settings its `{setting:<key>}` entries name, as the page has them
+ipcHandle("__LunaCore.fetch", (event, pluginUrl: unknown, request: unknown, settings: unknown) =>
+	lunaNet.fetch(pluginUrl, "page", request, hostAskerFor(event.sender), settings),
+);
 /**
- * CSP sources for the hosts enabled plugins declare (injector.ts adds them to the report-only header when the TIDAL
- * shell loads: a plugin enabled later is listed from the next reload). None if the registry can't be read
+ * A request page code makes with the page's own network (render/src/pageNet.ts) to a host the page's CSP doesn't allow:
+ * asks the user about it for the calling plugin, like luna.fetch. "always" takes effect in the page from its next load
  */
-export const pluginCspHosts = (): string[] => {
+ipcHandle("__LunaCore.askHost", (event, pluginUrl: unknown, target: unknown) => lunaNet.ask(pluginUrl, target, hostAskerFor(event.sender)));
+ipcHandle("__LunaCore.networkLog", () => lunaNet.log());
+ipcHandle("__LunaCore.forgetGrant", (_, url: unknown, entry: unknown) => registry().forgetGrant(url, entry));
+
+/** What the page's connect-src allows besides TIDAL and Luna: hosts of enabled plugins (registry.ts pageHosts) */
+export const pluginPageHosts = (): string[] => {
 	try {
-		return cspSources(registry().declaredHosts());
+		return registry().pageHosts();
 	} catch (err) {
-		console.error("[Luna.core] Can't read the plugins' hosts for the CSP report-only header:", err);
+		console.error("[Luna.core] Can't read the plugins' hosts for the page's CSP:", err);
 		return [];
 	}
 };
+/** The same as CSP sources (injector.ts, when the TIDAL shell loads: a plugin enabled later is in it from the next reload) */
+export const pluginCspHosts = (): string[] => cspSources(pluginPageHosts());
+/** The entries the page's connect-src was built from at its last load: render/src/pageNet.ts reads them */
+let pageConnect: string[] = [];
+export const setPageConnect = (entries: string[]) => void (pageConnect = entries);
+ipcHandle("__LunaCore.pageConnect", () => pageConnect);
+
+// #region Network settings
+const netSettingsFile = () => path.join(app.getPath("userData"), "luna-core", "net-settings.json");
+export type NetSettings = { strictMedia: boolean };
+/** Whether images and media of the page are held to the same hosts as its connect-src (off: any https) */
+export const netSettings = (): NetSettings => {
+	try {
+		return { strictMedia: JSON.parse(readFileSync(netSettingsFile(), "utf8"))?.strictMedia === true };
+	} catch {
+		return { strictMedia: false };
+	}
+};
+ipcHandle("__LunaCore.netSettings", () => netSettings());
+/** Turning strict images and media on needs nothing; turning it off opens the page, so the user confirms it */
+ipcHandle("__LunaCore.setStrictMedia", async (event, on: unknown) => {
+	if (typeof on !== "boolean") throw new Error("[Luna.core] setStrictMedia takes true or false");
+	if (!on && netSettings().strictMedia) {
+		const ok = await askerFor(event.sender)({
+			title: "Let page code load images and media from any https host?",
+			lines: [
+				"Plugins could then send data out through image and media urls again. Their fetch, WebSocket and other requests stay limited to their hosts.",
+				"Takes effect when TIDAL reloads.",
+			],
+			confirmText: "Allow any https",
+		});
+		if (!ok) return false;
+	}
+	const file = netSettingsFile();
+	mkdirSync(path.dirname(file), { recursive: true });
+	writeFileSync(`${file}.tmp`, JSON.stringify({ strictMedia: on }));
+	renameSync(`${file}.tmp`, file);
+	return true;
+});
+// #endregion

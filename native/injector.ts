@@ -12,8 +12,9 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
-import { pluginCspHosts } from "./core/registryMain";
-import { reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
+import { netSettings, pluginPageHosts, setPageConnect } from "./core/registryMain";
+import { cspSources } from "./core/hosts";
+import { baselineEntries, enforcedPolicy, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
@@ -160,8 +161,15 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		// Report, don't enforce, TIDAL's policy (see cspReportOnly.ts)
 		const tidalPolicy = tidalMetaPolicy(body);
 		const headers = new Headers(res.headers);
-		// The hosts enabled plugins declare are listed too: what is still reported is what no plugin declared
-		if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy(tidalPolicy, pluginCspHosts()));
+		// The hosts enabled plugins may reach are listed too: what is still reported is what no plugin declared
+		const pluginHosts = pluginPageHosts();
+		const pluginSources = cspSources(pluginHosts);
+		if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy(tidalPolicy, pluginSources));
+		// Strict network: page code reaches only TIDAL, Luna and the plugins' accepted hosts (cspReportOnly.ts enforcedPolicy).
+		// A host allowed later reaches the page from its next load; until then render/src/pageNet.ts sends page plugins'
+		// fetches to it through luna.fetch
+		headers.set("Content-Security-Policy", enforcedPolicy(pluginSources, netSettings()));
+		setPageConnect([...baselineEntries, ...pluginHosts]);
 		body = body.replace(
 			/(<meta http-equiv="Content-Security-Policy")|(<script type="module" crossorigin src="(.*?)">)/g,
 			(match, cspMatch, scriptMatch, src) => {

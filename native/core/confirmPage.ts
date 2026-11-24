@@ -1,7 +1,16 @@
 // The page of Luna's confirmation window (confirmWindow.ts), kept apart so it can be tested without Electron.
 import { escapeHtml } from "../NativeModule/permissions/escapeHtml";
 
-export type ConfirmRequest = { title: string; lines: string[]; confirmText: string };
+export type ConfirmRequest = {
+	title: string;
+	lines: string[];
+	confirmText: string;
+	/**
+	 * Answers instead of Cancel/confirm, in order (the last one is drawn as the main button). Each one but the first is
+	 * armed like the confirm button. Closing the window answers none of them
+	 */
+	choices?: { id: string; label: string }[];
+};
 
 export const TITLE = "Luna";
 export const SUBMIT = "luna-core-confirm:";
@@ -90,6 +99,30 @@ export const confirmRequest = (title: unknown, lines: unknown, confirmText: unkn
 	const request = { title: text(title), lines: lines.map(text), confirmText: text(confirmText) };
 	if (request.title === "" || request.confirmText === "") throw new Error("[Luna.core] A confirmation needs a title and a button");
 	return request;
+};
+
+const choiceId = /^[a-z]{1,16}$/;
+
+export const buildChoiceHtml = ({ title, lines, choices = [] }: ConfirmRequest) => {
+	if (choices.length < 2 || choices.some((choice) => !choiceId.test(choice.id))) throw new Error("[Luna.core] Bad choices");
+	const actions = `<div class="actions">${choices
+			.map(
+				(choice, index) =>
+					`<button class="choice" data-id="${choice.id}"${index === choices.length - 1 ? ' id="confirm"' : ""}${index === 0 ? ' id="cancel"' : " disabled"}>${escapeHtml(choice.label)}</button>`,
+			)
+			.join("")}</div>
+<script>
+const submit = (answer) => (document.title = "${SUBMIT}" + answer);
+const armed = [...document.querySelectorAll("button.choice")].slice(1);
+for (const button of document.querySelectorAll("button.choice")) button.addEventListener("click", () => submit("choice:" + button.dataset.id));
+document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
+document.getElementById("cancel").focus();
+window.arm = () => armed.forEach((button) => (button.disabled = false));
+window.disarm = () => armed.forEach((button) => (button.disabled = true));
+</script>`;
+	return buildConfirmHtml({ title, lines, confirmText: "-" })
+		.replace("</style>", () => ".choice { background:#2a2a2a; color:#f4f4f5; }\n.choice:disabled { opacity:.4; cursor:default; }\n</style>")
+		.replace(/<div class="actions">[\s\S]*<\/script>/, () => actions);
 };
 
 export const buildConfirmHtml = ({ title, lines, confirmText }: ConfirmRequest) => `<!DOCTYPE html>

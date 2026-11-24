@@ -42,6 +42,26 @@ const decodeAttribute = (value: string) =>
 		.replace(/&gt;/g, ">")
 		.replace(/&amp;/g, "&");
 
+/**
+ * The baseline's hosts as host entries (core/hosts.ts), for page code that checks a url before it sends it
+ * (render/src/pageNet.ts). `'self'` is the TIDAL shell, under tidal.com
+ */
+export const baselineEntries = networkBaseline.filter((source) => /^(\*\.)?[a-z0-9.-]+\.[a-z]+$/.test(source));
+
+/**
+ * The enforced policy sent with the TIDAL shell, next to the report-only one: page code (TIDAL, Luna and every page
+ * plugin) reaches with fetch, XMLHttpRequest, WebSocket, EventSource and sendBeacon only TIDAL, Luna's own and the
+ * plugins' accepted hosts. Images and media stay open to any https unless `strictMedia`.
+ *
+ * @param pluginSources CSP sources of the hosts enabled plugins may reach (core/hosts.ts cspSources of registry pageHosts)
+ */
+export const enforcedPolicy = (pluginSources: string[], { strictMedia = false }: { strictMedia?: boolean } = {}): string => {
+	const sources = [...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))].join(" ");
+	const directives = [`connect-src ${sources}`];
+	if (strictMedia) directives.push(`img-src ${sources}`, `media-src ${sources}`);
+	return directives.join("; ");
+};
+
 /** The content of the TIDAL shell's CSP meta tag, or undefined without one */
 export const tidalMetaPolicy = (html: string): string | undefined => {
 	const tag = /<meta\s[^>]*http-equiv="Content-Security-Policy"[^>]*>/i.exec(html)?.[0];

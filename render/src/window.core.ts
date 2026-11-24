@@ -69,8 +69,21 @@ declare global {
 		loadWorld(url: string): Promise<void>;
 		unloadWorld(url: string): Promise<void>;
 		/** luna.fetch for `pluginUrl` (see native/core/net.ts). Use lunaFetch instead */
-		fetch(pluginUrl: string, request: import("../../native/core/net").NetRequest): Promise<import("../../native/core/net").NetResponse>;
+		fetch(
+			pluginUrl: string,
+			request: import("../../native/core/net").NetRequest,
+			settings?: Record<string, unknown>,
+		): Promise<import("../../native/core/net").NetResponse>;
 		/** luna.fetch requests since TIDAL started (the newest 100 of each plugin), the newest last */
 		networkLog(): Promise<import("../../native/core/net").NetLogEntry[]>;
+		/** Whether page code of `pluginUrl` may reach `target` with the page's own network (asks the user like luna.fetch) */
+		askHost(pluginUrl: string, target: string): Promise<{ allowed: boolean; reason?: string; answer?: import("../../native/core/net").HostAnswer }>;
+		/** The host entries the page's enforced connect-src was built from when it loaded */
+		pageConnect(): Promise<string[]>;
+		/** Forgets an "always"/"deny" answer: the host is asked again */
+		forgetGrant(url: string, entry: string): Promise<boolean>;
+		netSettings(): Promise<{ strictMedia: boolean }>;
+		/** Turning it off asks the user */
+		setStrictMedia(on: boolean): Promise<boolean>;
 	};
 }

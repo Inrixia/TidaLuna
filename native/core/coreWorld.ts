@@ -183,8 +183,16 @@ export const exposeCore = () => {
 		unloadWorld: (url: unknown): Promise<void> => unloadWorld(pluginUrl(url)),
 		moveUrl: (from: unknown, to: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.moveUrl", from, to),
 		// luna.fetch for page code (render/src/lunaFetch.ts), which names the calling plugin
-		fetch: (pluginUrl: unknown, request: unknown): Promise<NetResponse> => ipcRenderer.invoke("__LunaCore.fetch", pluginUrl, request),
+		fetch: (pluginUrl: unknown, request: unknown, settings?: unknown): Promise<NetResponse> =>
+			ipcRenderer.invoke("__LunaCore.fetch", pluginUrl, request, settings),
 		networkLog: (): Promise<NetLogEntry[]> => ipcRenderer.invoke("__LunaCore.networkLog"),
+		// Strict network (net.ts, injector.ts): a host page code wants that the page's CSP blocks, the user's answers
+		askHost: (pluginUrl: unknown, target: unknown): Promise<{ allowed: boolean; reason?: string }> =>
+			ipcRenderer.invoke("__LunaCore.askHost", pluginUrl, target),
+		pageConnect: (): Promise<string[]> => ipcRenderer.invoke("__LunaCore.pageConnect"),
+		forgetGrant: (url: unknown, entry: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.forgetGrant", url, entry),
+		netSettings: (): Promise<{ strictMedia: boolean }> => ipcRenderer.invoke("__LunaCore.netSettings"),
+		setStrictMedia: (on: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.setStrictMedia", on),
 	});
 };
 // #endregion

@@ -10,7 +10,7 @@ import { createHash } from "crypto";
 
 import type { ConfirmRequest } from "./confirmPage";
 import { parseBundle, worldFilePrefix } from "../worldBundle";
-import { declaredHosts, hostsDiff, isLocalEntry, sameHosts } from "./hosts";
+import { declaredHosts, hostsDiff, isLocalEntry, parseHostEntry, sameHosts, settingKeyOf } from "./hosts";
 import { isCoreUrl, isDevUrl, nativesDiff } from "./policy";
 import { pluginIdOf, servedSha256 } from "./legacyList";
 
@@ -38,6 +38,31 @@ export type Version = {
 	natives: string[];
 	/** The plugin's `<plugin>.world.json` as served, if it has a world. Its sha256 is `package.worldHash` */
 	world?: string;
+	/**
+	 * The hosts luna-registry derived from this exact code (derivedHosts.ts), for a package that lists none: shown in the
+	 * confirmation and accepted with the version. Undefined while the registry has none for it
+	 */
+	derived?: string[];
+	/** Accepted without the user seeing its hosts (a plugin from before the core): they are asked one by one when used */
+	hostsUnconfirmed?: true;
+};
+/** A runtime answer about one host for one plugin (net.ts asks): "always" allows it, "deny" refuses it without asking */
+export type HostGrant = "always" | "deny";
+/**
+ * Where a plugin's network hosts come from: its package ("declared"), luna-registry read them from its code
+ * ("derived"), the signed list of plugins from before host lists ("legacy": any public host without asking, until it
+ * updates), or none known ("unlisted": every host it uses is asked)
+ */
+export type NetMode = "declared" | "derived" | "legacy" | "unlisted";
+/** What luna.fetch (net.ts) needs to know about an enabled plugin */
+export type PluginNet = {
+	name: string;
+	mode: NetMode;
+	/** Declared or derived hosts the user accepted ("declared"/"derived" only), `{setting:}` entries unresolved */
+	hosts?: string[];
+	/** Host entries the user answered "always" / "deny" for */
+	allow: string[];
+	deny: string[];
 };
 export type CoreRecord = {
 	url: string;
@@ -69,6 +94,8 @@ export type CoreState = {
 	 */
 	legacyOffIds?: string[];
 	legacyFirst?: Record<string, string>;
+	/** Url -> host entry (`https://api.example.com`) -> the user's runtime answer (net.ts) */
+	netGrants?: Record<string, Record<string, HostGrant>>;
 };
 export type PendingUpdate = {
 	version?: string;
@@ -77,7 +104,7 @@ export type PendingUpdate = {
 	natives: string[];
 	added: string[];
 	removed: string[];
-	/** The update's declared hosts, undefined if it declares none */
+	/** The update's hosts (declared, or derived by the registry), undefined if none are known */
 	hosts?: string[];
 	hostsAdded: string[];
 	hostsRemoved: string[];
@@ -91,8 +118,11 @@ export type CorePluginInfo = {
 	hash?: string;
 	codeSha256?: string;
 	natives: string[];
-	/** Network hosts of the accepted version, undefined if it declares none (compatibility mode) */
+	/** Network hosts of the accepted version: declared, or derived by the registry. Undefined if none are known */
 	hosts?: string[];
+	netMode?: NetMode;
+	/** The user's runtime answers for this plugin (host entry -> answer) */
+	grants: Record<string, HostGrant>;
 	/** The accepted code has natives in the old format: "allowed" if they run (installed before Luna core, not updated since) */
 	legacyNatives?: "allowed" | "refused";
 	pending?: PendingUpdate;
@@ -112,6 +142,12 @@ export type RegistryDeps = {
 	legacyReady?(): Promise<void>;
 	/** Whether a list is loaded (legacyAllows answers from one): without it the confirmations can't say what runs */
 	legacyLoaded?(): boolean;
+	/** The hosts the old native format list carries for this code (LegacyListEntry hosts) */
+	legacyHosts?(id: string, servedSha256: string): string[] | undefined;
+	/** The hosts luna-registry derived for this exact code of the plugin named `name` (derivedHosts.ts) */
+	derivedHosts?(servedSha256: string, name: string): string[] | undefined;
+	/** Resolves once the registry's list is loaded, or no longer waited for */
+	derivedReady?(): Promise<void>;
 	/** The page handed over its plugins once already (kept apart from the state: a lost state file doesn't allow another) */
 	wasMigrated?(): boolean;
 	markMigrated?(): void | Promise<void>;
@@ -148,22 +184,37 @@ const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
 	version.package.hash === pkg.hash &&
 	version.package.worldHash === pkg.worldHash &&
 	sameHosts(version.package.hosts, pkg.hosts);
-const hostsOfVersion = (version: Version | undefined) => (version === undefined ? undefined : declaredHosts(version.package.hosts)?.hosts);
+/** The version's hosts: what its package declares, or else what the registry derived from its code */
+const hostsOfVersion = (version: Version | undefined) =>
+	version === undefined ? undefined : (declaredHosts(version.package.hosts)?.hosts ?? version.derived);
 /** The version lists a local host (`localhost`, `nas.lan`): luna.fetch may reach it, which compatibility mode refuses */
 const hasLocalHosts = (version: Version) => (hostsOfVersion(version) ?? []).some(isLocalEntry);
 
+/** An entry as the user reads it */
+const showEntry = (entry: string) => {
+	const key = settingKeyOf(entry);
+	return key !== undefined ? `the server in its setting "${key}"` : entry;
+};
+const showEntries = (hosts: string[]) => hosts.map(showEntry).join(", ");
+
 /** What the confirmation says about a version's network hosts */
-const describeHosts = (version: Version): string[] => {
+const describeHosts = (version: Version, legacyNet = false): string[] => {
 	const declared = declaredHosts(version.package.hosts);
-	// Only Luna's fetch is checked: code in the page can still use the page's own network, so this is what the plugin
-	// says, not a limit on it
-	const notALimit = "Requests it makes through Luna (luna.fetch) are checked against this list; the page's own network isn't limited yet.";
+	const others = "Luna asks you before it reaches any other host.";
+	if (legacyNet)
+		return [
+			"Network: this exact version is on Luna's list of plugins from before host lists: it may reach any public host without asking. An update takes it off the list.",
+		];
+	if (declared === undefined && version.derived !== undefined)
+		return version.derived.length === 0
+			? ["Network: luna-registry found no host in its code.", others]
+			: [`Network, read from its code by luna-registry: ${showEntries(version.derived)}.`, others];
 	if (declared === undefined)
-		return ["Network: the plugin doesn't list the hosts it connects to. Compatibility mode: its luna.fetch requests may go to any public host and are marked in the log."];
+		return ["Network: the plugin lists no hosts and luna-registry has none for this version. Luna asks you for each host it uses."];
 	const lines =
 		declared.hosts.length === 0
-			? ["Network: the plugin says it connects to no host.", notALimit]
-			: [`Network: the plugin says it connects to ${declared.hosts.join(", ")}.`, notALimit];
+			? ["Network: the plugin says it connects to no host.", others]
+			: [`Network: the plugin says it connects to ${showEntries(declared.hosts)}.`, others];
 	if (declared.invalid.length !== 0) lines.push(`Ignored, not valid hosts: ${declared.invalid.join(", ")}`);
 	return lines;
 };
@@ -176,7 +227,7 @@ export const legacyFormatMessage = (name: string) =>
  * What the confirmation says about a version. `legacyRuns`: its old-format natives would run (see CoreRecord legacyOff);
  * "unknown": they would if this version is on the list, which isn't loaded yet
  */
-export const describe = (url: string, version: Version, legacyRuns: boolean | "unknown" = false): string[] => {
+export const describe = (url: string, version: Version, legacyRuns: boolean | "unknown" = false, legacyNet = false): string[] => {
 	const lines = [`${version.package.name} ${version.package.version ?? ""} from ${url}${isDevUrl(url) ? " (this computer)" : ""}`];
 	const legacy = legacyNativesOf(version);
 	const world = version.natives.filter(isWorldNative).map((fileName) => fileName.slice(worldFilePrefix.length));
@@ -202,7 +253,7 @@ export const describe = (url: string, version: Version, legacyRuns: boolean | "u
 			`Old native format, without isolation: ${legacy.join(", ")} won't run. The author must move the plugin to the new format (lunaWorld).`,
 		);
 	if (!isNative(version)) lines.push("No native code: it runs in the page like other plugins.");
-	lines.push(...describeHosts(version));
+	lines.push(...describeHosts(version, legacyNet));
 	lines.push("Plugin code can read and change everything in TIDAL: only allow plugins you trust.");
 	return lines;
 };
@@ -226,6 +277,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const legacyOffIds = new Set(Array.isArray(state.legacyOffIds) ? state.legacyOffIds : []);
 	const legacyFirst: Record<string, string> =
 		state.legacyFirst !== null && typeof state.legacyFirst === "object" ? state.legacyFirst : (state.legacyFirst = {});
+	const netGrants: Record<string, Record<string, HostGrant>> =
+		state.netGrants !== null && typeof state.netGrants === "object" ? state.netGrants : (state.netGrants = {});
 	// Plugins from before this format kept their list in `legacy`: the registry's signed list replaces it
 	delete (state as { legacy?: unknown }).legacy;
 	let saving: Promise<unknown> = Promise.resolve();
@@ -338,6 +391,32 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (legacyOff.has(from)) leaveLegacy(to);
 		if (legacyOff.has(to)) leaveLegacy(from);
 	};
+	/** On the old format list for the network: this exact code, still on it here. Any public host without asking */
+	const legacyNet = (url: string, version: Version | undefined) =>
+		!isDevUrl(url) && version !== undefined && stillLegacy(url, version) && deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true;
+	/** Whether this version would be on the list for the network once accepted (what the confirmation says) */
+	const legacyNetWouldRun = (url: string, before: Version | undefined, version: Version) => legacyNet(url, version) && !leaves(url, before, version);
+	const netModeOf = (url: string, version: Version | undefined): NetMode => {
+		if (version === undefined || legacyNet(url, version)) return version === undefined ? "unlisted" : "legacy";
+		if (version.hostsUnconfirmed) return "unlisted";
+		if (declaredHosts(version.package.hosts) !== undefined) return "declared";
+		return version.derived !== undefined ? "derived" : "unlisted";
+	};
+	/**
+	 * The registry's derived hosts for a version about to be confirmed whose package lists none: looked up again until
+	 * the registry has them. Never on an accepted version (the user accepted what they saw)
+	 */
+	const withDerived = (version: Version) => {
+		if (declaredHosts(version.package.hosts) === undefined && version.derived === undefined) {
+			const derived = deps.derivedHosts?.(servedOf(version), version.package.name);
+			if (derived !== undefined) version.derived = [...derived];
+		}
+		return version;
+	};
+	const ready = async () => {
+		await Promise.all([deps.legacyReady?.(), deps.derivedReady?.()]);
+	};
+
 	/** The only way a version becomes accepted: leaving listed old-format code for unlisted code is for good */
 	const accept = (record: CoreRecord, version: Version) => {
 		leavesLegacy(record.url, record.accepted, version);
@@ -360,6 +439,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 			codeSha256: accepted?.codeSha256,
 			natives: accepted?.natives ?? [],
 			hosts: hostsOfVersion(accepted),
+			netMode: accepted === undefined ? undefined : netModeOf(url, accepted),
+			grants: { ...netGrants[url] },
 			legacyNatives:
 				accepted === undefined || legacyNativesOf(accepted).length === 0 ? undefined : legacyRuns(url, accepted) ? "allowed" : "refused",
 			// A version waiting for its first review (a migrated native plugin) is enabled, not updated: see enable
@@ -387,7 +468,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		try {
 			const pkg = await deps.fetchPackage(url);
 			if (!sameVersion(record.accepted, pkg)) {
-				const version = sameVersion(record.pending, pkg) ? record.pending! : await fetchVersion(url, pkg);
+				const version = withDerived(sameVersion(record.pending, pkg) ? record.pending! : await fetchVersion(url, pkg));
 				if (record.accepted === undefined && record.unreviewed && (isNative(version) || hasLocalHosts(version))) {
 					// Migrated plugin with native code, or local hosts for luna.fetch (more than compatibility mode gives): it
 					// runs only once the user enables it
@@ -398,6 +479,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 					throw new Error(`[Luna.core] ${record.name} ${what}: enable it again in Luna Settings to review it`);
 				}
 				if (record.accepted === undefined || isDevUrl(url)) {
+					// A plugin from before the core: accepted without a confirmation, so its hosts weren't seen
+					if (record.accepted === undefined && !isDevUrl(url) && hostsOfVersion(version)?.length) version.hostsUnconfirmed = true;
 					accept(record, version);
 					record.pending = undefined;
 				} else if (record.pending !== version) {
@@ -422,18 +505,20 @@ export const createRegistry = (deps: RegistryDeps) => {
 	};
 
 	const enable = async (url: string, ask: Ask): Promise<boolean> => {
-		await deps.legacyReady?.();
+		await ready();
 		const record = state.plugins[url];
 		if (record === undefined) return false;
 		if (record.enabled) return true;
 		if (record.accepted === undefined && record.pending === undefined) record.pending = await fetchVersion(url);
-		const version = (record.accepted ?? record.pending)!;
-		// Enabling plain page code gives the page nothing it doesn't have: only native plugins (and first reviews) ask
+		const version = record.accepted ?? withDerived(record.pending!);
+		// Enabling plain page code whose hosts were accepted with it gives the page nothing new: only native plugins (and
+		// first reviews) ask
 		if (isNative(version) || record.accepted === undefined) {
-			const lines = describe(url, version, legacyWouldRun(url, record.accepted, version));
+			const lines = describe(url, version, legacyWouldRun(url, record.accepted, version), legacyNetWouldRun(url, record.accepted, version));
 			if (!(await ask({ title: `Enable ${record.name}?`, lines, confirmText: "Enable" }))) return false;
 		}
 		if (record.accepted === undefined) {
+			delete version.hostsUnconfirmed;
 			accept(record, version);
 			if (record.pending === version) record.pending = undefined;
 		}
@@ -446,9 +531,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const install = async (url: string, ask: Ask): Promise<boolean> => {
 		// Installing an installed plugin enables it
 		if (state.plugins[url] !== undefined) return enable(url, ask);
-		await deps.legacyReady?.();
-		const version = await fetchVersion(url);
-		const lines = describe(url, version, legacyWouldRun(url, undefined, version));
+		await ready();
+		const version = withDerived(await fetchVersion(url));
+		const lines = describe(url, version, legacyWouldRun(url, undefined, version), legacyNetWouldRun(url, undefined, version));
 		if (!(await ask({ title: `Install ${version.package.name}?`, lines, confirmText: "Install" }))) return false;
 		// Queued by url, but a moveUrl to this url (queued by its source) may have landed while the user was asked
 		if (state.plugins[url] !== undefined) throw new Error(`[Luna.core] ${url} was installed meanwhile: try again`);
@@ -460,10 +545,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 	};
 
 	const acceptUpdate = async (url: string, ask: Ask): Promise<boolean> => {
-		await deps.legacyReady?.();
+		await ready();
 		const record = state.plugins[url];
 		const { accepted, pending } = record ?? {};
 		if (record === undefined || accepted === undefined || pending === undefined) return false;
+		withDerived(pending);
 		const changes = info(url)!.pending!;
 		const lines = [
 			`${accepted.package.version ?? "?"} -> ${pending.package.version ?? "?"}`,
@@ -473,22 +559,23 @@ export const createRegistry = (deps: RegistryDeps) => {
 				? [`World sha256: ${shortHash(accepted.package.worldHash ?? "none")} -> ${shortHash(pending.package.worldHash ?? "none")}`]
 				: []),
 			"Until you update, the version you have keeps running.",
-			...describe(url, pending, legacyWouldRun(url, accepted, pending)),
+			...describe(url, pending, legacyWouldRun(url, accepted, pending), legacyNetWouldRun(url, accepted, pending)),
 		];
 		if (!isDevUrl(url) && legacyRuns(url, accepted) && legacyNativesOf(accepted).length !== 0)
 			lines.push("This plugin uses the old native format. After this update it can't any more, even if you go back to this version.");
 		if (changes.added.length !== 0) lines.push(`New native files: ${changes.added.join(", ")}`);
 		if (changes.removed.length !== 0) lines.push(`Removed native files: ${changes.removed.join(", ")}`);
 		const acceptedHosts = hostsOfVersion(accepted);
-		if (acceptedHosts === undefined && changes.hosts !== undefined) lines.push("Now lists its network hosts: luna.fetch refuses other hosts for it from now on.");
+		if (acceptedHosts === undefined && changes.hosts !== undefined) lines.push("Now lists its network hosts: Luna asks you before any other host.");
 		else if (acceptedHosts !== undefined && changes.hosts === undefined)
-			lines.push("No longer lists its network hosts: compatibility mode, any public host.");
+			lines.push("No longer lists its network hosts: Luna asks you for each host it uses.");
 		else {
-			if (changes.hostsAdded.length !== 0) lines.push(`New network hosts: ${changes.hostsAdded.join(", ")}`);
-			if (changes.hostsRemoved.length !== 0) lines.push(`Removed network hosts: ${changes.hostsRemoved.join(", ")}`);
+			if (changes.hostsAdded.length !== 0) lines.push(`New network hosts: ${showEntries(changes.hostsAdded)}`);
+			if (changes.hostsRemoved.length !== 0) lines.push(`Removed network hosts: ${showEntries(changes.hostsRemoved)}`);
 		}
 		// Operations on this url wait for the answer (serial): a newer update a load finds meanwhile waits for its own window
 		if (!(await ask({ title: `Update ${record.name}?`, lines, confirmText: "Update" }))) return false;
+		delete pending.hostsUnconfirmed;
 		accept(record, pending);
 		record.pending = undefined;
 		await save();
@@ -506,6 +593,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (state.plugins[url] === undefined) return;
 		// legacyOff and legacyRan stay: a reinstall doesn't bring the old format back to a plugin that left it
 		delete state.plugins[url];
+		// A reinstall asks for hosts again
+		delete netGrants[url];
 		await save();
 		// A reinstall asks for native permissions again
 		deps.forgetAnswers(url);
@@ -540,8 +629,12 @@ export const createRegistry = (deps: RegistryDeps) => {
 			withoutSource(found.code, to) === withoutSource(accepted.code, from) &&
 			found.world === accepted.world &&
 			sameHosts(found.package.hosts, accepted.package.hosts)
-		)
+		) {
+			// The same code: the same derived hosts, accepted (or not) the same way
+			if (accepted.derived !== undefined) found.derived = accepted.derived;
+			if (accepted.hostsUnconfirmed) found.hostsUnconfirmed = true;
 			moved.accepted = found;
+		}
 		else if (found !== undefined && accepted !== undefined) moved.pending = found;
 		// One plugin at both urls: one that left the old format at either stays off it at both, and other code at `to`
 		// (now or later) leaves it at both
@@ -552,6 +645,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (legacyRan[from] !== undefined && legacyRan[to] === undefined) legacyRan[to] = legacyRan[from];
 		delete state.plugins[from];
 		state.plugins[to] = moved;
+		// The user's answers about hosts were for this plugin
+		if (netGrants[from] !== undefined) {
+			netGrants[to] = netGrants[from];
+			delete netGrants[from];
+		}
 		await save();
 		// Native permissions were given to the old url
 		deps.forgetAnswers(from);
@@ -640,16 +738,57 @@ export const createRegistry = (deps: RegistryDeps) => {
 		 * For luna.fetch (net.ts): the enabled plugin's name and the hosts of its accepted version (undefined: it declares
 		 * none). Undefined if it isn't an enabled plugin with accepted code
 		 */
-		hostsOf: (url: string): { name: string; hosts?: string[] } | undefined => {
+		hostsOf: (url: string): PluginNet | undefined => {
 			const record = state.plugins[url];
 			if (record?.enabled !== true || record.accepted === undefined) return undefined;
-			return { name: record.name, hosts: hostsOfVersion(record.accepted) };
+			const mode = netModeOf(url, record.accepted);
+			const grants = Object.entries(netGrants[url] ?? {});
+			return {
+				name: record.name,
+				mode,
+				hosts: mode === "declared" || mode === "derived" ? hostsOfVersion(record.accepted) : undefined,
+				allow: grants.filter(([, grant]) => grant === "always").map(([entry]) => entry),
+				deny: grants.filter(([, grant]) => grant === "deny").map(([entry]) => entry),
+			};
 		},
-		/** Every host an enabled plugin's accepted version declares (the CSP report-only header lists them, cspReportOnly.ts) */
-		declaredHosts: (): string[] => {
+		/**
+		 * The user's answer about a host for an installed plugin (net.ts asks). Only main calls this, after the user
+		 * answered in Luna's own window: no page channel sets it
+		 */
+		grantHost: async (url: string, entry: string, grant: HostGrant) => {
+			if (state.plugins[url] === undefined || parseHostEntry(entry) === undefined) return false;
+			(netGrants[url] ??= {})[entry] = grant;
+			await save();
+			return true;
+		},
+		/** Forgets an answer: the host is asked again (any caller may: it only takes away) */
+		forgetGrant: async (url: unknown, entry: unknown) => {
+			const checked = pluginUrl(url);
+			if (typeof entry !== "string" || netGrants[checked]?.[entry] === undefined) return false;
+			delete netGrants[checked][entry];
+			if (Object.keys(netGrants[checked]).length === 0) delete netGrants[checked];
+			await save();
+			return true;
+		},
+		/**
+		 * Every host the page's enforced connect-src allows for enabled plugins (injector.ts, when the TIDAL shell loads):
+		 * declared or derived hosts that were confirmed, the hosts the old format list carries for listed plugins, and
+		 * "always" answers. Never `{setting:}` entries: page code can write any setting
+		 */
+		pageHosts: (): string[] => {
 			const hosts = new Set<string>();
-			for (const record of Object.values(state.plugins))
-				if (record.enabled) for (const host of hostsOfVersion(record.accepted) ?? []) hosts.add(host);
+			for (const record of Object.values(state.plugins)) {
+				if (!record.enabled || record.accepted === undefined) continue;
+				const mode = netModeOf(record.url, record.accepted);
+				const listed =
+					mode === "legacy"
+						? (deps.legacyHosts?.(pluginIdOf(record.url), servedOf(record.accepted)) ?? [])
+						: mode === "unlisted"
+							? []
+							: (hostsOfVersion(record.accepted) ?? []);
+				for (const host of listed) if (settingKeyOf(host) === undefined) hosts.add(host);
+				for (const [entry, grant] of Object.entries(netGrants[record.url] ?? {})) if (grant === "always") hosts.add(entry);
+			}
 			return [...hosts];
 		},
 		// #endregion

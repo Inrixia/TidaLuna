@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
 	ANSWER_IN_USE_MS,
+	buildChoiceHtml,
 	buildConfirmHtml,
 	confirmGate,
 	confirmRequest,
@@ -122,5 +123,39 @@ describe("core confirmation page", () => {
 		assert.throws(() => confirmRequest("", [], "Go"));
 		assert.throws(() => confirmRequest("T", new Array(13).fill("a"), "Go"));
 		assert.equal(confirmRequest("x".repeat(700), [], "Go").title.length, 601);
+	});
+});
+
+describe("core choice page", () => {
+	const choices = [
+		{ id: "deny", label: "Deny" },
+		{ id: "once", label: "Only <now>" },
+		{ id: "always", label: "Always allow" },
+	];
+	it("draws the first choice as cancel and focused, the last as the main button, all but the first disarmed", () => {
+		const html = buildChoiceHtml({ title: "Allow?", lines: ["x"], confirmText: "-", choices });
+		assert.match(html, /<button class="choice" data-id="deny" id="cancel">Deny<\/button>/);
+		assert.match(html, /<button class="choice" data-id="once" disabled>Only &lt;now&gt;<\/button>/);
+		assert.match(html, /<button class="choice" data-id="always" id="confirm" disabled>Always allow<\/button>/);
+		assert.match(html, /submit\("choice:" \+ button\.dataset\.id\)/);
+		assert.match(html, /event\.key === "Escape" && submit\("no"\)/);
+		// One set of buttons, one script
+		assert.strictEqual(html.match(/<script>/g)?.length, 1);
+		assert.strictEqual(html.includes(">Cancel<"), false);
+		assert.ok(html.includes(".choice:disabled"));
+	});
+	it("refuses bad choice ids and fewer than two choices", () => {
+		assert.throws(() => buildChoiceHtml({ title: "T", lines: [], confirmText: "-", choices: [{ id: "a", label: "A" }] }));
+		assert.throws(() =>
+			buildChoiceHtml({
+				title: "T",
+				lines: [],
+				confirmText: "-",
+				choices: [
+					{ id: "a", label: "A" },
+					{ id: 'b" onclick="x', label: "B" },
+				],
+			}),
+		);
 	});
 });

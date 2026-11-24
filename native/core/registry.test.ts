@@ -861,21 +861,21 @@ describe("core registry", () => {
 		assert.ok(lines.some((line) => line === "Network: the plugin says it connects to api.last.fm, *.example.com."));
 		assert.ok(lines.some((line) => line === "Ignored, not valid hosts: *"));
 		assert.deepStrictEqual(registry.info(URL)?.hosts, ["api.last.fm", "*.example.com"]);
-		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", hosts: ["api.last.fm", "*.example.com"] });
-		assert.deepStrictEqual(registry.declaredHosts(), ["api.last.fm", "*.example.com"]);
+		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", mode: "declared", hosts: ["api.last.fm", "*.example.com"], allow: [], deny: [] });
+		assert.deepStrictEqual(registry.pageHosts(), ["api.last.fm", "*.example.com"]);
 		await registry.disable(URL);
 		assert.strictEqual(registry.hostsOf(URL), undefined);
-		assert.deepStrictEqual(registry.declaredHosts(), []);
+		assert.deepStrictEqual(registry.pageHosts(), []);
 	});
 
-	it("marks a plugin without hosts as compatibility mode", async () => {
+	it("marks a plugin without hosts and without registry hosts as unlisted: its hosts are asked", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1");
 		const registry = createRegistry(deps);
 		const yes = asker(true);
 		await registry.install(URL, yes);
-		assert.ok(yes.asked[0].lines.some((line) => line.includes("Compatibility mode")));
-		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", hosts: undefined });
+		assert.ok(yes.asked[0].lines.some((line) => line.includes("luna-registry has none for this version")));
+		assert.deepStrictEqual(registry.hostsOf(URL), { name: "plugin v1", mode: "unlisted", hosts: undefined, allow: [], deny: [] });
 		assert.strictEqual(registry.info(URL)?.hosts, undefined);
 	});
 
@@ -950,5 +950,131 @@ describe("core registry", () => {
 		assert.strictEqual(await registry.acceptUpdate(URL, yes), true);
 		assert.ok(yes.asked[0].lines.some((line) => line.includes("http://192.168.1.10:8123")));
 		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["http://192.168.1.10:8123"]);
+	});
+});
+
+describe("core registry network modes", () => {
+	const servedSha = (hash: string) => servedSha256(`code ${hash}`);
+
+	it("shows the registry's derived hosts for a plugin that lists none, and uses them once confirmed", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		const looked: [string, string][] = [];
+		const registry = createRegistry({
+			...deps,
+			derivedHosts: (sha: string, name: string) => {
+				looked.push([sha, name]);
+				return sha === servedSha("v1") && name === "plugin v1" ? ["api.example.com", "*.cdn.example.net/covers/*"] : undefined;
+			},
+		});
+		const yes = asker(true);
+		await registry.install(URL, yes);
+		assert.ok(yes.asked[0].lines.includes("Network, read from its code by luna-registry: api.example.com, *.cdn.example.net/covers/*."));
+		assert.deepStrictEqual(looked[0], [servedSha("v1"), "plugin v1"]);
+		assert.deepStrictEqual(registry.hostsOf(URL), {
+			name: "plugin v1",
+			mode: "derived",
+			hosts: ["api.example.com", "*.cdn.example.net/covers/*"],
+			allow: [],
+			deny: [],
+		});
+		assert.strictEqual(registry.info(URL)?.netMode, "derived");
+		assert.deepStrictEqual(registry.pageHosts(), ["api.example.com", "*.cdn.example.net/covers/*"]);
+	});
+
+	it("keeps declared hosts over derived ones", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry({ ...deps, derivedHosts: () => ["b.com"] });
+		await registry.install(URL, asker(true));
+		assert.deepStrictEqual(registry.hostsOf(URL)?.hosts, ["a.com"]);
+		assert.strictEqual(registry.hostsOf(URL)?.mode, "declared");
+	});
+
+	it("waits for the registry lists before it confirms", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		let loaded = false;
+		const registry = createRegistry({
+			...deps,
+			derivedReady: async () => {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				loaded = true;
+			},
+			derivedHosts: () => (loaded ? ["late.example.com"] : undefined),
+		});
+		const yes = asker(true);
+		await registry.install(URL, yes);
+		assert.ok(yes.asked[0].lines.some((line) => line.includes("late.example.com")));
+	});
+
+	it("runs a listed old-format version in compatibility mode with the list's hosts in the page, until it updates", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		const registry = createRegistry({
+			...deps,
+			legacyHosts: (id: string, sha: string) => (id === pluginIdOf(URL) && sha === servedSha("v1") ? ["api.old.example", "{setting:server}"] : undefined),
+		});
+		await installLegacy(registry, deps, URL, "v1");
+		assert.deepStrictEqual(registry.hostsOf(URL), { name: "legacy", mode: "legacy", hosts: undefined, allow: [], deny: [] });
+		// Setting entries never reach the page's CSP
+		assert.deepStrictEqual(registry.pageHosts(), ["api.old.example"]);
+
+		serve(URL, "v2");
+		await registry.load(URL);
+		const yes = asker(true);
+		assert.strictEqual(await registry.acceptUpdate(URL, yes), true);
+		assert.strictEqual(registry.hostsOf(URL)?.mode, "unlisted");
+		assert.deepStrictEqual(registry.pageHosts(), []);
+	});
+
+	it("keeps the user's answers per plugin, puts 'always' in the page, forgets them and drops them on uninstall", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		assert.strictEqual(await registry.grantHost(URL, "https://b.com", "always"), true);
+		assert.strictEqual(await registry.grantHost(URL, "https://c.com", "deny"), true);
+		// Not a host entry, or not an installed plugin: refused
+		assert.strictEqual(await registry.grantHost(URL, "*", "always"), false);
+		assert.strictEqual(await registry.grantHost("https://other.example/x", "https://b.com", "always"), false);
+		assert.deepStrictEqual(registry.hostsOf(URL), {
+			name: "plugin v1",
+			mode: "declared",
+			hosts: ["a.com"],
+			allow: ["https://b.com"],
+			deny: ["https://c.com"],
+		});
+		assert.deepStrictEqual(registry.pageHosts(), ["a.com", "https://b.com"]);
+		assert.deepStrictEqual(registry.info(URL)?.grants, { "https://b.com": "always", "https://c.com": "deny" });
+
+		assert.strictEqual(await registry.forgetGrant(URL, "https://b.com"), true);
+		assert.strictEqual(await registry.forgetGrant(URL, "https://b.com"), false);
+		assert.deepStrictEqual(registry.hostsOf(URL)?.allow, []);
+
+		await registry.uninstall(URL);
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		await registry.install(URL, asker(true));
+		assert.deepStrictEqual(registry.hostsOf(URL)?.deny, []);
+	});
+
+	it("asks the hosts of a plugin from before the core one by one: it never saw them", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry(deps);
+		await registry.migrate([{ url: URL, name: "old", enabled: true }]);
+		await registry.load(URL);
+		assert.strictEqual(registry.hostsOf(URL)?.mode, "unlisted");
+		assert.deepStrictEqual(registry.pageHosts(), []);
+	});
+
+	it("leaves out hosts of disabled plugins", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", {}, { hosts: ["a.com"] });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		await registry.grantHost(URL, "https://b.com", "always");
+		await registry.disable(URL);
+		assert.deepStrictEqual(registry.pageHosts(), []);
 	});
 });

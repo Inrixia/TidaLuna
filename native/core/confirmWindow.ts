@@ -5,7 +5,7 @@
 import { BrowserWindow, ipcMain } from "electron";
 
 import { createPromptWindow, inPromptQueue, visibleOwner } from "../NativeModule/permissions/promptWindow";
-import { ARM_DELAY_MS, buildConfirmHtml, confirmGate, confirmRequest, SUBMIT, TITLE, USER_INPUT_MS, type ConfirmRequest } from "./confirmPage";
+import { ARM_DELAY_MS, buildChoiceHtml, buildConfirmHtml, confirmGate, confirmRequest, SUBMIT, TITLE, USER_INPUT_MS, type ConfirmRequest } from "./confirmPage";
 import { notAsked } from "./notAsked";
 
 // Page code can ask for confirmations: it must not flood the user with windows
@@ -25,6 +25,30 @@ export const askConfirm = async (
 	parent: BrowserWindow | undefined,
 	recentUserInput: boolean,
 ): Promise<{ answer: boolean; refused?: string }> => {
+	const { answer, refused } = await askRaw(request, parent, recentUserInput);
+	return { answer: answer === "yes", refused };
+};
+
+/**
+ * Asks the user to pick one of `request.choices`: `choice` is its id, undefined if they closed the window. `refused`
+ * as in askConfirm. A pick other than the first counts as a confirm for the gate, the first or a close as a cancel
+ */
+export const askChoice = async (
+	request: ConfirmRequest,
+	parent: BrowserWindow | undefined,
+	recentUserInput: boolean,
+): Promise<{ choice?: string; refused?: string }> => {
+	const firstChoice = request.choices?.[0]?.id;
+	const { answer, refused } = await askRaw(request, parent, recentUserInput, (raw) => raw.startsWith("choice:") && raw !== `choice:${firstChoice}`);
+	return { choice: answer?.startsWith("choice:") ? answer.slice("choice:".length) : undefined, refused };
+};
+
+const askRaw = async (
+	request: ConfirmRequest,
+	parent: BrowserWindow | undefined,
+	recentUserInput: boolean,
+	confirms: (raw: string) => boolean = (raw) => raw === "yes",
+): Promise<{ answer?: string; refused?: string }> => {
 	const owner = visibleOwner(parent);
 	if (owner !== undefined && !watched.has(owner)) {
 		watched.add(owner);
@@ -37,22 +61,22 @@ export const askConfirm = async (
 	});
 	if (refused !== undefined) {
 		console.warn(`[🛑Security🛑] Did not ask "${request.title}": ${refused}`);
-		return { answer: false, refused };
+		return { refused };
 	}
-	let answer: boolean | undefined;
+	let answer: string | undefined;
 	try {
 		answer = await inPromptQueue(() => show(request, parent));
 		// Not the user's cancel: TIDAL was hidden or the window failed before it showed
-		if (answer === undefined) return { answer: false, refused: "its window could not be shown over TIDAL" };
+		if (answer === undefined) return { refused: "its window could not be shown over TIDAL" };
 		return { answer };
 	} finally {
-		gate.answered(answer, Date.now());
+		gate.answered(answer === undefined ? undefined : confirms(answer), Date.now());
 	}
 };
 
-/** Resolves with the user's answer, or undefined if no window could be shown */
+/** Resolves with the user's raw answer ("yes", "no", "choice:<id>"), or undefined if no window could be shown */
 const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
-	new Promise<boolean | undefined>((resolve) => {
+	new Promise<string | undefined>((resolve) => {
 		// TIDAL may have been hidden while earlier prompts were answered
 		const owner = visibleOwner(parent);
 		if (owner === undefined) return resolve(undefined);
@@ -66,15 +90,17 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 			title: TITLE,
 			partition: "luna-confirm",
 		});
-		let answer: boolean | undefined;
+		let answer: string | undefined;
 		let submitted = false;
+		const choiceIds = new Set((request.choices ?? []).map((choice) => `choice:${choice.id}`));
 		win.on("page-title-updated", (event, title) => {
 			if (!title.startsWith(SUBMIT)) return;
 			event.preventDefault();
 			// The first answer stands: a second title change before the window closes doesn't replace it
 			if (submitted) return;
 			submitted = true;
-			answer = title === `${SUBMIT}yes`;
+			const raw = title.slice(SUBMIT.length);
+			answer = raw === "yes" && choiceIds.size === 0 ? "yes" : choiceIds.has(raw) ? raw : "no";
 			win.close();
 		});
 		// The button is armed ARM_DELAY_MS after the window shows and after every time it gets the focus back: another
@@ -97,7 +123,7 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 			if (win.isVisible()) armLater();
 		});
 		// Shown: closing it from here on is the user's cancel
-		win.once("show", () => (answer ??= false));
+		win.once("show", () => (answer ??= "no"));
 		win.once("ready-to-show", async () => {
 			const height = await win.webContents.executeJavaScript("document.body.scrollHeight").catch(() => undefined);
 			if (win.isDestroyed()) return;
@@ -111,7 +137,8 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 			clearTimeout(armTimer);
 			resolve(answer);
 		});
-		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildConfirmHtml(request))}`).catch((err) => {
+		const html = request.choices === undefined ? buildConfirmHtml(request) : buildChoiceHtml(request);
+		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch((err) => {
 			console.error("[🛑Security🛑] Failed to show the Luna confirmation", err);
 			if (!win.isDestroyed()) win.close();
 		});
@@ -145,6 +172,21 @@ export const askerFor = (sender: Electron.WebContents) => {
 		const request = confirmRequest(title, lines, confirmText);
 		const { answer, refused } = await askConfirm(request, parent, recentUserInput);
 		if (refused === undefined) return answer;
+		throw notAsked(request.title, refused);
+	};
+};
+
+/**
+ * Asks the user of the renderer that sent `event` one of `choices` (a host for luna.fetch, net.ts). Undefined if they
+ * closed the window; throws (notAsked) if no window could open
+ */
+export const choiceAskerFor = (sender: Electron.WebContents) => {
+	const parent = BrowserWindow.fromWebContents(sender) ?? undefined;
+	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
+	return async (title: string, lines: string[], choices: { id: string; label: string }[]): Promise<string | undefined> => {
+		const request = { ...confirmRequest(title, lines, "-"), choices };
+		const { choice, refused } = await askChoice(request, parent, recentUserInput);
+		if (refused === undefined) return choice;
 		throw notAsked(request.title, refused);
 	};
 };

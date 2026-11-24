@@ -1,15 +1,25 @@
-// A plugin's `hosts`: the network hosts its package.json says it connects to. The user accepts them with the plugin's
-// version (registry.ts shows them in the install and update confirmations), and luna.fetch (net.ts) refuses any other
-// host for that plugin. A plugin without `hosts` runs in compatibility mode: luna.fetch lets it reach any public host and
-// marks those requests in the log.
+// A plugin's `hosts`: the network hosts its package.json says it connects to, or, without them, the hosts luna-registry
+// read from its code (derivedHosts.ts). The user accepts them with the plugin's version (registry.ts shows them in the
+// install and update confirmations), and luna.fetch (net.ts) asks the user before any other host for that plugin.
 //
-// An entry is `[scheme://]host[:port]`:
+// An entry is `[scheme://]host[:port][/path]`, or `{setting:<key>}`:
 // - `api.example.com`: https and wss to that host, default ports;
-// - `*.example.com`: any subdomain of example.com (not example.com itself);
-// - `http://127.0.0.1:8080`: only that scheme and port. http and ws need the scheme written out.
+// - `*.example.com`: any subdomain of example.com (not example.com itself). Not under a public suffix (`*.com`,
+//   `*.co.uk`, `*.github.io`): that would be anyone's host;
+// - `http://127.0.0.1:8080`: only that scheme and port. http and ws need the scheme written out;
+// - `*.fastly.net/covers/*`: a path, where `*` stands for any characters (`/` too). No other pattern: no regex;
+// - `{setting:serverUrl}`: the host in the plugin's setting `serverUrl` at the moment (a server the user types in),
+//   nothing while it is empty. Resolved by net.ts, never put into the page's CSP (page code can write any setting).
 // Kept apart from Electron so it can be tested.
 
-export type HostRule = { schemes: string[]; host: string; wildcard: boolean; port: string };
+export type HostRule = {
+	schemes: string[];
+	host: string;
+	wildcard: boolean;
+	port: string;
+	/** The path pattern, "" for any path. `*` stands for any characters */
+	path: string;
+};
 
 const schemesAllowed = new Set(["http", "https", "ws", "wss"]);
 const defaultSchemes = ["https", "wss"];
@@ -19,12 +29,63 @@ const label = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?";
 const dnsName = new RegExp(`^${label}(\\.${label})+$`);
 const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
-/** The rule an entry stands for, or undefined if it isn't a valid entry */
+// Suffixes under which anyone can have a name: a wildcard right under one would allow everyone's hosts. The usual
+// two-label country suffixes and the hosting services plugins are likely to name; a single label (`*.com`) is refused
+// by the name rule already. Not the whole Public Suffix List: the registry flags wildcards it doesn't know
+const publicSuffixes = new Set([
+	...["co", "com", "net", "org", "gov", "edu", "ac", "or", "ne", "go"].flatMap((second) =>
+		["uk", "jp", "kr", "au", "nz", "br", "in", "za", "tr", "cn", "tw", "hk", "id", "il", "mx", "ar"].map((tld) => `${second}.${tld}`),
+	),
+	"github.io",
+	"githubusercontent.com",
+	"gitlab.io",
+	"pages.dev",
+	"workers.dev",
+	"vercel.app",
+	"netlify.app",
+	"herokuapp.com",
+	"web.app",
+	"firebaseapp.com",
+	"appspot.com",
+	"cloudfront.net",
+	"azurewebsites.net",
+	"blob.core.windows.net",
+	"s3.amazonaws.com",
+	"amazonaws.com",
+	"onrender.com",
+	"fly.dev",
+	"repl.co",
+	"glitch.me",
+	"ngrok.io",
+	"ngrok-free.app",
+	"duckdns.org",
+	"no-ip.org",
+	"ddns.net",
+	"blogspot.com",
+	"wordpress.com",
+	"neocities.org",
+	"surge.sh",
+	"deno.dev",
+	"supabase.co",
+	"r2.dev",
+]);
+
+const settingEntry = /^\{setting:([a-z0-9_.-]{1,64})\}$/i;
+/** The setting key of a `{setting:<key>}` entry, or undefined */
+export const settingKeyOf = (entry: unknown): string | undefined =>
+	typeof entry === "string" ? settingEntry.exec(entry.trim())?.[1] : undefined;
+
+/** The rule an entry stands for, or undefined if it isn't a valid host entry (a `{setting:}` entry isn't one) */
 export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	if (typeof entry !== "string" || entry.length > 260) return undefined;
-	const match = /^(?:([a-z]+):\/\/)?(\*\.)?([^:/?#@\s]+)(?::(\d{1,5}))?$/.exec(entry.trim().toLowerCase());
+	const match = /^(?:([a-z]+):\/\/)?(\*\.)?([^:/?#@\s*]+)(?::(\d{1,5}))?(\/[^?#\s\\]*)?$/.exec(entry.trim().toLowerCase());
 	if (match === null) return undefined;
-	const [, scheme, star, host, port] = match;
+	const [, scheme, star, host, port, rawPath] = match;
+	// A path as the URL parser writes it: no dot segments, no `%2e` that it would turn into one
+	if (rawPath !== undefined && (/(^|\/)\.{1,2}(\/|$)/.test(rawPath) || /%2e/i.test(rawPath) || rawPath.includes("//"))) return undefined;
+	// `/` alone or `/*` is any path
+	const path = rawPath === undefined || rawPath === "/" || rawPath === "/*" ? "" : rawPath;
+	if (star !== undefined && publicSuffixes.has(host)) return undefined;
 	if (scheme !== undefined && !schemesAllowed.has(scheme)) return undefined;
 	const isIp = ipv4.test(host);
 	// The URL parser reads `010` as octal: such an entry would never match what it looks like
@@ -36,7 +97,74 @@ export const parseHostEntry = (entry: unknown): HostRule | undefined => {
 	if (star !== undefined && (isIp || host === "localhost")) return undefined;
 	if (port !== undefined && (Number(port) < 1 || Number(port) > 65535 || port.startsWith("0"))) return undefined;
 	const schemes = scheme === undefined ? defaultSchemes : [scheme];
-	return { schemes, host, wildcard: star !== undefined, port: port ?? "" };
+	return { schemes, host, wildcard: star !== undefined, port: port ?? "", path };
+};
+
+/** A valid entry: a host entry or a `{setting:<key>}` */
+export const validEntry = (entry: unknown) => parseHostEntry(entry) !== undefined || settingKeyOf(entry) !== undefined;
+
+/**
+ * The entry for a setting's value (`{setting:<key>}`), or undefined if it holds no usable url or host. A url gives its
+ * exact scheme, host and port (`http://nas.lan:8096` -> `http://nas.lan:8096`); a bare name gives https and wss to it
+ */
+export const settingValueEntry = (value: unknown): string | undefined => {
+	if (typeof value !== "string" || value.trim() === "" || value.length > 2048) return undefined;
+	const text = value.trim();
+	let entry = text;
+	if (/^[a-z]+:\/\//i.test(text)) {
+		let url: URL;
+		try {
+			url = new URL(text);
+		} catch {
+			return undefined;
+		}
+		if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol) || url.username !== "" || url.password !== "") return undefined;
+		entry = `${url.protocol}//${url.hostname}${url.port === "" ? "" : `:${url.port}`}`;
+	}
+	const rule = parseHostEntry(entry);
+	// A setting names one server: no wildcard, no path pattern
+	return rule === undefined || rule.wildcard || rule.path !== "" ? undefined : entry.toLowerCase();
+};
+
+/**
+ * The entries with each `{setting:<key>}` replaced by the entry its value stands for (dropped while it holds none).
+ * `settings` marks which of the results came from a setting
+ */
+export const resolveSettings = (hosts: string[], valueOf: (key: string) => unknown): { hosts: string[]; settings: string[] } => {
+	const resolved: string[] = [];
+	const settings: string[] = [];
+	for (const entry of hosts) {
+		const key = settingKeyOf(entry);
+		if (key === undefined) {
+			if (!resolved.includes(entry)) resolved.push(entry);
+			continue;
+		}
+		const value = settingValueEntry(valueOf(key));
+		if (value === undefined) continue;
+		if (!settings.includes(value)) settings.push(value);
+		if (!resolved.includes(value)) resolved.push(value);
+	}
+	return { hosts: resolved, settings };
+};
+
+/** The setting keys a list names */
+export const settingKeys = (hosts: string[]) => hosts.map(settingKeyOf).filter((key): key is string => key !== undefined);
+
+/** A path pattern matches the url's path: `*` is any characters, everything else literal */
+const pathMatches = (pattern: string, pathname: string) => {
+	if (pattern === "") return true;
+	const path = pathname.toLowerCase();
+	const parts = pattern.split("*");
+	if (parts.length === 1) return path === pattern;
+	if (!path.startsWith(parts[0])) return false;
+	let at = parts[0].length;
+	for (let i = 1; i < parts.length - 1; i++) {
+		const found = path.indexOf(parts[i], at);
+		if (found === -1) return false;
+		at = found + parts[i].length;
+	}
+	const last = parts[parts.length - 1];
+	return path.length - last.length >= at && path.endsWith(last);
 };
 
 export type DeclaredHosts = {
@@ -52,9 +180,10 @@ export const declaredHosts = (value: unknown): DeclaredHosts | undefined => {
 	const hosts: string[] = [];
 	const invalid: string[] = [];
 	for (const entry of value.slice(0, 200)) {
-		if (parseHostEntry(entry) === undefined) invalid.push(String(entry).slice(0, 80));
+		if (!validEntry(entry)) invalid.push(String(entry).slice(0, 80));
 		else {
-			const normalized = (entry as string).trim().toLowerCase();
+			const key = settingKeyOf(entry);
+			const normalized = key !== undefined ? `{setting:${key}}` : (entry as string).trim().toLowerCase();
 			if (!hosts.includes(normalized)) hosts.push(normalized);
 		}
 	}
@@ -81,7 +210,8 @@ const ruleMatches = (rule: HostRule, url: URL) => {
 	const port = url.port === "" ? defaultPort[scheme] : url.port;
 	if (port !== (rule.port === "" ? defaultPort[scheme] : rule.port)) return false;
 	const host = url.hostname;
-	return rule.wildcard ? host.endsWith(`.${rule.host}`) : host === rule.host;
+	if (!(rule.wildcard ? host.endsWith(`.${rule.host}`) : host === rule.host)) return false;
+	return pathMatches(rule.path, url.pathname);
 };
 
 /** The url's scheme, host and port are in one of the entries */
@@ -202,7 +332,10 @@ export const cspSources = (hosts: string[]): string[] => {
 	for (const entry of hosts) {
 		const rule = parseHostEntry(entry);
 		if (rule === undefined) continue;
-		const host = `${rule.wildcard ? "*." : ""}${rule.host}${rule.port === "" ? "" : `:${rule.port}`}`;
+		// CSP matches a path ending in `/` as a prefix: the part before the first `*`, cut back to its last `/`. Wider
+		// than the pattern, which net.ts checks exactly
+		const path = rule.path === "" ? "" : rule.path.includes("*") ? rule.path.slice(0, rule.path.slice(0, rule.path.indexOf("*")).lastIndexOf("/") + 1) : rule.path;
+		const host = `${rule.wildcard ? "*." : ""}${rule.host}${rule.port === "" ? "" : `:${rule.port}`}${path === "/" ? "" : path}`;
 		for (const scheme of rule.schemes) sources.add(`${scheme}://${host}`);
 	}
 	return [...sources];

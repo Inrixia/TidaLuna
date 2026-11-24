@@ -9,6 +9,8 @@ export { buildActions, interceptors } from "./exposeTidalInternals.patchAction";
 
 export * as ftch from "./helpers/fetch";
 export { lunaFetch } from "./lunaFetch";
+// Over requestCache's fetch: a page plugin's request outside the page's connect-src goes through luna.fetch
+import "./pageNet";
 export { findModuleByProperty, findModuleProperty, recursiveSearch } from "./helpers/findModule";
 export { unloadSet, type LunaUnload, type LunaUnloads, type NullishLunaUnloads } from "./helpers/unloadSet";
 

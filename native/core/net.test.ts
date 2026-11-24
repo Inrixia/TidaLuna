@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createNet, NetRefused, type NetDeps, type PluginHosts } from "./net";
+import { createNet, NetRefused, type AskHost, type HostAnswer, type HostQuestion, type NetDeps, type PluginHosts } from "./net";
 
 type Call = { url: string; method: string; body?: string | Uint8Array; headers: Record<string, string> };
 
@@ -23,9 +23,9 @@ const fakeNet = (plugins: Record<string, PluginHosts>, routes: Record<string, ()
 	return { net, calls };
 };
 
-const declared = { name: "Declared", hosts: ["api.example.com"] };
-const compat = { name: "Compat" };
-const plugins = { "https://store/declared": declared, "https://store/compat": compat, "https://store/none": { name: "None", hosts: [] } };
+const declared = { name: "Declared", mode: "declared", hosts: ["api.example.com"], allow: [], deny: [] } satisfies PluginHosts;
+const compat = { name: "Compat", mode: "legacy", allow: [], deny: [] } satisfies PluginHosts;
+const plugins = { "https://store/declared": declared, "https://store/compat": compat, "https://store/none": { name: "None", mode: "declared", hosts: [], allow: [], deny: [] } } satisfies Record<string, PluginHosts>;
 
 describe("luna.fetch", () => {
 	it("fetches a declared host and gives status, headers and body", async () => {
@@ -207,7 +207,7 @@ describe("luna.fetch", () => {
 	});
 
 	it("refuses a declared public name that resolves to a local address, not a declared local entry", async () => {
-		const lan = { name: "Lan", hosts: ["http://api.myplugin.dev", "http://127.0.0.1:8080", "nas.lan"] };
+		const lan = { name: "Lan", mode: "declared", hosts: ["http://api.myplugin.dev", "http://127.0.0.1:8080", "nas.lan"], allow: [], deny: [] } satisfies PluginHosts;
 		const resolved: Record<string, string[]> = { "api.myplugin.dev": ["192.168.1.1"], "nas.lan": ["192.168.1.2"] };
 		const { net, calls } = fakeNet(
 			{ "https://store/lan": lan },
@@ -340,5 +340,135 @@ describe("luna.fetch", () => {
 			).status,
 			200,
 		);
+	});
+});
+
+describe("luna.fetch prompts", () => {
+	const unlisted = { name: "Unlisted", mode: "unlisted", allow: [], deny: [] } satisfies PluginHosts;
+	const asker = (answers: (HostAnswer | undefined)[]) => {
+		const questions: HostQuestion[] = [];
+		const ask: AskHost = async (question) => {
+			questions.push(question);
+			return answers.shift();
+		};
+		return { ask, questions };
+	};
+	const routes = { "https://api.new.example/x": () => new Response("ok"), "https://api.new.example/y": () => new Response("ok") };
+	const granting = (grants: [string, string, string][]): Partial<NetDeps> => ({
+		grant: (url, entry, grant) => void grants.push([url, entry, grant]),
+	});
+
+	it("asks about a host an unlisted plugin uses, and refuses it without an answer", async () => {
+		const { net, calls } = fakeNet({ "https://store/u": unlisted }, routes);
+		const { ask, questions } = asker([undefined]);
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x?k=1" }, ask), /didn't allow it/);
+		assert.equal(calls.length, 0);
+		assert.deepEqual(questions, [
+			{ plugin: "https://store/u", name: "Unlisted", entry: "https://api.new.example", example: "https://api.new.example/x", reason: "unlisted" },
+		]);
+		// Without an asker a host outside the list is refused, not let through
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }), NetRefused);
+	});
+
+	it("keeps 'once' until restart and hands 'always' and 'deny' to the registry", async () => {
+		const grants: [string, string, string][] = [];
+		const { net } = fakeNet({ "https://store/u": unlisted }, routes, granting(grants));
+		const once = asker(["once"]);
+		assert.equal((await net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, once.ask)).status, 200);
+		assert.equal((await net.fetch("https://store/u", "page", { url: "https://api.new.example/y" }, once.ask)).status, 200);
+		assert.equal(once.questions.length, 1);
+		assert.deepEqual(grants, []);
+		assert.equal(net.log()[0].asked, "once");
+
+		const { net: net2 } = fakeNet({ "https://store/u": unlisted }, routes, granting(grants));
+		await net2.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, asker(["always"]).ask);
+		assert.deepEqual(grants, [["https://store/u", "https://api.new.example", "always"]]);
+
+		const { net: net3 } = fakeNet({ "https://store/u": unlisted }, routes, granting(grants));
+		await assert.rejects(net3.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, asker(["deny"]).ask), /you denied/);
+		assert.deepEqual(grants[1], ["https://store/u", "https://api.new.example", "deny"]);
+	});
+
+	it("asks once for many requests waiting on the same host", async () => {
+		const { net } = fakeNet({ "https://store/u": unlisted }, routes);
+		let release!: (answer: HostAnswer) => void;
+		let asked = 0;
+		const ask: AskHost = () => {
+			asked++;
+			return new Promise((resolve) => (release = resolve));
+		};
+		const both = Promise.all([
+			net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, ask),
+			net.fetch("https://store/u", "page", { url: "https://api.new.example/y" }, ask),
+		]);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		release("once");
+		const results = await both;
+		assert.equal(asked, 1);
+		assert.deepEqual(
+			results.map((res) => res.status),
+			[200, 200],
+		);
+	});
+
+	it("follows remembered answers without asking: allow and deny lists", async () => {
+		const plugin = { name: "P", mode: "declared", hosts: [], allow: ["https://api.new.example"], deny: ["api.bad.example"] } satisfies PluginHosts;
+		const { net } = fakeNet({ "https://store/p": plugin }, { ...routes, "https://api.bad.example/": () => new Response("no") });
+		const { ask, questions } = asker([]);
+		assert.equal((await net.fetch("https://store/p", "page", { url: "https://api.new.example/x" }, ask)).status, 200);
+		await assert.rejects(net.fetch("https://store/p", "page", { url: "https://api.bad.example/" }, ask), /you denied/);
+		assert.equal(questions.length, 0);
+	});
+
+	it("asks with not-listed for a declared plugin, and a deny beats a declared host", async () => {
+		const plugin = { name: "D", mode: "declared", hosts: ["api.example.com"], allow: [], deny: ["api.example.com"] } satisfies PluginHosts;
+		const { net } = fakeNet({ "https://store/d": plugin }, { "https://api.example.com/": () => new Response("x"), ...routes });
+		const { ask, questions } = asker([undefined]);
+		await assert.rejects(net.fetch("https://store/d", "page", { url: "https://api.example.com/" }, ask), /you denied/);
+		await assert.rejects(net.fetch("https://store/d", "page", { url: "https://api.new.example/x" }, ask));
+		assert.equal(questions[0].reason, "not-listed");
+	});
+
+	it("allows the public server in a {setting:} entry as it is now, and asks about a local one", async () => {
+		const plugin = { name: "S", mode: "declared", hosts: ["{setting:server}"], allow: [], deny: [] } satisfies PluginHosts;
+		const { net, calls } = fakeNet(
+			{ "https://store/s": plugin },
+			{ "https://music.example/api": () => new Response("pub"), "http://192.168.1.5:4533/api": () => new Response("lan") },
+			{ resolve: async () => ["93.184.216.34"] },
+		);
+		const { ask, questions } = asker(["once"]);
+		assert.equal((await net.fetch("https://store/s", "page", { url: "https://music.example/api" }, ask, { server: "https://music.example" })).status, 200);
+		assert.equal(questions.length, 0);
+		// The setting names another server now: the old one is no longer covered
+		await assert.rejects(net.fetch("https://store/s", "page", { url: "https://music.example/api" }, undefined, { server: "https://other.example" }));
+		assert.equal(
+			(await net.fetch("https://store/s", "page", { url: "http://192.168.1.5:4533/api" }, ask, { server: "http://192.168.1.5:4533" })).status,
+			200,
+		);
+		assert.equal(questions[0].reason, "local-setting");
+		assert.equal(calls.length, 2);
+	});
+
+	it("lets a legacy plugin reach public hosts without asking, never local ones", async () => {
+		const { net } = fakeNet({ "https://store/c": compat }, { ...routes, "http://127.0.0.1/": () => new Response("x") });
+		const { ask, questions } = asker(["always"]);
+		assert.equal((await net.fetch("https://store/c", "page", { url: "https://api.new.example/x" }, ask)).status, 200);
+		await assert.rejects(net.fetch("https://store/c", "page", { url: "http://127.0.0.1/" }, ask), /local address/);
+		assert.equal(questions.length, 0);
+	});
+
+	it("asks for page requests (ws too), logs them and returns the answer", async () => {
+		const { net } = fakeNet({ "https://store/u": unlisted }, {});
+		const { ask } = asker(["always", "deny"]);
+		assert.deepEqual(await net.ask("https://store/u", "wss://live.example/socket", ask), { allowed: true, answer: "always" });
+		assert.equal((await net.ask("https://store/u", "https://other.example/", ask)).allowed, false);
+		assert.deepEqual(await net.ask("https://store/none", "https://x.example/", ask), {
+			allowed: false,
+			reason: "https://store/none is not an enabled plugin",
+		});
+		assert.deepEqual(await net.ask("https://store/u", "ftp://x.example/", ask), { allowed: false, reason: "ftp: urls can't be fetched" });
+		const log = net.log();
+		assert.equal(log[0].method, "PAGE");
+		assert.equal(log[0].asked, "always");
 	});
 });

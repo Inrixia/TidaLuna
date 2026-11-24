@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 
 import {
 	cspSources,
+	resolveSettings,
+	settingKeys,
+	settingValueEntry,
 	declaredHosts,
 	hostAllowed,
 	hostsDiff,
@@ -22,7 +25,7 @@ describe("plugin hosts", () => {
 			hosts: ["api.last.fm", "ws.audioscrobbler.com", "*.example.com", "http://127.0.0.1:8080"],
 			invalid: [],
 		});
-		assert.deepEqual(declaredHosts(["*", "*.com", "ftp://x.com", "https://a.com/path", "user@a.com", "a.com:99999", "999.1.1.1", 5])!.hosts, []);
+		assert.deepEqual(declaredHosts(["*", "*.com", "ftp://x.com", "https://a.com/a?b", "user@a.com", "a.com:99999", "999.1.1.1", 5])!.hosts, []);
 		assert.equal(declaredHosts(["*", "ok.com"])?.invalid.length, 1);
 	});
 
@@ -105,7 +108,7 @@ describe("plugin hosts", () => {
 	});
 
 	it("parses an entry into its rule", () => {
-		assert.deepEqual(parseHostEntry("wss://*.x.com:444"), { schemes: ["wss"], host: "x.com", wildcard: true, port: "444" });
+		assert.deepEqual(parseHostEntry("wss://*.x.com:444"), { schemes: ["wss"], host: "x.com", wildcard: true, port: "444", path: "" });
 		assert.equal(parseHostEntry("*.localhost"), undefined);
 		assert.equal(parseHostEntry("*.1.2.3.4"), undefined);
 	});
@@ -194,5 +197,61 @@ describe("plugin hosts", () => {
 		// A directive that falls back to nothing but default-src: none of the network ones are listed apart
 		for (const name of ["connect-src", "img-src", "media-src", "font-src", "style-src", "frame-src", "worker-src"])
 			assert.equal(directives.has(name), false, name);
+	});
+});
+
+describe("host patterns", () => {
+	it("refuses a wildcard over everything or over a public suffix", () => {
+		for (const entry of ["*", "*.com", "*.co.uk", "*.github.io", "*.githubusercontent.com", "*.vercel.app", "", " ", "*.*.example.com", "a*.example.com", "*example.com"])
+			assert.equal(parseHostEntry(entry), undefined, entry);
+		assert.notEqual(parseHostEntry("*.fastly.net"), undefined);
+		assert.notEqual(parseHostEntry("*.example.co.uk"), undefined);
+	});
+
+	it("matches a path pattern, `*` for any characters, nothing else special", () => {
+		const hosts = ["*.fastly.net/covers/*", "api.example.com/v1/*/info", "exact.example.com/a.json"];
+		assert.equal(allowed(hosts, "https://x.fastly.net/covers/1/2.jpg"), true);
+		assert.equal(allowed(hosts, "https://x.fastly.net/covers/"), true);
+		assert.equal(allowed(hosts, "https://x.fastly.net/other/covers/1.jpg"), false);
+		assert.equal(allowed(hosts, "https://x.fastly.net/covers"), false);
+		assert.equal(allowed(hosts, "https://api.example.com/v1/abc/info"), true);
+		assert.equal(allowed(hosts, "https://api.example.com/v1/a/b/info"), true);
+		assert.equal(allowed(hosts, "https://api.example.com/v1/abc/info2"), false);
+		assert.equal(allowed(hosts, "https://exact.example.com/a.json"), true);
+		assert.equal(allowed(hosts, "https://exact.example.com/a.json?x=1"), true);
+		assert.equal(allowed(hosts, "https://exact.example.com/aXjson"), false);
+		// The URL parser resolves dot segments before the match
+		assert.equal(allowed(hosts, "https://x.fastly.net/covers/../secret"), false);
+		assert.equal(allowed(hosts, "https://x.fastly.net/covers/%2e%2e/secret"), false);
+	});
+
+	it("refuses paths the URL parser would rewrite", () => {
+		for (const entry of ["a.com/../x", "a.com/./x", "a.com/%2e%2e/x", "a.com//x", "a.com/x?y", "a.com/x#y", "a.com/x\\y"])
+			assert.equal(parseHostEntry(entry), undefined, entry);
+	});
+
+	it("puts a path into the CSP as the prefix before its first `*`", () => {
+		assert.deepEqual(cspSources(["*.fastly.net/covers/*"]), ["https://*.fastly.net/covers/", "wss://*.fastly.net/covers/"]);
+		assert.deepEqual(cspSources(["a.com/x*"]), ["https://a.com", "wss://a.com"]);
+		assert.deepEqual(cspSources(["a.com/file.json"]), ["https://a.com/file.json", "wss://a.com/file.json"]);
+	});
+
+	it("reads `{setting:<key>}` entries and resolves them to the setting's server only", () => {
+		assert.deepEqual(declaredHosts(["{setting:serverUrl}", "{SETTING:serverUrl}", "{setting:}", "{setting:a b}"]), {
+			hosts: ["{setting:serverUrl}"],
+			invalid: ["{setting:}", "{setting:a b}"],
+		});
+		assert.deepEqual(settingKeys(["a.com", "{setting:url}"]), ["url"]);
+		assert.equal(settingValueEntry("http://NAS.lan:8096/jellyfin?x=1"), "http://nas.lan:8096");
+		assert.equal(settingValueEntry("https://music.example.com/"), "https://music.example.com");
+		assert.equal(settingValueEntry("music.example.com"), "music.example.com");
+		for (const value of ["", "  ", "*.example.com", "ftp://a.com", "https://u:p@a.com", "a.com/path", 5, undefined, "not a host"])
+			assert.equal(settingValueEntry(value), undefined, String(value));
+		const settings: Record<string, unknown> = { url: "http://192.168.1.5:4533" };
+		assert.deepEqual(resolveSettings(["a.com", "{setting:url}", "{setting:empty}"], (key) => settings[key]), {
+			hosts: ["a.com", "http://192.168.1.5:4533"],
+			settings: ["http://192.168.1.5:4533"],
+		});
+		assert.equal(cspSources(["{setting:url}"]).length, 0);
 	});
 });

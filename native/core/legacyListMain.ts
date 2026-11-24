@@ -61,3 +61,7 @@ export const legacyListReady = (): Promise<void> => {
 	startTimer();
 	return store.ready();
 };
+
+/** The derived hosts the current list carries for this plugin's code (LegacyListEntry hosts) */
+export const legacyHosts = (id: string, servedSha256: string): string[] | undefined =>
+	store.current()?.entries.find((e) => e.id === id && e.sha256 === servedSha256)?.hosts;

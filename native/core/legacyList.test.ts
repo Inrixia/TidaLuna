@@ -377,3 +377,16 @@ describe("old native format list", () => {
 		assert.strictEqual(listAllows(undefined, "https://example.com/store/a.mjs", "code a"), false);
 	});
 });
+
+describe("old format list hosts", () => {
+	it("keeps the valid host entries luna-registry derived for a listed plugin", () => {
+		const list = parse(doc(1, [{ ...A, hosts: ["api.a.com", "*", "*.cdn.example.net/x/*", 3, "{setting:url}"] } as any]));
+		assert.deepStrictEqual(list.entries[0].hosts, ["api.a.com", "*.cdn.example.net/x/*", "{setting:url}"]);
+		assert.strictEqual(parse(doc(1, [A])).entries[0].hosts, undefined);
+	});
+	it("counts changed hosts as a changed entry: the list still only shrinks", () => {
+		const before = parse(doc(1, [{ ...A, hosts: ["api.a.com"] } as any]));
+		const more = parse(doc(2, [{ ...A, hosts: ["api.a.com", "evil.example"] } as any]));
+		assert.strictEqual(replacesList(before, more).ok, false);
+	});
+});

@@ -7,6 +7,8 @@
 // replayed older list never gets on it.
 import { createHash, createPublicKey, verify } from "crypto";
 
+import { validEntry } from "./hosts";
+
 /**
  * TEST KEY: the public half of a key made only to test this client (the same one as the registry client's). It is NOT
  * the registry's signing key. The maintainer replaces it with keys/registry.pub of Inrixia/luna-registry (base64 of the
@@ -17,7 +19,17 @@ export const legacyPublicKey = "mTYTC1NX88yDPzAuKmJoFXjM5cdJaCnsb5NXU8yAYRY=";
 /** Where the registry's sign job publishes legacy.json and legacy.json.sig */
 export const legacyListUrl = "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/legacy.json";
 
-export type LegacyListEntry = { store: string; id: string; sha256: string; natives: Record<string, string> };
+export type LegacyListEntry = {
+	store: string;
+	id: string;
+	sha256: string;
+	natives: Record<string, string>;
+	/**
+	 * The network hosts luna-registry read from this code (derivedHosts.ts). A listed plugin runs without host prompts
+	 * until it updates; these go into the page's CSP for it. Absent: none could be read (luna.fetch still works for it)
+	 */
+	hosts?: string[];
+};
 export type LegacyList = { serial: number; cutoff: string; entries: LegacyListEntry[] };
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -27,7 +39,10 @@ const SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 const entryKey = (e: LegacyListEntry) => `${e.store}\n${e.id}\n${e.sha256}`;
 const sameEntry = (a: LegacyListEntry, b: LegacyListEntry) =>
-	entryKey(a) === entryKey(b) && JSON.stringify(sortedNatives(a)) === JSON.stringify(sortedNatives(b));
+	entryKey(a) === entryKey(b) &&
+	JSON.stringify(sortedNatives(a)) === JSON.stringify(sortedNatives(b)) &&
+	JSON.stringify([...(a.hosts ?? [])].sort()) === JSON.stringify([...(b.hosts ?? [])].sort()) &&
+	(a.hosts === undefined) === (b.hosts === undefined);
 const sortedNatives = (e: LegacyListEntry) => Object.entries(e.natives).sort(([a], [b]) => a.localeCompare(b));
 
 /** Whether `sig` (base64, as in a .sig file) is an ed25519 signature of exactly `bytes` by `publicKey` (base64, raw) */
@@ -54,11 +69,13 @@ export const parseLegacyList = (bytes: Buffer, sig: string, publicKey: string = 
 		if (typeof e?.store !== "string" || typeof e.id !== "string" || typeof e.sha256 !== "string" || !HEX64.test(e.sha256))
 			throw new Error(`legacy.json: entry ${i} is malformed`);
 		const natives = e.natives !== null && typeof e.natives === "object" ? e.natives : {};
+		const hosts = Array.isArray(e.hosts) ? e.hosts.filter((h: unknown): h is string => typeof h === "string" && validEntry(h)) : undefined;
 		return {
 			store: e.store,
 			id: e.id,
 			sha256: e.sha256,
 			natives: Object.fromEntries(Object.entries(natives).filter(([, h]) => typeof h === "string")),
+			...(hosts === undefined ? {} : { hosts }),
 		};
 	});
 	return { serial: doc.serial, cutoff: doc.cutoff, entries };

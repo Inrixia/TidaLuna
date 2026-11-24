@@ -7,10 +7,12 @@
 // check holds for the world's code.
 import { toNetRequest, toResponse } from "./helpers/netMessages";
 import { LunaPlugin } from "./LunaPlugin";
+import { settingsFor, toastIfRefused } from "./pageNet";
 
 /**
- * fetch through Luna's main process, for the calling plugin: limited to the hosts in its package.json `hosts`, any public
- * host in compatibility mode (no `hosts`). Shown in Luna Settings > Network. No cookies are sent and CORS doesn't apply.
+ * fetch through Luna's main process, for the calling plugin: limited to the hosts the user accepted for it (its
+ * package.json `hosts`, or the ones luna-registry found in its code); any other host is asked about (only now, always,
+ * deny). Plugins on the reviewed legacy list reach any public host. Shown in Luna Settings > Network. No cookies are sent and CORS doesn't apply.
  * The whole body arrives at once (at most 32 MB); the request fails after 30 s without data. `init.signal` isn't passed on:
  * aborting doesn't stop the request in the main process
  */
@@ -18,5 +20,14 @@ export const lunaFetch = async (input: string | URL | Request, init?: RequestIni
 	// Before any await: the stack still holds the caller's frame
 	const plugin = LunaPlugin.fromStack(new Error().stack);
 	if (plugin === undefined) throw new Error("[Luna.net] lunaFetch: can't tell which plugin is calling. Call it from your plugin's code");
-	return toResponse(await __LunaCore.fetch(plugin.url, await toNetRequest(input, init)));
+	try {
+		return toResponse(await __LunaCore.fetch(plugin.url, await toNetRequest(input, init), await settingsFor(plugin)));
+	} catch (err) {
+		let host = String(input instanceof Request ? input.url : input);
+		try {
+			host = new URL(host).host;
+		} catch {}
+		toastIfRefused(plugin.name, host, err);
+		throw err;
+	}
 };
