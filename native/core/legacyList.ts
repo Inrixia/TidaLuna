@@ -164,9 +164,12 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	};
 	/** `${id}\n${sha256}` of the current list */
 	let allowed = new Set<string>();
+	/** The list whose running out is handled (or that granted nothing already when it was taken): see dueOnExpiry */
+	let dueFor: LegacyList | undefined;
 	const use = (list: LegacyList, bytes: Buffer, sig: string) => {
 		current = { list, bytes, sig };
 		allowed = new Set(list.entries.map((e) => `${e.id}\n${e.sha256}`));
+		if (!usable()) dueFor = list;
 	};
 
 	/**
@@ -271,12 +274,15 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	/** The first refresh of a start, and the tries after a failed one (on the next check once due) */
 	const start = () => (first !== undefined && (retryAt === undefined || now() < retryAt) ? first : tracked());
 	/**
-	 * Expired while running, after refreshes that went fine: due for a fetch now, not on the next scheduled refresh. One
-	 * fetch at a time (refreshTracked): checks while it runs join it, and ready() waits for it (whoever started it)
+	 * A list that granted when it was taken ran out while running: once per list, a fetch is due now (also over a backoff),
+	 * not on the next scheduled refresh, and ready() waits for it up to firstWaitMs from now. One fetch at a time
+	 * (refreshTracked): whoever starts it, the others join it. A list that granted nothing already when taken (an expired
+	 * cache at start) is handled by the first wait of the start instead
 	 */
 	let waitUntil: number | undefined;
 	const dueOnExpiry = () => {
-		if (usable() || current === undefined || first === undefined || retryAt !== undefined) return;
+		if (current === undefined || usable() || dueFor === current.list) return;
+		dueFor = current.list;
 		retryAt = now();
 		waitUntil = now() + (deps.firstWaitMs ?? 10000);
 	};
@@ -284,7 +290,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	return {
 		refresh,
 		/** The scheduled refresh: like refresh, but a failure is tried again soon and nothing is thrown */
-		refreshNow: (): Promise<void> => tracked(),
+		refreshNow: (): Promise<void> => (dueOnExpiry(), tracked()),
 		/** Whether the current list has this plugin's code (see RegistryDeps.legacyAllows) */
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();

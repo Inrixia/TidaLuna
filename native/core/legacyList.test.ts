@@ -522,6 +522,43 @@ describe("old native format list", () => {
 			assert.strictEqual(store.usable(), true);
 		});
 
+	it("a list running out after a failed refresh still gets its fetch at once, and ready waits for it", async () => {
+		const until = "2026-12-01T00:00:00.000Z";
+		const time = { now: at(until) - DAY };
+		let fetches = 0;
+		let online = true;
+		const { store } = storeAt(
+			time,
+			undefined,
+			() => {
+				fetches++;
+				if (!online) throw new Error("offline");
+				return doc(5 + fetches, [A], { validUntil: fetches === 1 ? until : "2027-01-01T00:00:00.000Z" });
+			},
+			{ retryMs: [60 * 60 * 1000] },
+		);
+		await store.ready();
+		online = false;
+		await store.refreshNow();
+		assert.strictEqual(fetches, 2);
+		online = true;
+		time.now = at(until) + 3 * DAY;
+		await store.ready();
+		assert.strictEqual(fetches, 3);
+		assert.strictEqual(store.usable(), true);
+	});
+
+	it("a cache expired at start: later checks don't make the first wait longer", async () => {
+		const time = { now: at("2026-12-10T00:00:00.000Z") };
+		const { store } = storeAt(time, doc(5, [A], { validUntil: "2026-12-01T00:00:00.000Z" }), () => new Promise<object>(() => {}));
+		const first = store.ready();
+		time.now += 40;
+		const t0 = Date.now();
+		await store.ready();
+		assert.ok(Date.now() - t0 < 35, `waited ${Date.now() - t0} ms`);
+		await first;
+	});
+
 	it("an expired cache stays the base: a fresh list must still be a subset of it", async () => {
 		const time = { now: at("2027-01-10T00:00:00.000Z") };
 		const C = entry("c.mjs", "code c");
