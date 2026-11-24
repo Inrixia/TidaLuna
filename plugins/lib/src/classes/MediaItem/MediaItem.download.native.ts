@@ -35,6 +35,8 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 		const parsedPath = parse(path);
 		// The file is written under its sanitized name, so that is the path to check
 		const filePath = assertMediaFile(join(parsedPath.dir, sanitize(parsedPath.base)));
+		// Only where the user picked in a Luna dialog (native/downloadFolders.ts): page code can call download with any path
+		luna.assertDownloadPath(filePath);
 		if (downloads[itemId] !== undefined) {
 			await downloads[itemId]!.promise;
 			return filePath;
