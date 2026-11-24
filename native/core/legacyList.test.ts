@@ -365,14 +365,13 @@ describe("old native format list", () => {
 		assert.match(logs[0], /can't be read now: EACCES/);
 	});
 
-	it("needs a validUntil, and refuses a list valid for less long than the accepted one", () => {
+	it("needs a validUntil; a later list may be valid for less long (a wrong far-off date can't lock it)", () => {
 		assert.throws(() => parse(doc(1, [A], { validUntil: undefined })), /validUntil/);
 		assert.throws(() => parse(doc(1, [A], { validUntil: "soon" })), /validUntil/);
 		assert.throws(() => parse(doc(1, [A], { validUntil: 4102444800000 })), /validUntil/);
 		const later = parse(doc(2, [A, B], { validUntil: "2099-02-01T00:00:00.000Z" }));
 		assert.deepStrictEqual(replacesList(base, later), { ok: true });
-		assert.match((replacesList(later, parse(doc(2, [A, B]))) as { reason: string }).reason, /before the accepted one/);
-		assert.match((replacesList(later, parse(doc(3, [A]))) as { reason: string }).reason, /before the accepted one/);
+		assert.deepStrictEqual(replacesList(later, parse(doc(3, [A]))), { ok: true });
 	});
 
 	const DAY = 24 * 60 * 60 * 1000;
@@ -421,6 +420,24 @@ describe("old native format list", () => {
 		await store.refresh();
 		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
 		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+	});
+
+	it("fetches at once when the list expires while running, not on the next scheduled refresh", async () => {
+		const until = "2026-12-01T00:00:00.000Z";
+		const time = { now: at(until) - DAY };
+		let fetches = 0;
+		let served: object = doc(5, [A], { validUntil: until });
+		const { store } = storeAt(time, undefined, () => (fetches++, served));
+		await store.ready();
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(fetches, 1);
+		// Signed again meanwhile; the cached one runs out
+		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
+		time.now = at(until) + 3 * DAY;
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.strictEqual(fetches, 2);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
 	});
 
 	it("an expired cache stays the base: a fresh list must still be a subset of it", async () => {

@@ -89,14 +89,13 @@ export const parseLegacyList = (bytes: Buffer, sig: string, publicKey: string = 
 
 /**
  * Whether `next` may replace `current` (undefined: none accepted yet). Only a subset of the same cut-off with a serial
- * and a validUntil not lower: a list that grew, changed an entry or is older is refused.
+ * not lower: a list that grew, changed an entry or is older is refused. (validUntil may go down: a list signed with a
+ * wrong far-off date must not lock out every later one; the serial grows with each signing anyway.)
  */
 export const replacesList = (current: LegacyList | undefined, next: LegacyList): { ok: true } | { ok: false; reason: string } => {
 	if (current === undefined) return { ok: true };
 	if (next.serial < current.serial)
 		return { ok: false, reason: `serial ${next.serial} is lower than ${current.serial}, already accepted (rollback)` };
-	if (next.validUntil < current.validUntil)
-		return { ok: false, reason: `valid until ${new Date(next.validUntil).toISOString()}, before the accepted one (rollback)` };
 	if (next.cutoff !== current.cutoff) return { ok: false, reason: `another cut-off: ${current.cutoff} -> ${next.cutoff}` };
 	const before = new Map(current.entries.map((e) => [entryKey(e), e]));
 	for (const e of next.entries) {
@@ -278,6 +277,8 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		/** Whether the current list has this plugin's code (see RegistryDeps.legacyAllows) */
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();
+			// Expired while running, after refreshes that went fine: fetch now, not on the next scheduled refresh
+			if (!usable() && current !== undefined && first !== undefined && retryAt === undefined) retryAt = now();
 			void start();
 			if (now() >= writeAt) writeCurrent();
 			if (!usable()) {

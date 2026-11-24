@@ -105,7 +105,7 @@ export type RegistryDeps = {
 	legacyAllows?(id: string, servedSha256: string): boolean;
 	/** Resolves once the list is loaded, or no longer waited for (legacyList.ts ready): what the confirmations say needs it */
 	legacyReady?(): Promise<void>;
-	/** Whether a list is loaded (legacyAllows answers from one): without it the confirmations can't say what runs */
+	/** Whether a list that grants is loaded (not expired, not older than the build): without it the confirmations can't say what runs */
 	legacyLoaded?(): boolean;
 	/** The page handed over its plugins once already (kept apart from the state: a lost state file doesn't allow another) */
 	wasMigrated?(): boolean;
