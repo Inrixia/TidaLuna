@@ -311,7 +311,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 		? state.netGrants
 		: (state.netGrants = {});
 	/** Puts a plugin's answer for an entry back as it was (undefined: none) */
-	const restoreGrant = (url: string, entry: string, grant: HostGrant | undefined) => {
+	const restoreGrant = (url: string, entry: string, grant: HostGrant | undefined, wrote: HostGrant | undefined) => {
+		// Only what this call wrote, for a plugin still installed: another write or an uninstall during the save stays
+		if (state.plugins[url] === undefined || netGrants[url]?.[entry] !== wrote) return;
 		if (grant !== undefined) (netGrants[url] ??= {})[entry] = grant;
 		else if (netGrants[url] !== undefined) {
 			delete netGrants[url][entry];
@@ -844,7 +846,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 			(netGrants[url] ??= {})[entry] = grant;
 			if (!(await saveChecked())) {
 				// Not kept: net.ts keeps the answer until restart, Settings → Network and the page's CSP don't list it
-				restoreGrant(url, entry, before);
+				restoreGrant(url, entry, before, grant);
 				return false;
 			}
 			return true;
@@ -867,9 +869,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 				return false;
 			const before = netGrants[checked]?.[entry];
 			if (before === undefined) return false;
-			restoreGrant(checked, entry, undefined);
+			restoreGrant(checked, entry, undefined, before);
 			if (!(await saveChecked())) {
-				restoreGrant(checked, entry, before);
+				restoreGrant(checked, entry, before, undefined);
 				throw new Error("[Luna.core] Couldn't save, the answer stays");
 			}
 			return true;

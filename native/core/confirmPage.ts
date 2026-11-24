@@ -44,6 +44,23 @@ export const isHostAnswer = (raw: string) => raw.startsWith("choice:");
 /** A host question's "Deny": an answer, but many in a row are a plugin asking for host after host (confirmGate) */
 export const isHostDeny = (raw: string) => raw === "choice:deny";
 
+/**
+ * Lets at most `max` waits run at once: past them it answers false at once (a host question that can't wait for TIDAL
+ * is refused as before the wait existed). A wait that throws frees its place
+ */
+export const limitedWait = (max: number) => {
+	let waiting = 0;
+	return async (wait: () => Promise<boolean>): Promise<boolean> => {
+		if (waiting >= max) return false;
+		waiting++;
+		try {
+			return await wait();
+		} finally {
+			waiting--;
+		}
+	};
+};
+
 /** Runs the functions it is given one after another, each once the one before settled (a failure doesn't stop the rest) */
 export const oneAtATime = () => {
 	let last: Promise<unknown> = Promise.resolve();
@@ -186,6 +203,11 @@ export const fitLines = (lines: string[]) => {
 		if (counted(next, rest.length - taken - 1).length > MAX_TEXT) break;
 		last = next;
 		taken++;
+	}
+	if (taken === 0) {
+		// Even the first line doesn't fit with the count: its start, then the count
+		const suffix = ` \u2026 and ${rest.length - 1} more lines`;
+		return [...packed.slice(0, MAX_LINES - 1), `${rest[0].slice(0, MAX_TEXT - suffix.length)}${suffix}`];
 	}
 	return [...packed.slice(0, MAX_LINES - 1), counted(last, rest.length - taken)];
 };

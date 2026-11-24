@@ -11,6 +11,7 @@ import {
 	focusedWithin,
 	isHostAnswer,
 	isHostDeny,
+	limitedWait,
 	MAX_DENIES,
 	oneAtATime,
 	type FocusTarget,
@@ -68,6 +69,22 @@ describe("host questions", () => {
 		};
 		return win;
 	};
+
+	it("let only a few questions wait for TIDAL, and free the place of one that ends or throws", async () => {
+		const waits = limitedWait(2);
+		const releases: (() => void)[] = [];
+		const hold = () => new Promise<boolean>((resolve) => releases.push(() => resolve(true)));
+		const first = waits(hold);
+		const second = waits(hold);
+		assert.equal(await waits(hold), false, "the third is refused at once");
+		releases.forEach((release) => release());
+		assert.deepEqual(await Promise.all([first, second]), [true, true]);
+		await assert.rejects(
+			waits(() => Promise.reject(new Error("x"))),
+			/x/,
+		);
+		assert.equal(await waits(async () => true), true);
+	});
 
 	it("that waited for TIDAL ask one at a time once it's back, past one that failed", async () => {
 		const queue = oneAtATime();
@@ -225,6 +242,10 @@ describe("core confirmation page", () => {
 		// The suffix counts when a line just fits
 		const tight = Array.from({ length: 14 }, (_, i) => (i === 11 ? "y".repeat(583) : `${i}`.padEnd(590, "x")));
 		assert.ok(fitLines(tight).every((line) => line.length <= 600));
+		// A first line too long for the count is cut, its start stays
+		const huge = Array.from({ length: 14 }, (_, i) => (i === 11 ? "z".repeat(590) : `${i}`.padEnd(590, "x")));
+		const hugeFit = fitLines(huge);
+		assert.ok(hugeFit[11].startsWith("zzzz") && hugeFit[11].endsWith("and 2 more lines") && hugeFit[11].length <= 600);
 		assert.deepEqual(fitLines(["a"]), ["a"]);
 		assert.throws(() => confirmRequest(1, [], "Go"));
 		assert.throws(() => confirmRequest("T", "a", "Go"));

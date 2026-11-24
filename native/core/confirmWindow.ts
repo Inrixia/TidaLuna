@@ -19,6 +19,7 @@ import {
 	focusedWithin,
 	isHostAnswer,
 	isHostDeny,
+	limitedWait,
 	oneAtATime,
 	type ConfirmRequest,
 } from "./confirmPage";
@@ -35,7 +36,7 @@ export const HOST_WAIT_MS = 5 * 60_000;
 const afterWait = oneAtATime();
 /** Host questions waiting for TIDAL at most: past them a plugin's request is refused at once, as before the wait */
 export const MAX_WAITING = 10;
-let waiting = 0;
+const waitForTidal = limitedWait(MAX_WAITING);
 /** TIDAL windows whose blur ends the user's last answer counting as use (see confirmGate) */
 const watched = new WeakSet<BrowserWindow>();
 
@@ -229,9 +230,8 @@ export const choiceAskerFor = (sender: Electron.WebContents) => {
 		const request = { ...confirmRequest(title, fitLines(lines), "-"), choices };
 		let { choice, refused } = await askChoice(request, parent, recentUserInput);
 		// Asked while TIDAL isn't in use (a request in the background): the question waits until the user is back
-		if (refused === NOT_IN_USE && parent !== undefined && waiting < MAX_WAITING) {
-			waiting++;
-			const back = await focusedWithin(parent, HOST_WAIT_MS, inputOf(sender.id)).finally(() => waiting--);
+		if (refused === NOT_IN_USE && parent !== undefined) {
+			const back = await waitForTidal(() => focusedWithin(parent, HOST_WAIT_MS, inputOf(sender.id)));
 			// Back by a click or key: that is the use the gate looks for, where focus isn't reported
 			const input = () => Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
 			if (back) ({ choice, refused } = await afterWait(() => askChoice(request, parent, input())));
