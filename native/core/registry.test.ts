@@ -225,6 +225,49 @@ describe("core registry", () => {
 		assert.strictEqual((await registry.load(URL)).code, "code b");
 	});
 
+	it("refuses plugin urls with spaces, control characters or line breaks, which would run as code in the sourceURL line", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1");
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		for (const bad of [
+			"https://evil.example/p\u2028globalThis.x=1//",
+			"https://evil.example/p\u2029x",
+			"https://evil.example/p\nx",
+			"https://evil.example/p x",
+			"https://evil.example/p\u0000",
+		]) {
+			serve(bad, "v1");
+			await assert.rejects(registry.moveUrl(URL, bad), /Not a plugin url/);
+			await assert.rejects(registry.install(bad, asker(true)), /Not a plugin url/);
+			await assert.rejects(registry.load(bad), /Not a plugin url/);
+		}
+		await registry.migrate([{ url: "https://evil.example/p\u2028x", name: "evil", enabled: true }]);
+		assert.deepStrictEqual(
+			registry.list().map((plugin) => plugin.url),
+			[URL],
+		);
+		// Code after a line break in the last line isn't taken for the sourceURL line
+		assert.notStrictEqual(servedSha256("code\n//# sourceURL=https://a/p\u2028evil()//.mjs"), servedSha256("code"));
+		assert.strictEqual(servedSha256("code\n//# sourceURL=https://a/p.mjs"), servedSha256("code"));
+	});
+
+	it("moves a plugin twice, offline then online, with no update for the same code", async () => {
+		const { deps, serve, served } = fakeDeps();
+		const B = "https://example.org/plugin";
+		const C = "https://example.net/plugin";
+		serve(URL, "v1");
+		served.get(URL)!.code = `code v1\n//# sourceURL=${URL}.mjs`;
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		assert.strictEqual(await registry.moveUrl(URL, B), true);
+		serve(C, "v1");
+		served.get(C)!.code = `code v1\n//# sourceURL=${C}.mjs`;
+		assert.strictEqual(await registry.moveUrl(B, C), true);
+		assert.strictEqual(registry.info(C)?.pending, undefined);
+		assert.strictEqual((await registry.load(C)).code, `code v1\n//# sourceURL=${C}.mjs`);
+	});
+
 	it("sees no update for the same code under another sourceURL line (a store moved offline)", async () => {
 		const { deps, serve, served } = fakeDeps();
 		const NEW = "https://example.org/plugin";

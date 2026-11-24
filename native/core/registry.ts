@@ -125,11 +125,6 @@ const sha256 = (text: string) => createHash("sha256").update(text, "utf8").diges
 const shortHash = (hash: string) => hash.slice(0, 12);
 
 const isWorldNative = (fileName: string) => fileName.startsWith(worldFilePrefix);
-/** The served code, without the sourceURL line fetchCode adds (it names the url) */
-const withoutSource = (code: string, url: string) => {
-	const suffix = `\n//# sourceURL=${url}.mjs`;
-	return code.endsWith(suffix) ? code.slice(0, -suffix.length) : code;
-};
 const isNative = (version: Version) => version.natives.length !== 0;
 /**
  * Any change is a new version: a new hash of the page code or the world in the package, or other served code under the
@@ -181,8 +176,13 @@ export const describe = (url: string, version: Version, legacyRuns: boolean | "u
 	return lines;
 };
 
+/**
+ * An http(s) url with no spaces or control characters: the url goes into the code's `//# sourceURL=` line, where a line
+ * break (also U+2028/U+2029, which end a line in JavaScript) would turn the rest of the url into code that runs
+ */
+const isPluginUrl = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url) && !/[\s\p{Cc}]/u.test(url);
 export const pluginUrl = (url: unknown): string => {
-	if (typeof url !== "string" || !/^https?:\/\//.test(url)) throw new Error(`[Luna.core] Not a plugin url: ${String(url)}`);
+	if (!isPluginUrl(url)) throw new Error(`[Luna.core] Not a plugin url: ${String(url).slice(0, 200)}`);
 	return url;
 };
 
@@ -500,7 +500,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (
 			found !== undefined &&
 			accepted !== undefined &&
-			withoutSource(found.code, to) === withoutSource(accepted.code, from) &&
+			servedSha256(found.code) === servedSha256(accepted.code) &&
 			found.world === accepted.world
 		)
 			moved.accepted = found;
@@ -526,7 +526,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		fresh = false;
 		for (const entry of entries) {
 			const { url, name, enabled } = entry ?? {};
-			if (typeof url !== "string" || !/^https?:\/\//.test(url) || isCoreUrl(url) || typeof name !== "string") continue;
+			if (!isPluginUrl(url) || isCoreUrl(url) || typeof name !== "string") continue;
 			// Installed through the core already: not a plugin from before it
 			if (state.plugins[url] !== undefined) continue;
 			state.plugins[url] = { url, name, enabled: enabled === true, unreviewed: true };
@@ -574,7 +574,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		install: (url: unknown, ask: Ask) => forPlugin(true, (checked) => install(checked, ask))(url),
 		enable: (url: unknown, ask: Ask) => forPlugin(true, (checked) => enable(checked, ask))(url),
 		acceptUpdate: (url: unknown, ask: Ask) => forPlugin(false, (checked) => acceptUpdate(checked, ask))(url),
-		moveUrl: (from: unknown, to: unknown): Promise<boolean> => {
+		moveUrl: async (from: unknown, to: unknown): Promise<boolean> => {
 			const target = pluginUrl(to);
 			return forPlugin(false, (source) => moveUrl(source, target))(from);
 		},

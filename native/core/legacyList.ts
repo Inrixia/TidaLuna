@@ -82,8 +82,11 @@ export const replacesList = (current: LegacyList | undefined, next: LegacyList):
 	return { ok: true };
 };
 
-/** The served code, whatever url Luna imports it from: the `//# sourceURL=` line it adds names the url */
-export const servedSha256 = (code: string) => sha256(code.replace(/\n\/\/# sourceURL=[^\n]*$/, ""));
+/**
+ * The served code, whatever url Luna imports it from: the `//# sourceURL=` line it adds names the url. Only a line with
+ * no line break in it: past one, the rest is code that runs
+ */
+export const servedSha256 = (code: string) => sha256(code.replace(/\n\/\/# sourceURL=[^\n\r\u2028\u2029]*$/, ""));
 /** The plugin's file name in its store, as in the list: the last part of its url */
 export const pluginIdOf = (url: string) => url.slice(url.lastIndexOf("/") + 1);
 
