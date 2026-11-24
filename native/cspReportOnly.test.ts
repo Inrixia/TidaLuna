@@ -90,5 +90,11 @@ describe("enforcedPolicy", () => {
 		assert.equal(baselineEntries.includes("'self'"), false);
 		assert.equal(baselineEntries.includes("blob:"), false);
 		assert.equal(baselineEntries.includes("https://luna"), false);
+		assert.equal(baselineEntries.includes("wss://*.tidal.com"), false);
+	});
+	it("lets TIDAL's push socket and Luna's MusicBrainz lookups through (seen blocked on a live slot)", () => {
+		const sources = enforcedPolicy([]).split(" ");
+		assert.ok(sources.includes("wss://*.tidal.com"));
+		assert.ok(sources.includes("musicbrainz.org"));
 	});
 });

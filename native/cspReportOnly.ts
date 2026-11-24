@@ -17,6 +17,11 @@ export const networkBaseline = [
 	"data:",
 	"tidal.com",
 	"*.tidal.com",
+	// Chromium doesn't count a source without a scheme for wss: TIDAL's push socket (wss://pushkin-v2.tidal.com)
+	"wss://tidal.com",
+	"wss://*.tidal.com",
+	// @luna/lib's own MusicBrainz lookups (Album, MediaItem)
+	"musicbrainz.org",
 	"*.gstatic.com",
 	"*.stripe.com",
 	"*.cookielaw.org",
