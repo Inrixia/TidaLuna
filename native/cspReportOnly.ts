@@ -78,44 +78,74 @@ export const baselineEntries = [
 export const enforcedPolicy = (pluginSources: string[]): string =>
 	`connect-src ${[...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))].join(" ")}`;
 
-/** The content of the TIDAL shell's CSP meta tag, or undefined without one */
+const metaMarker = 'http-equiv="Content-Security-Policy"';
+
+/**
+ * The content of the TIDAL shell's CSP meta tag, or undefined without one. Runs on each load of the shell (injector.ts):
+ * it finds the marker with indexOf and reads only that tag, the rest of the page isn't scanned
+ */
 export const tidalMetaPolicy = (html: string): string | undefined => {
-	const tag = /<meta\s[^>]*http-equiv="Content-Security-Policy"[^>]*>/i.exec(html)?.[0];
-	if (tag === undefined) return undefined;
-	const content = /\scontent="([^"]*)"/i.exec(tag)?.[1];
-	return content === undefined ? undefined : decodeAttribute(content);
+	for (let at = html.indexOf(metaMarker); at !== -1; at = html.indexOf(metaMarker, at + 1)) {
+		const start = html.lastIndexOf("<meta", at);
+		const end = html.indexOf(">", at);
+		if (end === -1) return undefined;
+		// The marker must be inside that <meta> tag (no ">" between them), not in text or a script before it
+		if (start === -1 || html.lastIndexOf(">", at) > start) continue;
+		const content = /\scontent="([^"]*)"/i.exec(html.slice(start, end + 1))?.[1];
+		return content === undefined ? undefined : decodeAttribute(content);
+	}
+	return undefined;
+};
+
+/** A directive (`name source source`) with the sources it doesn't have yet added at its end */
+const withSources = (directive: string, sources: string[]) => {
+	const present = new Set(directive.split(" ").slice(1));
+	const missing = sources.filter((source) => !present.has(source));
+	return missing.length === 0 ? directive : `${directive} ${missing.join(" ")}`;
 };
 
 // Where a plugin's declared hosts (core/hosts.ts) are listed: what it fetches, and the images and media it shows
 const pluginDirectives = new Set(["connect-src", "img-src", "media-src"]);
 
 /**
- * The report-only policy for a TIDAL policy (from tidalMetaPolicy)
+ * The report-only policy for a TIDAL policy (from tidalMetaPolicy). TIDAL's directives are kept as they are, in their
+ * order: only header-only ones are left out, script-src gets Luna's sources, and network directives TIDAL leaves open get
+ * the baseline
  *
  * @param pluginSources CSP sources for the hosts enabled plugins declare (core/hosts.ts cspSources): only what no plugin
  * declared is reported. Shared by every plugin: the page's realm doesn't tell plugins apart, luna.fetch does (core/net.ts)
  */
 export const reportOnlyPolicy = (tidalPolicy: string, pluginSources: string[] = []): string => {
-	const directives = new Map<string, string[]>();
+	const kept: string[] = [];
+	const names = new Set<string>();
 	for (const part of tidalPolicy.split(";")) {
-		const [rawName, ...values] = part.trim().split(/\s+/);
-		const name = rawName?.toLowerCase();
-		if (!name || headerOnlyDirectives.has(name)) continue;
+		const directive = part.trim().replace(/\s+/g, " ");
+		const space = directive.indexOf(" ");
+		const name = (space === -1 ? directive : directive.slice(0, space)).toLowerCase();
 		// The first of two same-named directives wins in CSP, keep that one
-		if (!directives.has(name)) directives.set(name, values);
+		if (name === "" || headerOnlyDirectives.has(name) || names.has(name)) continue;
+		names.add(name);
+		kept.push(name === "script-src" ? withSources(directive, lunaScriptSources) : directive);
 	}
-	const scriptSources = directives.get("script-src");
-	if (scriptSources !== undefined)
-		directives.set("script-src", [...scriptSources, ...lunaScriptSources.filter((s) => !scriptSources.includes(s))]);
 	// With default-src set the network directives already fall back to it; only fill what is open
-	if (!directives.has("default-src")) {
-		for (const directive of networkDirectives) {
-			if (directives.has(directive)) continue;
-			const sources = pluginDirectives.has(directive)
+	if (!names.has("default-src"))
+		for (const name of networkDirectives) {
+			if (names.has(name)) continue;
+			const sources = pluginDirectives.has(name)
 				? [...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))]
 				: networkBaseline;
-			directives.set(directive, sources);
+			kept.push(`${name} ${sources.join(" ")}`);
 		}
-	}
-	return [...directives].map(([name, values]) => [name, ...values].join(" ")).join("; ");
+	return kept.join("; ");
+};
+
+let lastHeader: { key: string; header: string } | undefined;
+/**
+ * reportOnlyPolicy, built again only when TIDAL's policy or the plugins' sources change (each shell load asks for it). The
+ * key is everything the policy is built from: a new input to reportOnlyPolicy has to be part of it
+ */
+export const reportOnlyHeader = (tidalPolicy: string, pluginSources: string[] = []): string => {
+	const key = JSON.stringify([tidalPolicy, pluginSources]);
+	if (lastHeader?.key !== key) lastHeader = { key, header: reportOnlyPolicy(tidalPolicy, pluginSources) };
+	return lastHeader.header;
 };

@@ -14,7 +14,7 @@ import Module, { createRequire } from "module";
 import { rewritePlayerMessage } from "./audioCache";
 import { pluginPageHosts, pluginStoreOrigins, setPageConnect, setPageStores } from "./core/registryMain";
 import { cspSources } from "./core/hosts";
-import { baselineEntries, enforcedPolicy, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
+import { baselineEntries, enforcedPolicy, reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
@@ -158,8 +158,7 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		let body = await res.text();
 		// Only modify the Tidal SPA shell (contains CSP meta tag)
 		if (!body.includes('<meta http-equiv="Content-Security-Policy"')) return new Response(body, res);
-		// Report, don't enforce, TIDAL's policy (see cspReportOnly.ts)
-		const tidalPolicy = tidalMetaPolicy(body);
+		// Report, don't enforce, TIDAL's policy (see cspReportOnly.ts). A response that already has a report-only policy keeps it
 		const headers = new Headers(res.headers);
 		// The hosts enabled plugins may reach are listed too: what is still reported is what no plugin declared
 		const pluginHosts = pluginPageHosts();
@@ -167,7 +166,10 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		// own requests to them still go through luna.fetch and their hosts (pageConnect doesn't list them)
 		const storeOrigins = pluginStoreOrigins();
 		const pluginSources = [...cspSources(pluginHosts), ...storeOrigins];
-		if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyPolicy(tidalPolicy, pluginSources));
+		if (!headers.has("Content-Security-Policy-Report-Only")) {
+			const tidalPolicy = tidalMetaPolicy(body);
+			if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyHeader(tidalPolicy, pluginSources));
+		}
 		// Strict network: page code reaches only TIDAL, Luna and the plugins' accepted hosts (cspReportOnly.ts enforcedPolicy).
 		// A host allowed later reaches the page from its next load; until then render/src/pageNet.ts sends page plugins'
 		// fetches to it through luna.fetch
