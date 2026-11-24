@@ -228,9 +228,17 @@ export const allVersionsAnswers = (url: string): string[] => [
 	...new Set(allVersionsEntries(getStore().natives, url).map(([, fileName]) => fileName)),
 ];
 
-/** Revokes the plugin's answers for all versions, so its native files ask again the next time they load */
+/** Revokes the plugin's answers for all versions, so its native files ask again the next time they load. Tries each, throws if one failed */
 export const revokeAllVersions = (url: string) => {
-	for (const [key] of allVersionsEntries(getStore().natives, url)) revoke(key);
+	let failed: unknown;
+	for (const [key] of allVersionsEntries(getStore().natives, url)) {
+		try {
+			revoke(key);
+		} catch (err) {
+			failed ??= err;
+		}
+	}
+	if (failed !== undefined) throw failed;
 };
 
 /** Uninstalling a plugin forgets its answers, so a reinstall asks again (native/core/registry.ts) */

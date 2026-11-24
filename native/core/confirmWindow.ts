@@ -140,11 +140,17 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 			clearTimeout(armTimer);
 			const action = actionToRun(answer, warningChosen, warning);
 			if (action === undefined) return resolve(answer);
-			// Before the answer counts: what it confirms (an update, say) must find the action done
+			// Before the answer counts: what it confirms (an update, say) must find the action done. If it failed, it is no:
+			// what the user confirmed was with it done
 			Promise.resolve()
 				.then(action)
-				.catch((err) => console.error("[Luna.core] The confirmation's warning action failed", err))
-				.finally(() => resolve(answer));
+				.then(
+					() => resolve(answer),
+					(err) => {
+						console.error("[🛑Security🛑] The confirmation's warning action failed, taken as no", err);
+						resolve(false);
+					},
+				);
 		});
 		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildConfirmHtml({ ...request, warning }))}`).catch((err) => {
 			console.error("[🛑Security🛑] Failed to show the Luna confirmation", err);
