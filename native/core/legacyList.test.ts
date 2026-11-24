@@ -377,7 +377,7 @@ describe("old native format list", () => {
 	const DAY = 24 * 60 * 60 * 1000;
 	const at = (iso: string) => Date.parse(iso);
 	/** A store over `cached` (a signed doc or none) fetching `fetched()`, at the time `time.now` */
-	const storeAt = (time: { now: number }, cached: object | undefined, fetched: () => object, extra: object = {}) => {
+	const storeAt = (time: { now: number }, cached: object | undefined, fetched: () => object | Promise<object>, extra: object = {}) => {
 		let cache: string | undefined;
 		if (cached !== undefined) {
 			const { bytes, sig } = signed(cached);
@@ -387,7 +387,7 @@ describe("old native format list", () => {
 		const store = createLegacyStore({
 			readCache: () => cache,
 			writeCache: (text) => void (cache = text),
-			fetchList: async () => signed(fetched()),
+			fetchList: async () => signed(await fetched()),
 			publicKey: pub,
 			firstWaitMs: 50,
 			retryMs: [0],
@@ -438,6 +438,31 @@ describe("old native format list", () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		assert.strictEqual(fetches, 2);
 		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+	});
+
+	it("one fetch at a time: checks while an expired list is being fetched again start no other", async () => {
+		const until = "2026-12-01T00:00:00.000Z";
+		const time = { now: at(until) - DAY };
+		let fetches = 0;
+		let served: object = doc(5, [A], { validUntil: until });
+		let slow = false;
+		const { store } = storeAt(time, undefined, async () => {
+			fetches++;
+			if (slow) await new Promise((resolve) => setTimeout(resolve, 50));
+			return served;
+		});
+		await store.ready();
+		assert.strictEqual(fetches, 1);
+		served = doc(6, [A], { validUntil: "2027-01-01T00:00:00.000Z" });
+		slow = true;
+		time.now = at(until) + 3 * DAY;
+		for (let i = 0; i < 10; i++) assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let i = 0; i < 10; i++) store.allows("a.mjs", A.sha256);
+		assert.strictEqual(fetches, 2);
+		await new Promise((resolve) => setTimeout(resolve, 80));
+		assert.strictEqual(store.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(fetches, 2);
 	});
 
 	it("an expired cache stays the base: a fresh list must still be a subset of it", async () => {

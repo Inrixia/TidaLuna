@@ -253,12 +253,16 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	 */
 	let retryAt: number | undefined;
 	let failures = 0;
+	/** A tracked refresh hasn't settled yet */
+	let pending = false;
 	/** A refresh whose failure schedules the next try; never rejects */
 	const tracked = () => {
 		retryAt = undefined;
+		pending = true;
 		return (first = refresh().then(
-			() => void (failures = 0),
+			() => void ((failures = 0), (pending = false)),
 			(err) => {
+				pending = false;
 				// A cache that can't be read is logged by loadCache
 				if (cache === "unread") return void (retryAt = now());
 				deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
@@ -278,7 +282,8 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();
 			// Expired while running, after refreshes that went fine: fetch now, not on the next scheduled refresh
-			if (!usable() && current !== undefined && first !== undefined && retryAt === undefined) retryAt = now();
+			// (one fetch at a time: checks while it runs wait for it)
+			if (!usable() && current !== undefined && first !== undefined && retryAt === undefined && !pending) retryAt = now();
 			void start();
 			if (now() >= writeAt) writeCurrent();
 			if (!usable()) {
