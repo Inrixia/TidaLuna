@@ -290,7 +290,8 @@ const writeTags = async (path: string, mimeType: string, { tags, coverUrl }: Met
 
 /** Remux a raw DASH (fragmented MP4) download into a standard progressive MP4 (or native FLAC) and tag it */
 export const finalizeDashDownload = async (path: string, tags?: MetaTags, requested?: string): Promise<void> => {
-	// Exported from a native file: only a media file where the user picked, as download checks it (`requested` = its path as asked for)
+	// Not a page channel now (bundled into download's native code), checked anyway in case render code imports it:
+	// only a media file where the user picked, as download checks it (`requested` = its path as asked for)
 	luna.assertDownloadPath(assertMediaFile(path), requested);
 	const source = await readFile(path);
 
