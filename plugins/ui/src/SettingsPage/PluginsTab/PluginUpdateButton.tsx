@@ -118,11 +118,13 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 		if (!confirmed) return;
 		setUpdating(true);
 		// Right before the update is applied: an update that doesn't go ahead leaves the answers, and the running version
-		// keeps its native code. If one can't be revoked, the update doesn't apply: its code would run without asking
+		// keeps its native code. The first that can't be revoked stops the update (its code would run without asking);
+		// those revoked before it stay revoked, so they ask again: the safe side
 		const revokeChosen = async () => {
-			let failed = 0;
-			for (const key of revoke) await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key).catch(() => failed++);
-			if (failed !== 0) plugin.trace.msg.err.throw(`Not updating ${plugin.name}: couldn't revoke its native permissions for all versions`);
+			for (const key of revoke)
+				await ipcRenderer
+					.invoke("__Luna.nativePermissions.revoke", key)
+					.catch(() => plugin.trace.msg.err.throw(`Not updating ${plugin.name}: couldn't revoke its native permissions for all versions`));
 		};
 		try {
 			// The update the user was shown, even if a newer one arrived meanwhile

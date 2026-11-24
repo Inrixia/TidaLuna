@@ -630,10 +630,12 @@ export class LunaPlugin {
 		// Under the semaphore: no other load of this plugin runs between it and the update (see acceptUpdate). Before the
 		// try below, whose catch would unload the running version
 		if (beforeLoad !== undefined)
-			await beforeLoad().catch((err) => {
+			try {
+				await beforeLoad();
+			} catch (err) {
 				release();
 				throw err;
-			});
+			}
 		let replaced: { previous: PluginPackage | undefined } | undefined;
 		try {
 			if (update !== undefined) replaced = { previous: this.applyUpdate(update) };
