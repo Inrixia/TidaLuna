@@ -115,6 +115,9 @@ describe("luna.fetch", () => {
 		const { net, calls } = fakeNet(plugins, { "https://a.org/": () => new Response("ok") });
 		await net.fetch("https://store/compat", "page", { url: "https://a.org/", headers: { "Accept-Encoding": "zstd", "x-a": "b" } });
 		assert.deepEqual(calls[0].headers, { "x-a": "b" });
+		// `identity` is kept: a HEAD for a file's own size must not get the compressed length
+		await net.fetch("https://store/compat", "page", { url: "https://a.org/", headers: { "accept-encoding": "identity" } });
+		assert.deepEqual(calls[1].headers, { "accept-encoding": "identity" });
 	});
 
 	it("checks every redirect hop against the hosts", async () => {
@@ -513,6 +516,21 @@ describe("luna.fetch prompts", () => {
 		net.forget("https://store/u");
 		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, once.ask), /didn't allow it/);
 		assert.equal(once.questions.length, 2);
+	});
+
+	it("drops an answer that comes after the plugin was forgotten (uninstalled)", async () => {
+		const { net } = fakeNet({ "https://store/u": unlisted }, { "https://api.new.example/x": () => new Response("ok") });
+		let answer: (value: "once") => void = () => {};
+		const late = new Promise<"once">((resolve) => (answer = resolve));
+		const pending = net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, () => late);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		net.forget("https://store/u");
+		answer("once");
+		await pending.catch(() => undefined);
+		// A reinstall from the same url asks again
+		const again = asker([undefined]);
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, again.ask), /didn't allow it/);
+		assert.equal(again.questions.length, 1);
 	});
 
 	it("asks with the redirect reason about a host a redirect leads to", async () => {

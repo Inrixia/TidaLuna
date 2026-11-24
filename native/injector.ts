@@ -174,6 +174,9 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		// A host allowed later reaches the page from its next load; until then render/src/pageNet.ts sends page plugins'
 		// fetches to it through luna.fetch
 		// Appended: a policy TIDAL's shell may send stays enforced next to Luna's (each one applies)
+		// A policy TIDAL's own response sends stays enforced next to it, and pageAllows only knows Luna's connect list: say so
+		if (headers.has("Content-Security-Policy"))
+			console.warn("[Luna.core] TIDAL sends a Content-Security-Policy header of its own: page requests it blocks are not reported as Luna's");
 		headers.append("Content-Security-Policy", enforcedPolicy(pluginSources));
 		setPageConnect([...baselineEntries, ...pluginHosts]);
 		setPageStores(storeOrigins);
@@ -229,7 +232,9 @@ const tidalModuleHandler = async (req: Request): Promise<Response> => {
 	const url = new URL(req.url);
 	if (!tidalMainHosts.has(url.host)) return new Response(null, { status: 403 });
 	const origin = `https://${url.host}`;
-	const res = await staleIfError(origin + url.pathname + url.search, () => electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }));
+	const res = await staleIfError(origin + url.pathname + url.search, () =>
+		electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }),
+	);
 	// shortcut: every .js is taken for a module, TIDAL's workers are inline blobs, check if a classic script ever loads from here
 	if (!res.ok || !url.pathname.endsWith(".js")) {
 		const headers = new Headers(res.headers);
@@ -276,7 +281,12 @@ electron.app.whenReady().then(async () => {
 // TIDAL's player message handler (native/app/main/playback/player/PlayerController.js) gets audio urls that point at the cache, see audioCache.ts
 const ipcOn = electron.ipcMain.on.bind(electron.ipcMain);
 electron.ipcMain.on = ((channel, listener) =>
-	ipcOn(channel, channel !== "player.message" ? listener : (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message))) as typeof electron.ipcMain.on;
+	ipcOn(
+		channel,
+		channel !== "player.message"
+			? listener
+			: (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message),
+	)) as typeof electron.ipcMain.on;
 // #endregion
 
 // #region Proxied BrowserWindow

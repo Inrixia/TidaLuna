@@ -88,7 +88,8 @@ export const installPageNet = (page: PageNetTarget, deps: PageNetDeps) => {
 		for (const [host, at] of toasted) if (now - at >= TOASTED_MS) toasted.delete(host);
 		toasted.set(url.host, now);
 		return connectReady.then(async () => {
-			if (pageAllows(url)) return;
+			// Allowed: no CSP violation follows, so no toast is waiting for one
+			if (pageAllows(url)) return void toasted.delete(url.host);
 			// Mixed content: TIDAL's https page can't reach plain http/ws but on loopback, whatever the user answers
 			if ((url.protocol === "http:" || url.protocol === "ws:") && !isLoopback(url.hostname))
 				return deps.blocked(plugin.name, url.host, `the page can't reach plain ${url.protocol.slice(0, -1)} hosts: its ${kind} needs luna.fetch`);

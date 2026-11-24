@@ -134,6 +134,15 @@ describe("pageNetHooks", () => {
 		assert.deepEqual(calls.blocked, ["P x.example you denied x.example"]);
 	});
 
+	it("a request the page allows leaves no toast mark: a later real block of the host is toasted", async () => {
+		const { page, net, calls, violation } = setup();
+		await net.ready;
+		new page.WebSocket("wss://api.allowed.example/s");
+		await net.lastAsk();
+		violation({ disposition: "enforce", blockedURI: "wss://api.allowed.example/s", effectiveDirective: "connect-src" });
+		assert.deepEqual(calls.blocked, ["connect-src api.allowed.example"]);
+	});
+
 	it("says a host only luna.fetch reaches won't work after a reload", async () => {
 		for (const [why, text] of [
 			["setting", /server from its settings/],

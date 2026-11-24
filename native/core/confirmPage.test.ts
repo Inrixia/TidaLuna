@@ -10,6 +10,8 @@ import {
 	fitLines,
 	focusedWithin,
 	isHostAnswer,
+	isHostDeny,
+	MAX_DENIES,
 	oneAtATime,
 	type FocusTarget,
 	COOL_DOWN_MS,
@@ -35,6 +37,23 @@ describe("host questions", () => {
 		assert.equal(gate.refuse({ tidal: FOCUSED, now: 200 }), undefined);
 		gate.answered(isHostAnswer("close"), 200);
 		assert.match(gate.refuse({ tidal: FOCUSED, now: 201 })!, /cancelled in a row/);
+	});
+
+	it("cool down after many denies in a row, not after a few", () => {
+		const gate = confirmGate();
+		for (let i = 0; i < MAX_DENIES - 1; i++) {
+			assert.equal(gate.refuse({ tidal: FOCUSED, now: i }), undefined);
+			gate.answered(true, i, isHostDeny("choice:deny"));
+		}
+		assert.equal(gate.refuse({ tidal: FOCUSED, now: 50 }), undefined);
+		gate.answered(true, 50, true);
+		assert.match(gate.refuse({ tidal: FOCUSED, now: 51 })!, /hosts were denied in a row/);
+		// An allow in between starts the count again
+		const other = confirmGate();
+		for (let i = 0; i < MAX_DENIES * 2; i++) {
+			assert.equal(other.refuse({ tidal: FOCUSED, now: i }), undefined);
+			other.answered(true, i, i % 2 === 0);
+		}
 	});
 
 	const fakeWindow = (focused = false) => {
@@ -83,6 +102,13 @@ describe("host questions", () => {
 		closing.emit("closed");
 		assert.equal(await closed, false);
 		assert.equal(await focusedWithin(fakeWindow(), 5), false);
+		// A click or key in TIDAL brings it back where focus isn't reported
+		const listeners = new Set<() => void>();
+		const input = { on: (l: () => void) => listeners.add(l), off: (l: () => void) => listeners.delete(l) };
+		const clicked = focusedWithin(fakeWindow(), 1000, input);
+		[...listeners].forEach((l) => l());
+		assert.equal(await clicked, true);
+		assert.equal(listeners.size, 0);
 	});
 });
 
@@ -196,6 +222,9 @@ describe("core confirmation page", () => {
 		assert.deepEqual(fitLines(long), [...long.slice(0, 11), `${long[11]} … and 2 more lines`]);
 		assert.equal(confirmRequest("T", fitLines(long), "Go").lines.length, 12);
 		assert.ok(fitLines(long).every((line) => line.length <= 600));
+		// The suffix counts when a line just fits
+		const tight = Array.from({ length: 14 }, (_, i) => (i === 11 ? "y".repeat(583) : `${i}`.padEnd(590, "x")));
+		assert.ok(fitLines(tight).every((line) => line.length <= 600));
 		assert.deepEqual(fitLines(["a"]), ["a"]);
 		assert.throws(() => confirmRequest(1, [], "Go"));
 		assert.throws(() => confirmRequest("T", "a", "Go"));
