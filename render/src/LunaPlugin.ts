@@ -490,7 +490,7 @@ export class LunaPlugin {
 		}
 		this.store.installed = false;
 		delete LunaPlugin.plugins[this.url];
-		await LunaPlugin.pluginStorage.del(this.name);
+		await LunaPlugin.pluginStorage.delete(this.name);
 		// A reinstall asks for native permissions again
 		await __ipcRenderer.invoke("__Luna.nativePermissions.forget", this.url).catch(this.trace.err.withContext("Failed to forget native permissions"));
 		this.loading._ = false;

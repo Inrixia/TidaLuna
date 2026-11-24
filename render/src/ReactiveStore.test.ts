@@ -220,4 +220,24 @@ describe("ReactiveStore", () => {
 
 		expect(storage.enabled).toBe(false);
 	});
+
+	test("delete removes the key even with a write for it still in flight", async () => {
+		const store = newStore();
+		const reactive = await store.getReactive("key", { a: 1 });
+
+		// Hold the write a change queues, the way a change made just before an uninstall's delete is held
+		let releaseWrite: () => void = () => {};
+		idb.beforeSet = () => new Promise<void>((resolve) => (releaseWrite = resolve));
+		reactive.a = 2;
+
+		const deleted = store.delete("key");
+		idb.beforeSet = undefined;
+		releaseWrite();
+		await deleted;
+
+		// The held write landed first and the delete won: the key is gone, not restored by it
+		await expect(store.get("key")).resolves.toBeUndefined();
+		// And the object is no longer cached, so a later read starts from the store again
+		expect((await store.getReactive("key", { a: 3 })).a).toBe(3);
+	});
 });

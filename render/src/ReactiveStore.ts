@@ -31,6 +31,9 @@ export class ReactiveStore {
 		return (this.reactiveLoading[key] ??= this.loadReactive(key, defaultValue).finally(() => delete this.reactiveLoading[key]));
 	}
 	private readonly reactiveLoading: Record<string, Promise<any>> = {};
+	/** Stops the write listener for a key, and the write it last queued, so `delete` can't be undone by it */
+	private readonly reactiveUnsubscribes: Record<string, () => void> = {};
+	private readonly reactiveWrites: Record<string, Promise<void>> = {};
 	private async loadReactive<T extends StoreReconcileable>(key: string, defaultValue: T): Promise<T> {
 		// Create the oby reactive object
 		const reactiveObj = obyStore(defaultValue);
@@ -38,9 +41,11 @@ export class ReactiveStore {
 		obyStore.reconcile(reactiveObj, (await idbGet<T>(key, this.idbStore)) ?? defaultValue);
 
 		// Set up a listener to write to the idb store when the object changes
-		obyStore.on(reactiveObj, () =>
-			idbSet(key, obyStore.unwrap(reactiveObj), this.idbStore).catch(this.trace.err.withContext(`Failed to set`, key, reactiveObj)),
-		);
+		this.reactiveUnsubscribes[key] = obyStore.on(reactiveObj, () => {
+			this.reactiveWrites[key] = idbSet(key, obyStore.unwrap(reactiveObj), this.idbStore).catch(
+				this.trace.err.withContext(`Failed to set`, key, reactiveObj),
+			);
+		});
 
 		return <T>(this.reactiveCache[key] = reactiveObj);
 	}
@@ -80,6 +85,21 @@ export class ReactiveStore {
 		return idbDel(key, this.idbStore);
 	}
 
+	/**
+	 * Deletes a key and stops persisting the reactive object behind it.
+	 *
+	 * A change made just before this queues a write that would otherwise land after the delete and put the key back (an
+	 * uninstalled plugin resurrecting itself), so stop the listener, let that write finish, then delete.
+	 */
+	public async delete(key: string) {
+		this.reactiveUnsubscribes[key]?.();
+		delete this.reactiveUnsubscribes[key];
+		await this.reactiveWrites[key]?.catch(() => undefined);
+		delete this.reactiveWrites[key];
+		delete this.reactiveCache[key];
+		await idbDel(key, this.idbStore);
+	}
+
 	public keys(): Promise<string[]> {
 		return idbKeys(this.idbStore);
 	}
@@ -98,6 +118,6 @@ export class ReactiveStore {
 	{
 		const allKeys = await this.keys();
 		for (const key of allKeys)
-			await this.del(key);
+			await this.delete(key);
 	}
 }
