@@ -84,6 +84,7 @@ describe("core native rules", () => {
 
 	it("claims nothing about a tag that is not a version", () => {
 		expect(compareVersions("latest", "1.2.3")).toBe(0);
+		expect(compareVersions("1.2", "1.2.3")).toBe(0);
 		expect(compareVersions("1.2.3", "nightly-2026")).toBe(0);
 		const [, lines] = coreNativeQuestion("update", ["latest"], "1.25.0");
 		expect(lines.join(" ")).not.toMatch(/older/);
