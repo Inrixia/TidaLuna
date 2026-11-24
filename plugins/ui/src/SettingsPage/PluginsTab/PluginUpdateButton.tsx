@@ -124,13 +124,13 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			for (const key of revoke)
 				await ipcRenderer
 					.invoke("__Luna.nativePermissions.revoke", key)
-					.catch(() => plugin.trace.msg.err.throw(`Not updating ${plugin.name}: couldn't revoke its native permissions for all versions`));
+					.catch(plugin.trace.msg.err.withContext(`Not updating ${plugin.name}: couldn't revoke its native permissions for all versions`).throw);
 		};
 		try {
 			// The update the user was shown, even if a newer one arrived meanwhile
 			await plugin.acceptUpdate(update, revoke.length === 0 ? undefined : revokeChosen);
 		} catch {
-			// The plugin shows its load error on its card
+			// Said already: a load error on the plugin's card, a refused update or a failed revoke as an error message
 		} finally {
 			setUpdating(false);
 		}
