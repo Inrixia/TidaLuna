@@ -1254,7 +1254,7 @@ describe("core registry store origins", () => {
 		// The user says no, then yes
 		const no = asker(false);
 		assert.strictEqual(await registry.allowStore(`${EVIL}/store.json`, no), false);
-		assert.match(no.asked[0].title, /Allow the plugin store https:\/\/evil\.example\?/);
+		assert.match(no.asked[0].title, /Allow Luna to read from https:\/\/evil\.example\?/);
 		assert.strictEqual(registry.storeOrigins().includes("https://evil.example"), false);
 		assert.strictEqual(await registry.allowStore(EVIL, yes), true);
 		assert.ok(registry.storeOrigins().includes("https://evil.example"));

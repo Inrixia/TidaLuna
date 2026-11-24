@@ -810,7 +810,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 		 * "always" answers. Never `{setting:}` entries: page code can write any setting
 		 */
 		storeOrigins,
-		/** The user allows a store's origin (asked in Luna's window): its plugins can be installed, from TIDAL's next load listed */
+		/**
+		 * The user allows a store's origin (asked in Luna's window): its plugins can be installed, from TIDAL's next load listed.
+		 * The page reads stores itself, so the origin goes into its connect-src, for all page code: the prompt says so, and
+		 * that any page code can ask it
+		 */
 		allowStore: async (url: unknown, ask: Ask): Promise<boolean> => {
 			const origin = storeOriginOf(url);
 			if (origin === undefined) throw new Error(`[Luna.core] Not a store url: ${String(url)}`);
@@ -819,12 +823,13 @@ export const createRegistry = (deps: RegistryDeps) => {
 			if (storeOrigins().includes(origin) || (deps.storeBaseline !== undefined && storeUrlAllowed(origin, [], deps.storeBaseline) && !isDevUrl(origin)))
 				return true;
 			const allowed = await ask({
-				title: `Allow the plugin store ${origin}?`,
+				title: `Allow Luna to read from ${origin}?`,
 				lines: [
-					"Luna then lists and installs plugins from it. Each plugin still asks before it's installed.",
-					"TIDAL's page may read from this address: it takes effect when TIDAL reloads.",
+					"Luna then lists and installs plugins from it, and loads themes from it. Each plugin still asks before it's installed.",
+					"From TIDAL's next load any code in its page, TIDAL's and every enabled plugin's, can connect to this address.",
+					"Allow it only if you added this store yourself: page code can ask for this too.",
 				],
-				confirmText: "Allow store",
+				confirmText: "Allow",
 			});
 			if (!allowed) return false;
 			if (!allowedStores.includes(origin)) allowedStores.push(origin);

@@ -95,14 +95,15 @@ export const InstallFromUrl = React.memo(() => {
 			// A new origin: the user allows it in Luna's window, readable once TIDAL reloads
 			const access = await allowSource(url);
 			if (access === "denied") return setErr(`Not allowed: ${new URL(url).origin}`);
-			if (access === "reload" && !url.endsWith("/store.json")) return setErr(reloadToRead(url));
+			// A plugin is read at once: it has to wait for the reload. A store or theme is kept and read then
+			if (access === "reload" && !url.endsWith("/store.json") && !url.endsWith(".css")) return setErr(reloadToRead(url));
 			let successMessage;
 			if (url.endsWith("/store.json")) {
 				if (addToStores(url) === false) return setErr("Store already added");
 				successMessage = access === "reload" ? `Added store ${url}. ${reloadToRead(url)}` : `Added store ${url}!`;
 			} else if (url.endsWith(".css")) {
 				if ((await addToThemes(url)) === false) return setErr("Theme already added");
-				successMessage = `Added theme ${url}!`;
+				successMessage = access === "reload" ? `Added theme ${url}. ${reloadToRead(url)}` : `Added theme ${url}!`;
 			} else {
 				const plugin = await LunaPlugin.fromStorage({ url });
 				successMessage = `Loaded plugin ${plugin.name}!`;

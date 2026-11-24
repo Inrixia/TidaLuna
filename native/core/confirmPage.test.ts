@@ -132,9 +132,11 @@ describe("core choice page", () => {
 		{ id: "once", label: "Only <now>" },
 		{ id: "always", label: "Always allow" },
 	];
-	it("draws the first choice as cancel and focused, the last as the main button, all but the first disarmed", () => {
+	it("draws the first choice as cancel, the last as the main button, all disarmed and none focused", () => {
 		const html = buildChoiceHtml({ title: "Allow?", lines: ["x"], confirmText: "-", choices });
-		assert.match(html, /<button class="choice" data-id="deny" id="cancel">Deny<\/button>/);
+		assert.match(html, /<button class="choice" data-id="deny" id="cancel" disabled>Deny<\/button>/);
+		assert.match(html, /document\.body\.focus\(\)/);
+		assert.equal(html.includes('getElementById("cancel").focus()'), false);
 		assert.match(html, /<button class="choice" data-id="once" disabled>Only &lt;now&gt;<\/button>/);
 		assert.match(html, /<button class="choice" data-id="always" id="confirm" disabled>Always allow<\/button>/);
 		assert.match(html, /submit\("choice:" \+ button\.dataset\.id\)/);

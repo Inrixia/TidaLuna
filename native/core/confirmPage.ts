@@ -108,15 +108,18 @@ export const buildChoiceHtml = ({ title, lines, choices = [] }: ConfirmRequest) 
 	const actions = `<div class="actions">${choices
 			.map(
 				(choice, index) =>
-					`<button class="choice" data-id="${choice.id}"${index === choices.length - 1 ? ' id="confirm"' : ""}${index === 0 ? ' id="cancel"' : " disabled"}>${escapeHtml(choice.label)}</button>`,
+					`<button class="choice" data-id="${choice.id}"${index === choices.length - 1 ? ' id="confirm"' : ""}${index === 0 ? ' id="cancel"' : ""} disabled>${escapeHtml(choice.label)}</button>`,
 			)
 			.join("")}</div>
 <script>
 const submit = (answer) => (document.title = "${SUBMIT}" + answer);
-const armed = [...document.querySelectorAll("button.choice")].slice(1);
+// Every choice is kept (the first, deny, too), so all wait to be armed, and the focus is on none: Enter typed into TIDAL
+// as the window shows picks nothing. Escape closes it, which keeps nothing
+const armed = [...document.querySelectorAll("button.choice")];
 for (const button of document.querySelectorAll("button.choice")) button.addEventListener("click", () => submit("choice:" + button.dataset.id));
 document.addEventListener("keydown", (event) => event.key === "Escape" && submit("no"));
-document.getElementById("cancel").focus();
+document.body.tabIndex = -1;
+document.body.focus();
 window.arm = () => armed.forEach((button) => (button.disabled = false));
 window.disarm = () => armed.forEach((button) => (button.disabled = true));
 </script>`;

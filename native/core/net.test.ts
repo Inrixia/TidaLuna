@@ -389,6 +389,32 @@ describe("luna.fetch prompts", () => {
 		assert.deepEqual(grants[1], ["https://store/u", "https://api.new.example", "deny"]);
 	});
 
+	it("keeps 'always' for a host the grammar can't keep until restart, and forgets answers of an uninstalled plugin", async () => {
+		const grants: [string, string, string][] = [];
+		const v6 = { "https://[2001:db8::1]/x": () => new Response("ok"), "https://api.new.example/x": () => new Response("ok") };
+		const { net } = fakeNet({ "https://store/u": unlisted }, v6, granting(grants));
+		const always = asker(["always"]);
+		assert.equal((await net.fetch("https://store/u", "page", { url: "https://[2001:db8::1]/x" }, always.ask)).status, 200);
+		assert.equal((await net.fetch("https://store/u", "page", { url: "https://[2001:db8::1]/x" }, always.ask)).status, 200);
+		assert.equal(always.questions.length, 1);
+		assert.deepEqual(grants, []);
+
+		const once = asker(["once", undefined]);
+		await net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, once.ask);
+		net.forget("https://store/u");
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, once.ask), /didn't allow it/);
+		assert.equal(once.questions.length, 2);
+	});
+
+	it("asks with the redirect reason about a host a redirect leads to", async () => {
+		const { net } = fakeNet({ "https://store/u": { ...unlisted, allow: ["https://api.new.example"] } }, {
+			"https://api.new.example/x": () => new Response(null, { status: 302, headers: { location: "https://other.example/y" } }),
+		});
+		const { ask, questions } = asker([undefined]);
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://api.new.example/x" }, ask), /redirect/);
+		assert.equal(questions[0]?.reason, "redirect");
+	});
+
 	it("asks once for many requests waiting on the same host", async () => {
 		const { net } = fakeNet({ "https://store/u": unlisted }, routes);
 		let release!: (answer: HostAnswer) => void;
@@ -455,6 +481,13 @@ describe("luna.fetch prompts", () => {
 		assert.equal((await net.fetch("https://store/c", "page", { url: "https://api.new.example/x" }, ask)).status, 200);
 		await assert.rejects(net.fetch("https://store/c", "page", { url: "http://127.0.0.1/" }, ask), /local address/);
 		assert.equal(questions.length, 0);
+	});
+
+	it("asks for a legacy plugin's page requests: an always answer is its only way into the page's CSP", async () => {
+		const { net } = fakeNet({ "https://store/c": compat }, routes);
+		const { ask, questions } = asker(["always"]);
+		assert.deepEqual(await net.ask("https://store/c", "wss://api.new.example/socket", ask), { allowed: true, answer: "always" });
+		assert.equal(questions[0]?.entry, "wss://api.new.example");
 	});
 
 	it("asks for page requests (ws too), logs them and returns the answer", async () => {

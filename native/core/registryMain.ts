@@ -119,8 +119,11 @@ ipcHandle("__LunaCore.install", (event, url: unknown) => thenChanged([url], () =
 ipcHandle("__LunaCore.enable", (event, url: unknown) => thenChanged([url], () => registry().enable(url, askerFor(event.sender))));
 ipcHandle("__LunaCore.acceptUpdate", (event, url: unknown) => thenChanged([url], () => registry().acceptUpdate(url, askerFor(event.sender))));
 ipcHandle("__LunaCore.disable", (_, url: unknown) => thenChanged([url], () => registry().disable(url)));
-ipcHandle("__LunaCore.uninstall", (_, url: unknown) => thenChanged([url], () => registry().uninstall(url)));
-ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) => thenChanged([from, to], () => registry().moveUrl(from, to)));
+// A plugin installed again later, or another at the old url, starts without the "only now" answers (net.ts)
+ipcHandle("__LunaCore.uninstall", (_, url: unknown) => thenChanged([url], () => registry().uninstall(url).then((done) => (forgetHostAnswers(url), done))));
+ipcHandle("__LunaCore.moveUrl", (_, from: unknown, to: unknown) =>
+	thenChanged([from, to], () => registry().moveUrl(from, to).then((done) => (forgetHostAnswers(from), done))),
+);
 ipcHandle("__LunaCore.allowStore", (event, url: unknown) => registry().allowStore(url, askerFor(event.sender)));
 ipcHandle("__LunaCore.storeOrigins", () => registry().storeOrigins());
 
@@ -132,6 +135,7 @@ export const lunaNet = createNet({
 	fetch: (url, init) => fetch(url, init as RequestInit),
 	resolve: async (hostname) => (await lookup(hostname, { all: true })).map(({ address }) => address),
 });
+const forgetHostAnswers = (url: unknown) => typeof url === "string" && lunaNet.forget(url);
 
 const reasons: Record<string, string> = {
 	unlisted: "The plugin lists no hosts, and luna-registry has none for this version.",

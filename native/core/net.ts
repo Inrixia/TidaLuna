@@ -11,7 +11,7 @@
 //   another plugin or call the page's own fetch (the CSP report-only header, cspReportOnly.ts, logs those).
 //
 // Kept apart from Electron (its fetch and the registry come in as NetDeps) so it can be tested.
-import { hostAllowed, isLocalHost, localEntryAllows, resolveSettings } from "./hosts";
+import { hostAllowed, isLocalHost, localEntryAllows, parseHostEntry, resolveSettings } from "./hosts";
 import type { HostGrant, PluginNet } from "./registry";
 
 export type NetRequest = {
@@ -113,7 +113,10 @@ export const answerEntry = (url: URL) => `${url.protocol}//${url.host}`;
 export class NetRefused extends Error {}
 
 export const createNet = (deps: NetDeps) => {
-	/** `${plugin url}\n${entry}` answered "once": until TIDAL restarts */
+	/**
+	 * `${plugin url}\n${entry}` answered "once" until TIDAL restarts or the plugin is uninstalled, or "always" for a host the
+	 * hosts grammar can't keep (an IPv6 address, a name ending in "."): matched as written, not as a host entry
+	 */
 	const onceAllowed = new Set<string>();
 	/** Questions waiting for the user, so that many requests to one new host ask once */
 	const asking = new Map<string, Promise<HostAnswer | undefined>>();
@@ -136,8 +139,9 @@ export const createNet = (deps: NetDeps) => {
 		if (answer === undefined) {
 			const question: HostQuestion = { plugin: pluginUrl, name: plugin.name, entry, example: targetOf(url), reason };
 			answer = (ask === undefined ? Promise.resolve(undefined) : ask(question).catch(() => undefined)).then(async (got) => {
-				if (got === "once") onceAllowed.add(key);
-				else if (got === "always" || got === "deny") await deps.grant?.(pluginUrl, entry, got);
+				const keepable = parseHostEntry(entry) !== undefined;
+				if (got === "once" || (got === "always" && !keepable)) onceAllowed.add(key);
+				else if ((got === "always" || got === "deny") && keepable) await deps.grant?.(pluginUrl, entry, got);
 				return got;
 			});
 			asking.set(key, answer);
@@ -157,14 +161,17 @@ export const createNet = (deps: NetDeps) => {
 		ask: AskHost | undefined,
 		settings: Record<string, unknown> | undefined,
 		answered?: (answer: HostAnswer) => void,
-		schemes = ["http:", "https:"],
+		{ redirected = false, page = false }: { redirected?: boolean; page?: boolean } = {},
 	): Promise<string | undefined> => {
+		const schemes = page ? ["http:", "https:", "ws:", "wss:"] : ["http:", "https:"];
 		if (!schemes.includes(url.protocol)) return `${url.protocol} urls can't be fetched`;
 		if (url.username !== "" || url.password !== "") return "urls with credentials can't be fetched";
 		const deny = plugin.deny ?? [];
 		if (hostAllowed(deny, url)) return `you denied ${url.host} for ${plugin.name}`;
 		const local = `${url.hostname} is a local address: ${plugin.name} must list it in its hosts as a local entry`;
-		if (plugin.mode !== "legacy") {
+		// A legacy plugin's luna.fetch reaches public hosts as it is; its page requests (a WebSocket) are asked like any
+		// plugin's, as an "always" answer is the only way into the page's CSP
+		if (plugin.mode !== "legacy" || page) {
 			const { hosts, settings: fromSettings } = resolveSettings(plugin.hosts ?? [], (key) =>
 				settings !== null && typeof settings === "object" && Object.hasOwn(settings, key) ? (settings as Record<string, unknown>)[key] : undefined,
 			);
@@ -172,12 +179,20 @@ export const createNet = (deps: NetDeps) => {
 			const allowed = [...fixed, ...(plugin.allow ?? []), ...[...onceAllowed].filter((key) => key.startsWith(`${pluginUrl}\n`)).map((key) => key.slice(pluginUrl.length + 1))];
 			// A local entry the user saw ("localhost", "nas.lan", or an answer for a local address) may reach a local
 			// address; a public one may not
-			if (hostAllowed(allowed, url)) {
-				if (localEntryAllows(allowed, url)) return undefined;
+			// An answer kept as written (onceAllowed) names this very host: for a local address, a local entry the user saw
+			const keptAsWritten = onceAllowed.has(`${pluginUrl}\n${answerEntry(url)}`);
+			if (keptAsWritten || hostAllowed(allowed, url)) {
+				if ((keptAsWritten && isLocalHost(url.hostname)) || localEntryAllows(allowed, url)) return undefined;
 			} else if (hostAllowed(fromSettings, url) && !isLocalHost(url.hostname)) {
 				// The server in a setting: a public one is allowed as it is, a local one is asked below
 			} else {
-				const reason = hostAllowed(fromSettings, url) ? "local-setting" : plugin.mode === "unlisted" ? "unlisted" : "not-listed";
+				const reason = hostAllowed(fromSettings, url)
+					? "local-setting"
+					: redirected
+						? "redirect"
+						: plugin.mode === "unlisted"
+							? "unlisted"
+							: "not-listed";
 				const answer = await askOnce(pluginUrl, plugin, url, reason, ask);
 				if (answer === undefined) return `${url.host} is not in the hosts of ${plugin.name}, and you didn't allow it`;
 				if (answer === "deny") return `you denied ${url.host} for ${plugin.name}`;
@@ -326,7 +341,7 @@ export const createNet = (deps: NetDeps) => {
 					const from = url;
 					url = new URL(location, url);
 					// Every hop is checked like the first: a declared host can't redirect the plugin to another one
-					const hopRefusal = await refusal(pluginUrl, plugin, url, ask, settings, (answer) => (entry.asked ??= answer));
+					const hopRefusal = await refusal(pluginUrl, plugin, url, ask, settings, (answer) => (entry.asked ??= answer), { redirected: true });
 					if (hopRefusal !== undefined) {
 						entry.allowed = false;
 						throw new NetRefused(`[🛑Security🛑] luna.fetch refused a redirect: ${hopRefusal}`);
@@ -369,6 +384,10 @@ export const createNet = (deps: NetDeps) => {
 
 	return {
 		fetch: fetchFor,
+		/** Forgets the plugin's answers kept until restart: it was uninstalled, or moved to another url */
+		forget: (pluginUrl: string) => {
+			for (const key of onceAllowed) if (key.startsWith(`${pluginUrl}\n`)) onceAllowed.delete(key);
+		},
 		/**
 		 * For a request page code makes with the page's own network (a WebSocket, an XMLHttpRequest) to a host the page's
 		 * CSP blocks: whether the plugin may reach it, asking the user like luna.fetch. Logged like a luna.fetch request
@@ -394,7 +413,7 @@ export const createNet = (deps: NetDeps) => {
 			const reason =
 				plugin === undefined
 					? `${entry.plugin} is not an enabled plugin`
-					: await refusal(pluginUrl as string, plugin, url, ask, undefined, (answer) => (entry.asked = answer), ["http:", "https:", "ws:", "wss:"]);
+					: await refusal(pluginUrl as string, plugin, url, ask, undefined, (answer) => (entry.asked = answer), { page: true });
 			entry.allowed = reason === undefined;
 			if (reason !== undefined) entry.error = reason;
 			record(entry, plugin !== undefined);

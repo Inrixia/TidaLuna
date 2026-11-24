@@ -25,12 +25,6 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	const disabled = loading; // Disable controls while loading
 	// The page can't read the store's origin yet (strict network): the user may allow it
 	const [blocked, setBlocked] = React.useState(false);
-	const allow = React.useCallback(async () => {
-		const access = await allowSource(`${url}/store.json`);
-		if (access === "denied") return;
-		setBlocked(false);
-		if (access === "reload") setLoadError(reloadToRead(url));
-	}, [url]);
 
 	const fetchPackage = React.useCallback(async () => {
 		setLoading(true);
@@ -56,6 +50,15 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	React.useEffect(() => {
 		fetchPackage();
 	}, [fetchPackage]); // Depend on the memoized fetch function
+
+	const allow = React.useCallback(async () => {
+		const access = await allowSource(`${url}/store.json`);
+		if (access === "denied") return;
+		setBlocked(false);
+		// "ready": the page can read it now (GitHub, or allowed earlier), so read it
+		if (access === "reload") setLoadError(reloadToRead(url));
+		else fetchPackage();
+	}, [url, fetchPackage]);
 
 	const isLocalDevStore = url === "http://127.0.0.1:3000";
 
