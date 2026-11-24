@@ -308,6 +308,12 @@ describe("core registry", () => {
 		assert.strictEqual(registry.info(BAD)?.enabled, false);
 		await registry.uninstall(BAD);
 		assert.deepStrictEqual(registry.list(), []);
+		// Only urls stored as plugins, not names every object has
+		for (const name of ["constructor", "toString", "__proto__"]) {
+			assert.throws(() => registry.info(name), /Not a plugin url/);
+			await assert.rejects(async () => registry.disable(name), /Not a plugin url/);
+			await assert.rejects(async () => registry.uninstall(name), /Not a plugin url/);
+		}
 	});
 
 	it("sees no update for the same code under another sourceURL line (a store moved offline)", async () => {

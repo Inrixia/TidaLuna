@@ -561,7 +561,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 
 	return {
 		list: (): CorePluginInfo[] => Object.keys(state.plugins).map((url) => info(url)!),
-		info: (url: unknown) => (typeof url === "string" && state.plugins[url] !== undefined ? info(url) : info(pluginUrl(url))),
+		info: (url: unknown) => (typeof url === "string" && Object.hasOwn(state.plugins, url) ? info(url) : info(pluginUrl(url))),
 		needsMigration: () => fresh,
 		migrate,
 		load: async (url: unknown) => {
@@ -577,9 +577,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 		},
 		// Also a plugin stored under a url refused now (installed before urls were checked): it can still be taken off
 		disable: (url: unknown) =>
-			typeof url === "string" && state.plugins[url] !== undefined ? serial(url, () => disable(url)) : forPlugin(undefined, disable)(url),
+			typeof url === "string" && Object.hasOwn(state.plugins, url) ? serial(url, () => disable(url)) : forPlugin(undefined, disable)(url),
 		uninstall: (url: unknown) =>
-			typeof url === "string" && state.plugins[url] !== undefined ? serial(url, () => uninstall(url)) : forPlugin(undefined, uninstall)(url),
+			typeof url === "string" && Object.hasOwn(state.plugins, url) ? serial(url, () => uninstall(url)) : forPlugin(undefined, uninstall)(url),
 
 		// #region Checks (see the top of this file)
 		isEnabled: (url: string) => state.plugins[url]?.enabled === true,
