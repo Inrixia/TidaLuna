@@ -79,11 +79,6 @@ describe("enforcedPolicy", () => {
 		assert.equal(policy, `connect-src ${[...networkBaseline, "https://api.example.com"].join(" ")}`);
 		assert.equal(policy.includes("img-src"), false);
 	});
-	it("adds img-src and media-src in strict media mode", () => {
-		const policy = enforcedPolicy([], { strictMedia: true });
-		const sources = networkBaseline.join(" ");
-		assert.equal(policy, `connect-src ${sources}; img-src ${sources}; media-src ${sources}`);
-	});
 	it("gives page code the baseline's host entries only", () => {
 		assert.ok(baselineEntries.includes("*.tidal.com"));
 		assert.ok(baselineEntries.includes("api.github.com"));

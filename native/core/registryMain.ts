@@ -203,36 +203,3 @@ let pageStores: string[] = [];
 export const setPageStores = (origins: string[]) => void (pageStores = origins);
 ipcHandle("__LunaCore.pageStores", () => pageStores);
 
-// #region Network settings
-const netSettingsFile = () => path.join(app.getPath("userData"), "luna-core", "net-settings.json");
-export type NetSettings = { strictMedia: boolean };
-/** Whether images and media of the page are held to the same hosts as its connect-src (off: any https) */
-export const netSettings = (): NetSettings => {
-	try {
-		return { strictMedia: JSON.parse(readFileSync(netSettingsFile(), "utf8"))?.strictMedia === true };
-	} catch {
-		return { strictMedia: false };
-	}
-};
-ipcHandle("__LunaCore.netSettings", () => netSettings());
-/** Turning strict images and media on needs nothing; turning it off opens the page, so the user confirms it */
-ipcHandle("__LunaCore.setStrictMedia", async (event, on: unknown) => {
-	if (typeof on !== "boolean") throw new Error("[Luna.core] setStrictMedia takes true or false");
-	if (!on && netSettings().strictMedia) {
-		const ok = await askerFor(event.sender)({
-			title: "Let page code load images and media from any https host?",
-			lines: [
-				"Plugins could then send data out through image and media urls again. Their fetch, WebSocket and other requests stay limited to their hosts.",
-				"Takes effect when TIDAL reloads.",
-			],
-			confirmText: "Allow any https",
-		});
-		if (!ok) return false;
-	}
-	const file = netSettingsFile();
-	mkdirSync(path.dirname(file), { recursive: true });
-	writeFileSync(`${file}.tmp`, JSON.stringify({ strictMedia: on }));
-	renameSync(`${file}.tmp`, file);
-	return true;
-});
-// #endregion

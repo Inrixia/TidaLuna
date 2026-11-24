@@ -12,7 +12,7 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
-import { netSettings, pluginPageHosts, pluginStoreOrigins, setPageConnect, setPageStores } from "./core/registryMain";
+import { pluginPageHosts, pluginStoreOrigins, setPageConnect, setPageStores } from "./core/registryMain";
 import { cspSources } from "./core/hosts";
 import { baselineEntries, enforcedPolicy, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
@@ -171,7 +171,7 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		// Strict network: page code reaches only TIDAL, Luna and the plugins' accepted hosts (cspReportOnly.ts enforcedPolicy).
 		// A host allowed later reaches the page from its next load; until then render/src/pageNet.ts sends page plugins'
 		// fetches to it through luna.fetch
-		headers.set("Content-Security-Policy", enforcedPolicy(pluginSources, netSettings()));
+		headers.set("Content-Security-Policy", enforcedPolicy(pluginSources));
 		setPageConnect([...baselineEntries, ...pluginHosts]);
 		setPageStores(storeOrigins);
 		body = body.replace(

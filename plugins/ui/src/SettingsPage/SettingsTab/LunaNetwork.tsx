@@ -5,7 +5,7 @@ import Typography from "@mui/material/Typography";
 
 import { cspReports } from "@luna/core";
 
-import { LunaButton, LunaSetting, LunaSettings, LunaSwitchSetting } from "../../components";
+import { LunaButton, LunaSetting, LunaSettings } from "../../components";
 
 import type { CorePluginInfo, NetMode } from "../../../../../native/core/registry";
 import type { NetLogEntry } from "../../../../../native/core/net";
@@ -39,13 +39,11 @@ const modeDesc = (plugin: CorePluginInfo) => {
 export const LunaNetwork = React.memo(() => {
 	const [plugins, setPlugins] = React.useState<CorePluginInfo[]>([]);
 	const [log, setLog] = React.useState<NetLogEntry[]>([]);
-	const [strictMedia, setStrictMedia] = React.useState(false);
 	const [blocked, setBlocked] = React.useState([...cspReports.values()].filter((report) => report.enforced));
 	const refresh = React.useCallback(async () => {
-		const [list, entries, settings] = await Promise.all([__LunaCore.list(), __LunaCore.networkLog(), __LunaCore.netSettings()]);
+		const [list, entries] = await Promise.all([__LunaCore.list(), __LunaCore.networkLog()]);
 		setPlugins(list);
 		setLog(entries);
-		setStrictMedia(settings.strictMedia);
 		setBlocked([...cspReports.values()].filter((report) => report.enforced));
 	}, []);
 	React.useEffect(() => void refresh(), [refresh]);
@@ -54,21 +52,11 @@ export const LunaNetwork = React.memo(() => {
 		await __LunaCore.forgetGrant(url, entry);
 		await refresh();
 	};
-	const toggleMedia = async () => {
-		await __LunaCore.setStrictMedia(!strictMedia).catch(() => false);
-		await refresh();
-	};
 	return (
 		<LunaSettings
 			title="Network"
 			desc="Plugins reach only the hosts accepted for them: the ones they list, or the ones luna-registry found in their code. Any other host is asked about when the plugin uses it (only now, always, deny). TIDAL's own hosts are always allowed"
 		>
-			<LunaSwitchSetting
-				title="Strict images and media"
-				desc="Images, audio and video load only from TIDAL and the plugins' accepted hosts, not from any https host. Applies from the next reload (Ctrl+R)"
-				checked={strictMedia}
-				onClick={toggleMedia}
-			/>
 			{[...plugins]
 				.sort((a, b) => a.name.localeCompare(b.name))
 				.map((plugin) => (
