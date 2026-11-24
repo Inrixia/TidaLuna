@@ -233,13 +233,16 @@ describe("old native format list", () => {
 		assert.strictEqual(fetches, 3);
 	});
 
-	it("applies a smaller list at once even if it can't be cached", async () => {
+	it("applies a smaller list at once even if it can't be cached, and caches it once it can", async () => {
 		const first = signed(doc(1, [A, B]));
 		let served = first;
+		let locked = true;
+		let cache = JSON.stringify({ list: first.bytes.toString("base64"), sig: first.sig });
 		const store = createLegacyStore({
-			readCache: () => JSON.stringify({ list: first.bytes.toString("base64"), sig: first.sig }),
-			writeCache: () => {
-				throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+			readCache: () => cache,
+			writeCache: (text) => {
+				if (locked) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+				cache = text;
 			},
 			fetchList: async () => served,
 			publicKey: pub,
@@ -252,6 +255,20 @@ describe("old native format list", () => {
 		served = first;
 		await assert.rejects(store.refresh(), /rollback/);
 		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// Writable again: the same list is cached on the next refresh, so a start offline keeps it
+		locked = false;
+		served = signed(doc(2, [A]));
+		await store.refresh();
+		const offline = createLegacyStore({
+			readCache: () => cache,
+			writeCache: () => {},
+			fetchList: async () => {
+				throw new Error("offline");
+			},
+			publicKey: pub,
+		});
+		assert.strictEqual(offline.allows("a.mjs", A.sha256), true);
+		assert.strictEqual(offline.allows("b.mjs", B.sha256), false);
 	});
 
 	it("allows exactly the listed code of a listed plugin", () => {

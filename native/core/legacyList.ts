@@ -133,6 +133,8 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	 * accepted list, an older bigger one would pass as the first.
 	 */
 	let cache: "unread" | "none" | "ok" | "broken" = "unread";
+	/** The list bytes the cache file holds: behind `current` while writing it fails (written again on the next refresh) */
+	let cachedBytes: Buffer | undefined;
 	const loadCache = () => {
 		if (cache !== "unread") return;
 		let text: string | undefined;
@@ -147,6 +149,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 			const cached = JSON.parse(text);
 			const bytes = Buffer.from(String(cached?.list), "base64");
 			use(parseLegacyList(bytes, String(cached?.sig), deps.publicKey), bytes);
+			cachedBytes = bytes;
 			cache = "ok";
 		} catch (err) {
 			cache = "broken";
@@ -167,11 +170,13 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		const replaces = replacesList(current?.list, next);
 		if (!replaces.ok) throw new Error(`refused: ${replaces.reason}`);
 		// A removal under the same serial is still a removal: only the same bytes change nothing
-		if (current !== undefined && current.bytes.equals(bytes)) return;
-		// Used at once, even if it can't be cached: a smaller list must apply now (the next start shrinks the cache again)
-		use(next, bytes);
+		if (current !== undefined && current.bytes.equals(bytes) && cachedBytes?.equals(bytes)) return;
+		// Used at once, even if it can't be cached: a smaller list must apply now. The cache is written again on each
+		// refresh until it holds it
+		if (current === undefined || !current.bytes.equals(bytes)) use(next, bytes);
 		try {
 			deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
+			cachedBytes = bytes;
 		} catch (err) {
 			deps.log?.(`[Luna.core] The old native format list can't be cached now: ${(err as Error)?.message ?? err}`);
 		}
