@@ -78,13 +78,15 @@ describe("Tracer", () => {
 			{ type: "message/MESSAGE_ERROR", payload: { message: "[p] bad", category: "OTHER", severity: "ERROR" } },
 		]);
 		expect(console.log).toHaveBeenCalledWith("[p]", "info", 1);
+		expect(console.warn).toHaveBeenCalledWith("[p]", "warn");
+		expect(console.error).toHaveBeenCalledWith("[p]", expect.objectContaining({ message: "bad" }));
 		// msg.err also sets the signal
 		expect(errSignal?._).toBe("bad");
 	});
 
 	test("msg before TIDAL has built its message actions still dispatches, with undefined", async () => {
 		// Surprising: Messager doesn't skip the dispatch when the builder is missing, and a real redux store throws on
-		// `dispatch(undefined)` ("Actions must be plain objects"). Pinned here, reported upstream.
+		// `dispatch(undefined)` ("Actions must be plain objects"). Pinned here as it is today.
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		const builder = buildActions["message/MESSAGE_INFO"];
 		delete buildActions["message/MESSAGE_INFO"];

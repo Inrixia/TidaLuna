@@ -29,6 +29,9 @@ describe("ftch", () => {
 		vi.stubGlobal("fetch", fetch);
 		const init = { method: "POST", body: "x" };
 		await ftch.json("https://x/post", init);
-		expect(fetch).toHaveBeenCalledExactlyOnceWith("https://x/post", init);
+		await ftch.text("https://x/post", init);
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(fetch).toHaveBeenNthCalledWith(1, "https://x/post", init);
+		expect(fetch).toHaveBeenNthCalledWith(2, "https://x/post", init);
 	});
 });
