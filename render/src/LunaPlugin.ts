@@ -432,7 +432,13 @@ export class LunaPlugin {
 		if (stack === undefined) return undefined;
 		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !plugin.isCore && plugin.url.length > 0);
 		for (const frame of stack.split("\n")) {
-			const plugin = plugins.find((plugin) => frame.includes(plugin.sourceName)) ?? plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
+			// The plugin whose code names this frame's url; of two that do (one moved off a url, the other installed there
+			// since), the one at that url
+			const named = plugins.filter((plugin) => frame.includes(plugin.sourceName));
+			const plugin =
+				named.find((plugin) => plugin.sourceName === `${plugin.url}.mjs`) ??
+				named[0] ??
+				plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
 			if (plugin !== undefined) return plugin;
 		}
 		return undefined;
