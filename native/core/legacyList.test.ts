@@ -278,6 +278,34 @@ describe("old native format list", () => {
 		assert.strictEqual(offline.allows("b.mjs", B.sha256), false);
 	});
 
+	it("fetches again after an offline start with a cached list, and takes a removal once online", async () => {
+		const cached = signed(doc(1, [A, B]));
+		let time = 0;
+		let online = false;
+		let fetches = 0;
+		const store = createLegacyStore({
+			readCache: () => JSON.stringify({ list: cached.bytes.toString("base64"), sig: cached.sig }),
+			writeCache: () => {},
+			fetchList: async () => {
+				fetches++;
+				if (!online) throw new Error("offline");
+				return signed(doc(2, [A]));
+			},
+			publicKey: pub,
+			retryMs: [100],
+			now: () => time,
+		});
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+		assert.strictEqual(store.allows("b.mjs", B.sha256), true);
+		await settle();
+		online = true;
+		time = 100;
+		store.allows("b.mjs", B.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+	});
+
 	it("allows exactly the listed code of a listed plugin", () => {
 		assert.strictEqual(listAllows(base, "https://example.com/store/a.mjs", "code a"), true);
 		// Served from another store (it moved): the id and the code decide

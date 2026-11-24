@@ -101,6 +101,8 @@ export type RegistryDeps = {
 	legacyAllows?(id: string, servedSha256: string): boolean;
 	/** Resolves once the list is loaded, or no longer waited for (legacyList.ts ready): what the confirmations say needs it */
 	legacyReady?(): Promise<void>;
+	/** Whether a list is loaded (legacyAllows answers from one): without it the confirmations can't say what runs */
+	legacyLoaded?(): boolean;
 	/** The page handed over its plugins once already (kept apart from the state: a lost state file doesn't allow another) */
 	wasMigrated?(): boolean;
 	markMigrated?(): void | Promise<void>;
@@ -136,8 +138,11 @@ const legacyNativesOf = (version: Version) => version.natives.filter((fileName) 
 export const legacyFormatMessage = (name: string) =>
 	`${name} uses the old native format, without isolation: its native code doesn't run. The author must move it to the new format (lunaWorld).`;
 
-/** What the confirmation says about a version. `legacyRuns`: its old-format natives would run (see CoreRecord legacyOff) */
-export const describe = (url: string, version: Version, legacyRuns = false): string[] => {
+/**
+ * What the confirmation says about a version. `legacyRuns`: its old-format natives would run (see CoreRecord legacyOff);
+ * "unknown": they would if this version is on the list, which isn't loaded yet
+ */
+export const describe = (url: string, version: Version, legacyRuns: boolean | "unknown" = false): string[] => {
 	const lines = [`${version.package.name} ${version.package.version ?? ""} from ${url}${isDevUrl(url) ? " (this computer)" : ""}`];
 	const legacy = legacyNativesOf(version);
 	const world = version.natives.filter(isWorldNative).map((fileName) => fileName.slice(worldFilePrefix.length));
@@ -145,7 +150,12 @@ export const describe = (url: string, version: Version, legacyRuns = false): str
 		lines.push(
 			`Native code (runs in TIDAL's main process): ${world.join(", ")}. Only the plugin's own isolated world can call it, other plugins can't reach it. TIDAL asks for each native file.`,
 		);
-	if (legacy.length !== 0 && legacyRuns)
+	if (legacy.length !== 0 && legacyRuns === "unknown")
+		lines.push(
+			`Native code (runs in TIDAL's main process): ${legacy.join(", ")}. TIDAL asks for each native file.`,
+			"Old native format, without isolation: Luna's list of plugins from before isolated worlds isn't loaded yet. Once it is, this code runs only if this exact version is on it, and then any plugin or script in the page can call its native functions.",
+		);
+	else if (legacy.length !== 0 && legacyRuns)
 		lines.push(
 			`Native code (runs in TIDAL's main process): ${legacy.join(", ")}. TIDAL asks for each native file.`,
 			"Legacy native plugin: while it is enabled, any plugin or script in the page can call its native functions.",
@@ -224,13 +234,13 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const codeOf = (version: Version) => (version.world === undefined ? servedOf(version) : `${servedOf(version)} ${sha256(version.world)}`);
 	/** Old-format natives of this version run: a dev url, or its exact code is on the list (and the plugin didn't leave it here) */
 	const legacyRuns = (url: string, version: Version | undefined) =>
-		isDevUrl(url) ||
-		(version !== undefined &&
-			!legacyOff.has(url) &&
-			!legacyOffIds.has(pluginIdOf(url)) &&
-			(legacyRan[url] === undefined || legacyRan[url] === codeOf(version)) &&
-			(legacyFirst[pluginIdOf(url)] === undefined || legacyFirst[pluginIdOf(url)] === codeOf(version)) &&
-			deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true);
+		isDevUrl(url) || (version !== undefined && stillLegacy(url, version) && deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true);
+	/** Not off the old format here: what the list decides, if this version is on it */
+	const stillLegacy = (url: string, version: Version) =>
+		!legacyOff.has(url) &&
+		!legacyOffIds.has(pluginIdOf(url)) &&
+		(legacyRan[url] === undefined || legacyRan[url] === codeOf(version)) &&
+		(legacyFirst[pluginIdOf(url)] === undefined || legacyFirst[pluginIdOf(url)] === codeOf(version));
 	/** Old-format natives of this url's accepted version ran: remembered, so other code accepted later leaves the format */
 	const ranLegacy = (url: string, version: Version) => {
 		if (isDevUrl(url) || (legacyRan[url] !== undefined && legacyFirst[pluginIdOf(url)] !== undefined)) return;
@@ -267,8 +277,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 		leaveLegacy(url, quiet);
 	};
 	/** Whether this version's old-format natives would run once accepted (what the confirmation says) */
-	const legacyWouldRun = (url: string, before: Version | undefined, version: Version) =>
-		legacyRuns(url, version) && !leaves(url, before, version);
+	const legacyWouldRun = (url: string, before: Version | undefined, version: Version): boolean | "unknown" => {
+		if (legacyRuns(url, version)) return !leaves(url, before, version);
+		return deps.legacyLoaded?.() === false && stillLegacy(url, version) && !leaves(url, before, version) ? "unknown" : false;
+	};
 	/**
 	 * A url's first accepted code is remembered, natives or not, whether or not they ran (the list may have been missing
 	 * then): other code accepted there later leaves the format, also after an uninstall
@@ -376,7 +388,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 		const version = (record.accepted ?? record.pending)!;
 		// Enabling plain page code gives the page nothing it doesn't have: only native plugins (and first reviews) ask
 		if (isNative(version) || record.accepted === undefined) {
-			const lines = describe(url, version, legacyRuns(url, version));
+			const lines = describe(url, version, legacyWouldRun(url, record.accepted, version));
 			if (!(await ask({ title: `Enable ${record.name}?`, lines, confirmText: "Enable" }))) return false;
 		}
 		if (record.accepted === undefined) {

@@ -575,6 +575,32 @@ describe("core registry", () => {
 		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
 	});
 
+	it("says old-format natives depend on the list while none is loaded", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry({ ...deps, legacyLoaded: () => false });
+		const ask = asker(false);
+		await registry.install(URL, ask);
+		const text = ask.asked[0].lines.join("\n");
+		assert.match(text, /isn't loaded yet/);
+		assert.match(text, /any plugin or script in the page can call its native functions/);
+		assert.doesNotMatch(text, /won't run/);
+		// A plugin that left the old format is told it won't run, list or not
+		const left = fakeDeps();
+		left.serve(URL, "v1", { "a.native.ts": "native a" });
+		const before = createRegistry(left.deps);
+		await installLegacy(before, left.deps, URL, "v1");
+		left.serve(URL, "v2", { "a.native.ts": "native a2" });
+		await before.load(URL);
+		await before.acceptUpdate(URL, asker(true));
+		await before.uninstall(URL);
+		const restarted = createRegistry({ ...left.deps, read: () => left.writes.at(-1)!, legacyLoaded: () => false });
+		left.serve(URL, "v1", { "a.native.ts": "native a" });
+		const again = asker(false);
+		await restarted.install(URL, again);
+		assert.match(again.asked[0].lines.join("\n"), /won't run/);
+	});
+
 	it("takes a plugin off the old format when an update changes only its world", async () => {
 		const { deps, serve, serveWorld, served } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });

@@ -182,7 +182,15 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		if (cache === "unread") throw new Error("the cached list can't be read yet: not replaced");
 		if (cache === "broken") throw new Error("the cached list fails its check: not replaced");
 		writeCurrent();
-		const { bytes, sig } = await deps.fetchList();
+		let fetched: { bytes: Buffer; sig: string };
+		try {
+			fetched = await deps.fetchList();
+		} catch (err) {
+			fetchFailed = true;
+			throw err;
+		}
+		fetchFailed = false;
+		const { bytes, sig } = fetched;
 		loadCache();
 		const next = parseLegacyList(bytes, sig, deps.publicKey);
 		const replaces = replacesList(current?.list, next);
@@ -197,7 +205,9 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	};
 
 	let first: Promise<void> | undefined;
-	/** While no list was accepted: when to fetch again (a cache that can't be read yet: on the next call) */
+	/** The last refresh couldn't fetch (offline): tried again, also with a cached list, until one gets through */
+	let fetchFailed = false;
+	/** While no list was accepted or fetched: when to fetch again (a cache that can't be read yet: on the next call) */
 	let retryAt: number | undefined;
 	let failures = 0;
 	/** The first refresh, started again while no list was accepted yet (the 6 h refresh is the caller's); never rejects */
@@ -207,7 +217,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		return (first = refresh().catch((err) => {
 			deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
 			if (cache === "unread") retryAt = now();
-			else if (current === undefined && cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
+			else if ((current === undefined || fetchFailed) && cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
 		}));
 	};
 	let waitUntil: number | undefined;
