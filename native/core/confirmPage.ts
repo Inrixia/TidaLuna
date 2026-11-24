@@ -8,7 +8,7 @@ export type ConfirmLine = string | (string | ConfirmLink)[];
 /**
  * A warning above the buttons with a button of its own (revoke an answer, say). Clicking it chooses the action: `done`
  * replaces the warning, and main calls `run` only if the user then confirms, before the answer counts. If `run` throws,
- * the answer is no.
+ * the confirmation fails (rejects).
  */
 export type ConfirmWarning = { text: string; action: string; done: string; run: () => void | Promise<void> };
 /**

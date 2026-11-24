@@ -64,12 +64,17 @@ export const askConfirm = async (
 	}
 };
 
-/** Resolves with the user's answer, or undefined if no window could be shown */
+/**
+ * Resolves with the user's answer, or undefined if no window could be shown. Rejects if the warning's action the user
+ * chose failed: what they confirmed was with it done
+ */
 const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
-	new Promise<boolean | undefined>((resolve) => {
+	new Promise<boolean | undefined>((resolve, reject) => {
 		// TIDAL may have been hidden while earlier prompts were answered
 		const owner = visibleOwner(parent);
 		if (owner === undefined) return resolve(undefined);
+		// Taken now, before a window exists that a throw here would leave open
+		const warning = shownWarning(request);
 		const win = createPromptWindow({
 			parent: owner,
 			modal: true,
@@ -83,7 +88,6 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 		let answer: boolean | undefined;
 		let submitted = false;
 		const links = confirmLinks(request);
-		const warning = shownWarning(request);
 		const run = (script: string) => !win.isDestroyed() && void win.webContents.executeJavaScript(script).catch(() => {});
 		// The user chose the warning's action: it runs if they confirm (closing or cancelling drops it)
 		let warningChosen = false;
@@ -140,15 +144,15 @@ const show = (request: ConfirmRequest, parent?: BrowserWindow) =>
 			clearTimeout(armTimer);
 			const action = actionToRun(answer, warningChosen, warning);
 			if (action === undefined) return resolve(answer);
-			// Before the answer counts: what it confirms (an update, say) must find the action done. If it failed, it is no:
-			// what the user confirmed was with it done
+			// Before the answer counts: what it confirms (an update, say) must find the action done. If it failed, the
+			// confirmation fails: the asker (registry.ts) does nothing, and the renderer shows why
 			Promise.resolve()
 				.then(action)
 				.then(
 					() => resolve(answer),
 					(err) => {
-						console.error("[🛑Security🛑] The confirmation's warning action failed, taken as no", err);
-						resolve(false);
+						console.error("[🛑Security🛑] The confirmation's warning action failed", err);
+						reject(new Error(`[Luna.core] "${warning?.action}" failed, so "${request.title}" is not confirmed: ${err?.message ?? err}`));
 					},
 				);
 		});

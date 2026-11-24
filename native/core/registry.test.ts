@@ -291,6 +291,24 @@ describe("core registry", () => {
 		assert.deepStrictEqual(trust, ["Update only if you trust the author and ", { text: RELEASE, href: `${RELEASE}.json` }]);
 	});
 
+	it("keeps the version the user has when the confirmation fails (Ask again couldn't revoke)", async () => {
+		const { deps, serve } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.load(URL);
+		const failing = async () => {
+			throw new Error('"Ask again" failed');
+		};
+		await assert.rejects(registry.acceptUpdate(URL, failing), /Ask again/);
+		assert.strictEqual(registry.info(URL)?.hash, "v1");
+		assert.strictEqual(registry.info(URL)?.pending?.hash, "v2");
+		// The url's queue goes on
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(registry.info(URL)?.hash, "v2");
+	});
+
 	it("warns when the plugin's native files are allowed for all versions, and asks again only if the user updates", async () => {
 		const { deps, serve, allVersions } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });

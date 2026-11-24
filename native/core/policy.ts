@@ -18,7 +18,6 @@ export const isDevUrl = (url: string) => {
 	}
 };
 
-/** Native files an update adds and removes */
 /**
  * A plugin's native permission answers that hold for all versions (`allowUpdates`): `[key, fileName]` of each, by the
  * plugin's checked url, else the one it named (native/NativeModule/trust.ts)
@@ -31,6 +30,7 @@ export const allVersionsEntries = (
 		.filter(([, record]) => record.answer === "allowUpdates" && (record.url ?? record.claimedUrl) === url)
 		.map(([key, { fileName }]) => [key, fileName]);
 
+/** Native files an update adds and removes */
 export const nativesDiff = (accepted: string[], pending: string[]) => ({
 	added: pending.filter((name) => !accepted.includes(name)),
 	removed: accepted.filter((name) => !pending.includes(name)),
