@@ -119,6 +119,11 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 		setUpdating(true);
 		try {
 			for (const key of revoke) await ipcRenderer.invoke("__Luna.nativePermissions.revoke", key);
+		} catch (err) {
+			// The update still applies: files already revoked ask when it loads, the rest keep their answer
+			plugin.trace.msg.err.withContext("Couldn't revoke all of the plugin's native permissions")(err);
+		}
+		try {
 			// The update the user was shown, even if a newer one arrived meanwhile
 			await plugin.acceptUpdate(update);
 		} catch {
