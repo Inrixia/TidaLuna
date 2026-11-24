@@ -210,6 +210,39 @@ describe("core registry", () => {
 		assert.strictEqual((await registry.load(URL)).pending, undefined);
 	});
 
+	it("takes other code of a world plugin under the same hashes as an update, and replaces a waiting one", async () => {
+		const { deps, serveWorld, served } = fakeDeps();
+		serveWorld(URL, "w1", {});
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		served.get(URL)!.code = "code a";
+		assert.strictEqual((await registry.load(URL)).pending?.codeSha256, sha256("code a"));
+		served.get(URL)!.code = "code b";
+		const loaded = await registry.load(URL);
+		assert.strictEqual(loaded.code, "code w1");
+		assert.strictEqual(loaded.pending?.codeSha256, sha256("code b"));
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual((await registry.load(URL)).code, "code b");
+	});
+
+	it("sees no update for the same code under another sourceURL line (a store moved offline)", async () => {
+		const { deps, serve, served } = fakeDeps();
+		const NEW = "https://example.org/plugin";
+		serve(URL, "v1");
+		served.get(URL)!.code = `code v1\n//# sourceURL=${URL}.mjs`;
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+		// Offline: the accepted code moves with its old line
+		served.delete(URL);
+		assert.strictEqual(await registry.moveUrl(URL, NEW), true);
+		serve(NEW, "v1");
+		served.get(NEW)!.code = `code v1\n//# sourceURL=${NEW}.mjs`;
+		assert.strictEqual((await registry.load(NEW)).pending, undefined);
+		// Other code at the new url is still an update
+		served.get(NEW)!.code = `code v2\n//# sourceURL=${NEW}.mjs`;
+		assert.strictEqual((await registry.load(NEW)).pending?.codeSha256, sha256(`code v2\n//# sourceURL=${NEW}.mjs`));
+	});
+
 	it("accepts the update the user was asked about, a newer one found meanwhile waits", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1");

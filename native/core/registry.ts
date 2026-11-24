@@ -70,6 +70,7 @@ export type CoreState = {
 export type PendingUpdate = {
 	version?: string;
 	hash: string;
+	worldHash?: string;
 	codeSha256: string;
 	natives: string[];
 	added: string[];
@@ -132,11 +133,15 @@ const withoutSource = (code: string, url: string) => {
 const isNative = (version: Version) => version.natives.length !== 0;
 /**
  * Any change is a new version: a new hash of the page code or the world in the package, or other served code under the
- * same hash (whatever the version number says). The world needs no own check: a world is only taken when it matches
- * its worldHash
+ * same hash (whatever the version number says). The code is compared without the sourceURL line fetchCode adds, which
+ * names the url (an accepted version moved offline keeps its old url's line). The world needs no own check: a world
+ * is only taken when it matches its worldHash
  */
-const sameVersion = (version: Version | undefined, pkg: PluginPackage, codeSha256: string) =>
-	version !== undefined && version.package.hash === pkg.hash && version.package.worldHash === pkg.worldHash && version.codeSha256 === codeSha256;
+const sameVersion = (version: Version | undefined, pkg: PluginPackage, served: string) =>
+	version !== undefined &&
+	version.package.hash === pkg.hash &&
+	version.package.worldHash === pkg.worldHash &&
+	servedSha256(version.code) === served;
 
 const legacyNativesOf = (version: Version) => version.natives.filter((fileName) => !isWorldNative(fileName));
 export const legacyFormatMessage = (name: string) =>
@@ -337,6 +342,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 					: {
 							version: pending.package.version,
 							hash: pending.package.hash,
+							worldHash: pending.package.worldHash,
 							codeSha256: pending.codeSha256,
 							natives: pending.natives,
 							...nativesDiff(accepted?.natives ?? [], pending.natives),
@@ -352,9 +358,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 			const pkg = await deps.fetchPackage(url);
 			// The code too, not only the package: code changed under the same hash is an update the user sees
 			const code = await deps.fetchCode(url);
-			const codeSha256 = sha256(code);
-			if (!sameVersion(record.accepted, pkg, codeSha256)) {
-				const version = sameVersion(record.pending, pkg, codeSha256) ? record.pending! : await fetchVersion(url, pkg, code);
+			const served = servedSha256(code);
+			if (!sameVersion(record.accepted, pkg, served)) {
+				const version = sameVersion(record.pending, pkg, served) ? record.pending! : await fetchVersion(url, pkg, code);
 				if (record.accepted === undefined && record.unreviewed && isNative(version)) {
 					// Migrated native plugin: it runs only once the user enables it
 					record.enabled = false;
