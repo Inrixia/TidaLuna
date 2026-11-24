@@ -217,17 +217,19 @@ export const updateQuestion = (
 	if (links.release !== undefined) versions.push(" (", { text: `release ${links.release.tag}`, href: links.release.page }, ")");
 	const hashes: ConfirmLine = [`Code sha256: ${shortHash(accepted.codeSha256)} -> ${shortHash(pending.codeSha256)}`];
 	if (links.compare !== undefined) hashes.push(" (", { text: "changes", href: links.compare }, ")");
-	const lines: ConfirmLine[] = [versions, hashes, ...notes, ["Update only if you trust the author and ", link(url, url)]];
-	const files = deps.allVersionsAnswers(url);
-	const warning: ConfirmWarning | undefined =
-		files.length === 0
-			? undefined
-			: {
-					text: `Native code allowed for all versions (${files.join(", ")}): the update's runs without asking.`,
-					action: "Ask again",
-					done: `If you update, ${files.join(", ")} will ask for permission again.`,
-					run: () => deps.revokeAllVersions(url),
-				};
+	// The url names the plugin's files (`.json`, `.mjs`), nothing at the url itself: the link opens its package
+	const lines: ConfirmLine[] = [versions, hashes, ...notes, ["Update only if you trust the author and ", link(url, `${url}.json`)]];
+	// When the window shows (it may wait behind other prompts), of the update's native files
+	const warning = (): ConfirmWarning | undefined => {
+		const files = deps.allVersionsAnswers(url).filter((fileName) => pending.natives.includes(fileName));
+		if (files.length === 0) return undefined;
+		return {
+			text: `Native code allowed for all versions (${files.join(", ")}): the update's runs without asking.`,
+			action: "Ask again",
+			done: `If you update, ${files.join(", ")} will ask for permission again.`,
+			run: () => deps.revokeAllVersions(url),
+		};
+	};
 	return { title: `Update ${name}?`, lines, confirmText: "Update", warning };
 };
 

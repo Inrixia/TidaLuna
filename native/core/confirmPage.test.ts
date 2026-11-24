@@ -2,14 +2,17 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 
 import {
+	actionToRun,
 	ANSWER_IN_USE_MS,
 	buildConfirmHtml,
 	confirmGate,
 	confirmLinks,
 	confirmRequest,
 	COOL_DOWN_MS,
+	httpLink,
 	MAX_CANCELS,
 	MAX_PENDING,
+	shownWarning,
 	type TidalState,
 } from "./confirmPage";
 
@@ -133,7 +136,7 @@ describe("core confirmation page", () => {
 		assert.throws(() => confirmRequest("T", [[{ text: "x" }]], "Go"));
 		assert.throws(() => confirmRequest("T", [[1]], "Go"));
 		const run = () => {};
-		assert.equal(confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d", run }).warning?.run, run);
+		assert.equal(shownWarning(confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d", run }))?.run, run);
 		assert.throws(() => confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d" }));
 		assert.throws(() => confirmRequest("T", [], "Go", { text: 1, action: "Ask again", done: "d", run }));
 	});
@@ -141,13 +144,14 @@ describe("core confirmation page", () => {
 	it("numbers its links in the order main opens them, and escapes them", () => {
 		const request = confirmRequest(
 			"T",
-			["plain", ["a ", { text: "<b>one</b>", href: 'https://a.example/1?x="y"' }], [{ text: "two", href: "http://b.example/2" }]],
+			["plain", ["a ", { text: "<b>one</b>", href: "https://a.example/1?x=1&y=2" }], [{ text: "two", href: "http://b.example" }]],
 			"Go",
 		);
-		assert.deepEqual(confirmLinks(request), ['https://a.example/1?x="y"', "http://b.example/2"]);
-		const html = buildConfirmHtml(request);
-		assert.match(html, /<a href="#" data-link="0" title="https:\/\/a\.example\/1\?x=&quot;y&quot;">&lt;b&gt;one&lt;\/b&gt;<\/a>/);
-		assert.match(html, /<a href="#" data-link="1" title="http:\/\/b\.example\/2">two<\/a>/);
+		// Normalized: b.example's path gets its slash
+		assert.deepEqual(confirmLinks(request), ["https://a.example/1?x=1&y=2", "http://b.example/"]);
+		const html = buildConfirmHtml({ ...request, warning: shownWarning(request) });
+		assert.match(html, /<a href="#" data-link="0" title="https:\/\/a\.example\/1\?x=1&amp;y=2">&lt;b&gt;one&lt;\/b&gt;<\/a>/);
+		assert.match(html, /<a href="#" data-link="1" title="http:\/\/b\.example\/">two<\/a>/);
 		assert.equal(html.includes("<b>one</b>"), false);
 	});
 
@@ -156,5 +160,35 @@ describe("core confirmation page", () => {
 		const html = buildConfirmHtml({ title: "T", lines: [], confirmText: "Go", warning });
 		assert.match(html, /<span id="warning-text">&lt;i&gt;Allowed&lt;\/i&gt;<\/span><button id="warning-action">Ask again<\/button>/);
 		assert.equal(buildConfirmHtml({ title: "T", lines: [], confirmText: "Go" }).includes('id="warning-text"'), false);
+	});
+
+	it("takes a warning given as a function when the window shows, and checks it then", () => {
+		let state: string | undefined;
+		const request = confirmRequest("T", [], "Go", () =>
+			state === undefined ? undefined : { text: state, action: "A", done: "D", run: () => {} },
+		);
+		assert.equal(shownWarning(request), undefined);
+		state = "now";
+		assert.equal(shownWarning(request)?.text, "now");
+		const bad = confirmRequest("T", [], "Go", () => ({ text: "w", action: "A", done: "D" }));
+		assert.throws(() => shownWarning(bad));
+	});
+
+	it("runs the warning's action only if the user chose it and then confirmed", () => {
+		const warning = { text: "w", action: "A", done: "D", run: () => {} };
+		assert.equal(actionToRun(true, true, warning), warning.run);
+		assert.equal(actionToRun(true, false, warning), undefined);
+		// Cancel, Escape, closed or never shown
+		assert.equal(actionToRun(false, true, warning), undefined);
+		assert.equal(actionToRun(undefined, true, warning), undefined);
+		assert.equal(actionToRun(true, true, undefined), undefined);
+	});
+
+	it("opens normalized http(s) links only", () => {
+		assert.equal(httpLink("https://example.com/a b"), "https://example.com/a%20b");
+		assert.equal(httpLink("https:example.com"), "https://example.com/");
+		assert.equal(httpLink("javascript:alert(1)"), undefined);
+		assert.equal(httpLink(" file:///C:/x"), undefined);
+		assert.equal(httpLink(1), undefined);
 	});
 });

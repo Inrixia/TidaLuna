@@ -1,5 +1,6 @@
 import { BrowserWindow } from "electron";
 
+import { allVersionsEntries } from "../core/policy";
 import { ipcHandle } from "../ipc";
 import { getStore, recordKey, saveStore, type NativeRecord, type PermissionAnswer } from "./permissions/store";
 import { verifySource } from "./permissions/verifySource";
@@ -227,14 +228,13 @@ const revoke = (key: string) => {
 ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => revoke(key));
 
 /** The plugin's native files allowed for all versions: an update's code for them runs without asking (native/core/registry.ts) */
-export const allVersionsAnswers = (url: string): string[] =>
-	Object.values(getStore().natives)
-		.filter((record) => record.answer === "allowUpdates" && pluginOf(record) === url)
-		.map(({ fileName }) => fileName);
+export const allVersionsAnswers = (url: string): string[] => [
+	...new Set(allVersionsEntries(getStore().natives, url).map(([, fileName]) => fileName)),
+];
 
 /** Revokes the plugin's answers for all versions, so its native files ask again the next time they load */
 export const revokeAllVersions = (url: string) => {
-	for (const [key, record] of Object.entries(getStore().natives)) if (record.answer === "allowUpdates" && pluginOf(record) === url) revoke(key);
+	for (const [key] of allVersionsEntries(getStore().natives, url)) revoke(key);
 };
 
 /** Uninstalling a plugin forgets its answers, so a reinstall asks again (native/core/registry.ts) */

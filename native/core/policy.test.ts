@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 
 import {
+	allVersionsEntries,
 	boundedCache,
 	compareVersions,
 	coreNativeArgsError,
@@ -86,5 +87,23 @@ describe("core native rules", () => {
 		assert.match(coreNativeArgsError("update", ["1.0 then restart"]) ?? "", /invalid version/);
 		assert.match(coreNativeArgsError("update", [["1.0.0"]]) ?? "", /invalid version/);
 		assert.equal(coreNativeArgsError("startNativeDebugging", []), undefined);
+	});
+});
+
+describe("core policy: native answers for all versions", () => {
+	it("finds the plugin's allowUpdates answers, by checked url else the named one", () => {
+		const URL = "https://example.com/plugin";
+		const natives = {
+			a: { url: URL, fileName: "a.native.ts", answer: "allowUpdates" },
+			b: { claimedUrl: URL, fileName: "b.native.ts", answer: "allowUpdates" },
+			c: { url: URL, fileName: "c.native.ts", answer: "allow" },
+			d: { url: "https://example.com/other", claimedUrl: URL, fileName: "d.native.ts", answer: "allowUpdates" },
+			e: { url: "https://example.com/other", fileName: "e.native.ts", answer: "allowUpdates" },
+		};
+		assert.deepEqual(allVersionsEntries(natives, URL), [
+			["a", "a.native.ts"],
+			["b", "b.native.ts"],
+		]);
+		assert.deepEqual(allVersionsEntries({}, URL), []);
 	});
 });
