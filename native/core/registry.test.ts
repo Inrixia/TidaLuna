@@ -533,6 +533,34 @@ describe("core registry", () => {
 		assert.strictEqual(restarted.nativeOwner("a.native.ts", "native a"), undefined);
 	});
 
+	it("keeps a plugin off the old format when it is reinstalled from another url of its store", async () => {
+		const TAGGED = "https://example.com/v1/plugin";
+		const { deps, serve, writes } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await installLegacy(registry, deps, URL, "v1");
+		serve(URL, "v2", { "a.native.ts": "native a2" });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		await registry.uninstall(URL);
+		// A release tag still serves the listed code under the same id
+		serve(TAGGED, "v1", { "a.native.ts": "native a" });
+		await registry.install(TAGGED, asker(true));
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+		assert.deepStrictEqual(writes.at(-1)?.legacyOffIds, ["plugin"]);
+
+		// Other code first at one url, then the listed code at another: the same
+		const other = fakeDeps();
+		other.list(URL, "v1");
+		other.serve(TAGGED, "v2", { "a.native.ts": "native a2" });
+		const second = createRegistry(other.deps);
+		await second.install(TAGGED, asker(true));
+		await second.uninstall(TAGGED);
+		other.serve(URL, "v1", { "a.native.ts": "native a" });
+		await second.install(URL, asker(true));
+		assert.strictEqual(second.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
 	it("takes a plugin off the old format when an update changes only its world", async () => {
 		const { deps, serve, serveWorld, served } = fakeDeps();
 		serve(URL, "v1", { "a.native.ts": "native a" });

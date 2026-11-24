@@ -233,6 +233,27 @@ describe("old native format list", () => {
 		assert.strictEqual(fetches, 3);
 	});
 
+	it("applies a smaller list at once even if it can't be cached", async () => {
+		const first = signed(doc(1, [A, B]));
+		let served = first;
+		const store = createLegacyStore({
+			readCache: () => JSON.stringify({ list: first.bytes.toString("base64"), sig: first.sig }),
+			writeCache: () => {
+				throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+			},
+			fetchList: async () => served,
+			publicKey: pub,
+		});
+		assert.strictEqual(store.allows("b.mjs", B.sha256), true);
+		served = signed(doc(2, [A]));
+		await store.refresh();
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// Still the only-shrinks rule against the list in use
+		served = first;
+		await assert.rejects(store.refresh(), /rollback/);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+	});
+
 	it("allows exactly the listed code of a listed plugin", () => {
 		assert.strictEqual(listAllows(base, "https://example.com/store/a.mjs", "code a"), true);
 		// Served from another store (it moved): the id and the code decide

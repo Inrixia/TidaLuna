@@ -60,6 +60,12 @@ export type CoreState = {
 	legacyRan?: Record<string, string>;
 	/** Url -> the urls a plugin moved between with it (both ways): leaving the old format at one leaves it at all */
 	legacyLinks?: Record<string, string[]>;
+	/**
+	 * The same by plugin id (the last part of the url, what the list matches): ids that left the old format, and id ->
+	 * its first accepted code. A plugin reinstalled from another url of its store (a release tag) doesn't come back.
+	 */
+	legacyOffIds?: string[];
+	legacyFirst?: Record<string, string>;
 };
 export type PendingUpdate = {
 	version?: string;
@@ -170,6 +176,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 		state.legacyRan !== null && typeof state.legacyRan === "object" ? state.legacyRan : (state.legacyRan = {});
 	const legacyLinks: Record<string, string[]> =
 		state.legacyLinks !== null && typeof state.legacyLinks === "object" ? state.legacyLinks : (state.legacyLinks = {});
+	const legacyOffIds = new Set(Array.isArray(state.legacyOffIds) ? state.legacyOffIds : []);
+	const legacyFirst: Record<string, string> =
+		state.legacyFirst !== null && typeof state.legacyFirst === "object" ? state.legacyFirst : (state.legacyFirst = {});
 	// Plugins from before this format kept their list in `legacy`: the registry's signed list replaces it
 	delete (state as { legacy?: unknown }).legacy;
 	let saving: Promise<unknown> = Promise.resolve();
@@ -216,12 +225,14 @@ export const createRegistry = (deps: RegistryDeps) => {
 		isDevUrl(url) ||
 		(version !== undefined &&
 			!legacyOff.has(url) &&
+			!legacyOffIds.has(pluginIdOf(url)) &&
 			(legacyRan[url] === undefined || legacyRan[url] === codeOf(version)) &&
+			(legacyFirst[pluginIdOf(url)] === undefined || legacyFirst[pluginIdOf(url)] === codeOf(version)) &&
 			deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true);
 	/** Old-format natives of this url's accepted version ran: remembered, so other code accepted later leaves the format */
 	const ranLegacy = (url: string, version: Version) => {
-		if (isDevUrl(url) || legacyRan[url] !== undefined) return;
-		legacyRan[url] = codeOf(version);
+		if (isDevUrl(url) || (legacyRan[url] !== undefined && legacyFirst[pluginIdOf(url)] !== undefined)) return;
+		noteLegacy(url, version);
 		void save();
 	};
 	/** Off the old format for good: this url and every url the plugin moved between with it */
@@ -230,19 +241,22 @@ export const createRegistry = (deps: RegistryDeps) => {
 		for (let next; (next = todo.pop()) !== undefined;) {
 			if (isDevUrl(next) || legacyOff.has(next)) continue;
 			legacyOff.add(next);
+			legacyOffIds.add(pluginIdOf(next));
 			if (!quiet) deps.log?.(`[Luna.core] ${next} left the old native format: it accepted other code than its first version`);
 			todo.push(...(legacyLinks[next] ?? []));
 		}
 		state.legacyOff = [...legacyOff];
+		state.legacyOffIds = [...legacyOffIds];
 	};
 	/** Code a url accepts (an update, an install, a move): code other than the first accepted here leaves the old format */
 	const leaves = (url: string, before: Version | undefined, version: Version) => {
 		if (isDevUrl(url)) return false;
 		const ran = legacyRan[url];
+		const first = legacyFirst[pluginIdOf(url)];
 		const sha = codeOf(version);
 		// Not asking the list: it may be missing or older at this moment. Code without old-format natives counts too: going
 		// back from it to listed code is still other code
-		return (ran !== undefined && ran !== sha) || (before !== undefined && codeOf(before) !== sha);
+		return (ran !== undefined && ran !== sha) || (first !== undefined && first !== sha) || (before !== undefined && codeOf(before) !== sha);
 	};
 	const leavesLegacy = (url: string, before: Version | undefined, version: Version) => {
 		if (!leaves(url, before, version)) return;
@@ -258,7 +272,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 	 * then): other code accepted there later leaves the format, also after an uninstall
 	 */
 	const noteLegacy = (url: string, version: Version) => {
-		if (!isDevUrl(url) && legacyRan[url] === undefined) legacyRan[url] = codeOf(version);
+		if (isDevUrl(url)) return;
+		legacyRan[url] ??= codeOf(version);
+		legacyFirst[pluginIdOf(url)] ??= codeOf(version);
 	};
 	// Records accepted before first versions were remembered for all code
 	for (const record of Object.values(state.plugins)) if (record?.accepted !== undefined) noteLegacy(record.url, record.accepted);

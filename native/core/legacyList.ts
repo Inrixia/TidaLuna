@@ -168,8 +168,13 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		if (!replaces.ok) throw new Error(`refused: ${replaces.reason}`);
 		// A removal under the same serial is still a removal: only the same bytes change nothing
 		if (current !== undefined && current.bytes.equals(bytes)) return;
-		deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
+		// Used at once, even if it can't be cached: a smaller list must apply now (the next start shrinks the cache again)
 		use(next, bytes);
+		try {
+			deps.writeCache(JSON.stringify({ list: bytes.toString("base64"), sig: sig.trim() }));
+		} catch (err) {
+			deps.log?.(`[Luna.core] The old native format list can't be cached now: ${(err as Error)?.message ?? err}`);
+		}
 		deps.log?.(`[Luna.core] Old native format list: serial ${next.serial}, ${next.entries.length} plugins`);
 	};
 
