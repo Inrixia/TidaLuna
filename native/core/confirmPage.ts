@@ -31,6 +31,41 @@ export const USER_INPUT_MS = 10_000;
 /** An answer in a confirmation window counts as using TIDAL this long (the next of several installs follows it) */
 export const ANSWER_IN_USE_MS = 10_000;
 
+/** confirmGate's refusal while TIDAL isn't in use (a host question waits for the user instead, confirmWindow.ts) */
+export const NOT_IN_USE = "TIDAL is not in use";
+
+/**
+ * For the host questions' gate (confirmWindow.ts askChoice) any pick is an answer, "Deny" too: a user denying hosts
+ * a plugin asks for in a burst is answering, not dismissing windows. Only a close counts as a cancel
+ */
+export const isHostAnswer = (raw: string) => raw.startsWith("choice:");
+
+/** The part of a BrowserWindow focusedWithin uses */
+export type FocusTarget = {
+	isDestroyed(): boolean;
+	isFocused(): boolean;
+	on(event: "focus" | "closed", listener: () => void): unknown;
+	off(event: "focus" | "closed", listener: () => void): unknown;
+};
+
+/** Resolves true once `win` has the focus (at once if it has), false after `ms` or if it closes first */
+export const focusedWithin = (win: FocusTarget, ms: number) =>
+	new Promise<boolean>((resolve) => {
+		if (win.isDestroyed()) return resolve(false);
+		if (win.isFocused()) return resolve(true);
+		const done = (focused: boolean) => {
+			clearTimeout(timer);
+			win.off("focus", onFocus);
+			win.off("closed", onClosed);
+			resolve(focused);
+		};
+		const onFocus = () => done(true);
+		const onClosed = () => done(false);
+		const timer = setTimeout(() => done(false), ms);
+		win.on("focus", onFocus);
+		win.on("closed", onClosed);
+	});
+
 /** What main knows about TIDAL's window when a request comes */
 export type TidalState = {
 	visible: boolean;
@@ -55,7 +90,7 @@ export const confirmGate = () => {
 		refuse({ tidal, now }: { tidal: TidalState; now: number }): string | undefined {
 			// A user's request comes from a click in TIDAL, or follows their answer to the last confirmation
 			const inUse = tidal.visible && (tidal.focused || tidal.recentUserInput || now - lastAnswer < ANSWER_IN_USE_MS);
-			if (!inUse) return "TIDAL is not in use";
+			if (!inUse) return NOT_IN_USE;
 			if (now < refusedUntil)
 				return `${MAX_CANCELS} confirmations were cancelled in a row, asking again in ${Math.ceil((refusedUntil - now) / 1000)} s`;
 			if (pending >= MAX_PENDING) return `${pending} confirmations are already waiting`;

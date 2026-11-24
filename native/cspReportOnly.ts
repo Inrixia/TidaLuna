@@ -27,6 +27,9 @@ export const networkBaseline = [
 	"*.gstatic.com",
 	"*.stripe.com",
 	"*.cookielaw.org",
+	// OneTrust's consent banner (from *.cookielaw.org) looks up the region; Stripe's checkout calls its own network
+	"*.onetrust.com",
+	"*.stripe.network",
 	"*.squarecdn.com",
 	"*.squareup.com",
 	"github.com",

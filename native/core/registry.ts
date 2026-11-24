@@ -534,7 +534,8 @@ export const createRegistry = (deps: RegistryDeps) => {
 				}
 				if (record.accepted === undefined || isDevUrl(url)) {
 					// A plugin from before the core: accepted without a confirmation, so its hosts weren't seen
-					if (record.accepted === undefined && !isDevUrl(url) && hostsOfVersion(version)?.length) version.hostsUnconfirmed = true;
+					// (an empty list too: the user never saw that it reaches no host)
+					if (record.accepted === undefined && !isDevUrl(url) && hostsOfVersion(version) !== undefined) version.hostsUnconfirmed = true;
 					accept(record, version);
 					record.pending = undefined;
 				} else if (record.pending !== version) {

@@ -67,8 +67,8 @@ export type AskHost = (question: HostQuestion) => Promise<HostAnswer | undefined
 
 export type NetDeps = {
 	hostsOf(url: string): PluginHosts;
-	/** Keeps an "always" or "deny" answer (registry.ts grantHost) */
-	grant?(pluginUrl: string, entry: string, grant: HostGrant): void | Promise<unknown>;
+	/** Keeps an "always" or "deny" answer (registry.ts grantHost); false or a throw: not kept, it counts until restart */
+	grant?(pluginUrl: string, entry: string, grant: HostGrant): void | boolean | Promise<unknown>;
 	fetch(
 		url: string,
 		init: { method: string; headers: Record<string, string>; body?: string | Uint8Array; redirect: "manual"; signal: AbortSignal },
@@ -117,10 +117,13 @@ export class NetRefused extends Error {}
 export const createNet = (deps: NetDeps) => {
 	/**
 	 * `${plugin url}\n${entry}` answered "once" until TIDAL restarts or the plugin is uninstalled, or "always" for a host the
-	 * hosts grammar can't keep (an IPv6 address, a name ending in "."): matched as written, not as a host entry
+	 * hosts grammar can't keep (an IPv6 address, a name ending in ".") or the registry didn't: matched as written, not as a
+	 * host entry
 	 */
 	const onceAllowed = new Set<string>();
-	/** `${plugin url}\n${entry}` denied for a host the grammar can't keep: until TIDAL restarts, as written */
+	/** The keys of onceAllowed answered "always" (not kept: page code hears it isn't in the page's CSP) */
+	const alwaysNotKept = new Set<string>();
+	/** `${plugin url}\n${entry}` denied for a host the grammar can't keep, or the registry didn't: until TIDAL restarts, as written */
 	const onceDenied = new Set<string>();
 	/** `${plugin url}\n${entry}\nlocal`: the user's answer for a public name that resolved to a local address, until restart */
 	const resolvedLocalAllowed = new Set<string>();
@@ -137,6 +140,15 @@ export const createNet = (deps: NetDeps) => {
 		log.push(entry);
 		if (log.length > logLimitPerPlugin) log.splice(0, log.length - logLimitPerPlugin);
 	};
+
+	/** `url` with each scheme a plugin's request may use (a deny of https://tracker.example holds for its wss:// too) */
+	const sameHostOtherSchemes = (url: URL) =>
+		["http:", "https:", "ws:", "wss:"].map((scheme) => {
+			if (scheme === url.protocol) return url;
+			const other = new URL(url.href);
+			other.protocol = scheme;
+			return other;
+		});
 
 	/** The user's answer for this plugin and host, asked once however many requests wait for it */
 	const askOnce = (pluginUrl: string, plugin: NonNullable<PluginHosts>, url: URL, reason: HostQuestion["reason"], ask: AskHost | undefined) => {
@@ -159,13 +171,21 @@ export const createNet = (deps: NetDeps) => {
 				if (resolvesLocal) {
 					if (got === "once" || got === "always") resolvedLocalAllowed.add(key);
 					else if (got === "deny") resolvedLocalDenied.add(key);
-				} else if (got === "once" || (got === "always" && !keepable)) onceAllowed.add(key);
+				} else if (got === "once") onceAllowed.add(key);
+				else if (got === "always" && !keepable) (onceAllowed.add(key), alwaysNotKept.add(key));
 				else if (got === "deny" && !keepable) onceDenied.add(key);
-				else if (got === "always" || got === "deny")
-					// Not kept (plugins.json can't be written): the answer still counts for this request
-					await Promise.resolve()
+				else if (got === "always" || got === "deny") {
+					// Not kept (the plugin was uninstalled meanwhile, the registry failed): the answer still counts, until restart
+					const kept = await Promise.resolve()
 						.then(() => deps.grant?.(pluginUrl, entry, got))
-						.catch((err) => console.error("[Luna.core] Can't keep the answer for", entry, err));
+						.then((result) => result !== false)
+						.catch((err) => {
+							console.error("[Luna.core] Can't keep the answer for", entry, err);
+							return false;
+						});
+					if (!kept && got === "always") (onceAllowed.add(key), alwaysNotKept.add(key));
+					else if (!kept) onceDenied.add(key);
+				}
 				return got;
 			});
 			asking.set(key, answer);
@@ -191,7 +211,8 @@ export const createNet = (deps: NetDeps) => {
 		if (!schemes.includes(url.protocol)) return `${url.protocol} urls can't be fetched`;
 		if (url.username !== "" || url.password !== "") return "urls with credentials can't be fetched";
 		const deny = plugin.deny ?? [];
-		if (hostAllowed(deny, url) || onceDenied.has(`${pluginUrl}\n${answerEntry(url)}`)) return `you denied ${url.host} for ${plugin.name}`;
+		if (sameHostOtherSchemes(url).some((each) => hostAllowed(deny, each) || onceDenied.has(`${pluginUrl}\n${answerEntry(each)}`)))
+			return `you denied ${url.host} for ${plugin.name}`;
 		const local = `${url.hostname} is a local address: ${plugin.name} must list it in its hosts as a local entry`;
 		// A legacy plugin's luna.fetch reaches public hosts as it is; its page requests (a WebSocket) are asked like any
 		// plugin's, as an "always" answer is the only way into the page's CSP
@@ -442,7 +463,7 @@ export const createNet = (deps: NetDeps) => {
 		fetch: fetchFor,
 		/** Forgets the plugin's answers kept until restart: it was uninstalled, or moved to another url */
 		forget: (pluginUrl: string) => {
-			for (const kept of [onceAllowed, onceDenied, resolvedLocalAllowed, resolvedLocalDenied])
+			for (const kept of [onceAllowed, alwaysNotKept, onceDenied, resolvedLocalAllowed, resolvedLocalDenied])
 				for (const key of kept) if (key.startsWith(`${pluginUrl}\n`)) kept.delete(key);
 		},
 		/**
@@ -479,9 +500,14 @@ export const createNet = (deps: NetDeps) => {
 			if (reason !== undefined) entry.error = reason;
 			record(entry, plugin !== undefined);
 			if (reason !== undefined) return { allowed: false, reason };
-			// Allowed only as written, in memory: the page's CSP (built from kept grants) never has it
-			const notKept = parseHostEntry(answerEntry(url)) === undefined && onceAllowed.has(`${pluginUrl}\n${answerEntry(url)}`);
-			return { allowed: true, ...(entry.asked === undefined ? {} : { answer: entry.asked }), ...(notKept ? { notKept: true as const } : {}) };
+			// Allowed only in memory ("only now", or an answer that couldn't be kept): the page's CSP, built from kept grants,
+			// never has it
+			const key = `${pluginUrl}\n${answerEntry(url)}`;
+			if (onceAllowed.has(key))
+				return parseHostEntry(answerEntry(url)) !== undefined && !alwaysNotKept.has(key)
+					? { allowed: true, answer: "once" }
+					: { allowed: true, answer: alwaysNotKept.has(key) ? "always" : "once", notKept: true };
+			return entry.asked === undefined ? { allowed: true } : { allowed: true, answer: entry.asked };
 		},
 		/**
 		 * The newest entries last, copied. No way to clear it: any page code could, to hide its requests. It lasts until

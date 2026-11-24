@@ -15,12 +15,20 @@ import {
 	SUBMIT,
 	TITLE,
 	USER_INPUT_MS,
+	NOT_IN_USE,
+	focusedWithin,
+	isHostAnswer,
 	type ConfirmRequest,
 } from "./confirmPage";
 import { notAsked } from "./notAsked";
 
 // Page code can ask for confirmations: it must not flood the user with windows
 const gate = confirmGate();
+// Host questions (net.ts) have a gate of their own: hosts a plugin uses come in bursts, and closing a few of them
+// mustn't hold back an install or an update
+const hostGate = confirmGate();
+/** How long a host question waits for TIDAL to be in use (a plugin's request while TIDAL plays in the background) */
+export const HOST_WAIT_MS = 5 * 60_000;
 /** TIDAL windows whose blur ends the user's last answer counting as use (see confirmGate) */
 const watched = new WeakSet<BrowserWindow>();
 
@@ -42,20 +50,14 @@ export const askConfirm = async (
 
 /**
  * Asks the user to pick one of `request.choices`: `choice` is its id, undefined if they closed the window. `refused`
- * as in askConfirm. A pick other than the first counts as a confirm for the gate, the first or a close as a cancel
+ * as in askConfirm, from the host questions' own gate. Any pick (Deny too) is an answer for the gate, a close a cancel
  */
 export const askChoice = async (
 	request: ConfirmRequest,
 	parent: BrowserWindow | undefined,
 	recentUserInput: boolean,
 ): Promise<{ choice?: string; refused?: string }> => {
-	const firstChoice = request.choices?.[0]?.id;
-	const { answer, refused } = await askRaw(
-		request,
-		parent,
-		recentUserInput,
-		(raw) => raw.startsWith("choice:") && raw !== `choice:${firstChoice}`,
-	);
+	const { answer, refused } = await askRaw(request, parent, recentUserInput, isHostAnswer, hostGate);
 	return { choice: answer?.startsWith("choice:") ? answer.slice("choice:".length) : undefined, refused };
 };
 
@@ -64,14 +66,15 @@ const askRaw = async (
 	parent: BrowserWindow | undefined,
 	recentUserInput: boolean,
 	confirms: (raw: string) => boolean = (raw) => raw === "yes",
+	asking = gate,
 ): Promise<{ answer?: string; refused?: string }> => {
 	const owner = visibleOwner(parent);
 	if (owner !== undefined && !watched.has(owner)) {
 		watched.add(owner);
 		// Our own window taking the focus comes before the answer; going to another app after it ends it
-		owner.on("blur", () => gate.left());
+		owner.on("blur", () => (gate.left(), hostGate.left()));
 	}
-	const refused = gate.refuse({
+	const refused = asking.refuse({
 		tidal: { visible: owner !== undefined, focused: owner?.isFocused() === true, recentUserInput },
 		now: Date.now(),
 	});
@@ -86,7 +89,7 @@ const askRaw = async (
 		if (answer === undefined) return { refused: "its window could not be shown over TIDAL" };
 		return { answer };
 	} finally {
-		gate.answered(answer === undefined ? undefined : confirms(answer), Date.now());
+		asking.answered(answer === undefined ? undefined : confirms(answer), Date.now());
 	}
 };
 
@@ -201,7 +204,10 @@ export const choiceAskerFor = (sender: Electron.WebContents) => {
 	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
 	return async (title: string, lines: string[], choices: { id: string; label: string }[]): Promise<string | undefined> => {
 		const request = { ...confirmRequest(title, fitLines(lines), "-"), choices };
-		const { choice, refused } = await askChoice(request, parent, recentUserInput);
+		let { choice, refused } = await askChoice(request, parent, recentUserInput);
+		// Asked while TIDAL isn't in use (a request in the background): the question waits until the user is back
+		if (refused === NOT_IN_USE && parent !== undefined && (await focusedWithin(parent, HOST_WAIT_MS)))
+			({ choice, refused } = await askChoice(request, parent, false));
 		if (refused === undefined) return choice;
 		throw notAsked(request.title, refused);
 	};

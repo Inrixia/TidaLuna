@@ -84,7 +84,7 @@ declare global {
 			allowed: boolean;
 			reason?: string;
 			answer?: import("../../native/core/net").HostAnswer;
-			/** Luna can't keep an answer for this host (an IPv6 address, a single-label name): it never reaches the page's CSP */
+			/** Luna didn't keep the answer (an IPv6 address, a single-label name, the registry failed): never in the page's CSP */
 			notKept?: true;
 		}>;
 		/** The host entries the page's enforced connect-src was built from when it loaded */

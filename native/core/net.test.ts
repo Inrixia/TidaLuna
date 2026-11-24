@@ -271,6 +271,40 @@ describe("luna.fetch", () => {
 		);
 		const res = await net.fetch("https://store/u", "page", { url: "https://a.example/" }, async () => "always");
 		assert.equal(res.status, 200);
+		// Not kept: it counts until restart, and page code hears that it isn't in the page's CSP
+		assert.deepEqual(await net.ask("https://store/u", "https://a.example/y", async () => "deny"), {
+			allowed: true,
+			answer: "always",
+			notKept: true,
+		});
+	});
+
+	it("an answer the registry doesn't keep (plugin gone) counts until restart, a deny too", async () => {
+		const unlisted = { name: "U", mode: "unlisted", allow: [], deny: [] } satisfies PluginHosts;
+		const { net } = fakeNet({ "https://store/u": unlisted }, { "https://a.example/": () => new Response("ok") }, { grant: async () => false });
+		const questions: string[] = [];
+		const deny: AskHost = async (q) => (questions.push(q.entry), "deny");
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://a.example/" }, deny), /you denied/);
+		await assert.rejects(net.fetch("https://store/u", "page", { url: "https://a.example/" }, deny), /you denied/);
+		assert.equal(questions.length, 1);
+	});
+
+	it("says 'once' to page code for an only-now answer, and holds a deny for the host's other schemes", async () => {
+		const unlisted = { name: "U", mode: "unlisted", allow: [], deny: ["https://tracker.example"] } satisfies PluginHosts;
+		const { net } = fakeNet({ "https://store/u": unlisted }, {});
+		assert.deepEqual(await net.ask("https://store/u", "wss://live.example.com/s", async () => "once"), { allowed: true, answer: "once" });
+		const never: AskHost = async () => assert.fail("not asked");
+		assert.deepEqual(await net.ask("https://store/u", "wss://tracker.example/s", never), {
+			allowed: false,
+			reason: "you denied tracker.example for U",
+		});
+		assert.deepEqual(await net.ask("https://store/u", "http://tracker.example/", never), {
+			allowed: false,
+			reason: "you denied tracker.example for U",
+		});
+		// A deny until restart (an answer that couldn't be kept) holds for the other schemes too
+		assert.equal((await net.ask("https://store/u", "ws://[2001:db8::9]:81/", async () => "deny")).allowed, false);
+		assert.equal((await net.ask("https://store/u", "https://[2001:db8::9]:81/", never)).allowed, false);
 	});
 
 	it("tells page code when an allowed host can't reach the page's CSP (not kept)", async () => {

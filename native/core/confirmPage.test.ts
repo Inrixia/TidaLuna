@@ -8,6 +8,9 @@ import {
 	confirmGate,
 	confirmRequest,
 	fitLines,
+	focusedWithin,
+	isHostAnswer,
+	type FocusTarget,
 	COOL_DOWN_MS,
 	MAX_CANCELS,
 	MAX_PENDING,
@@ -16,6 +19,50 @@ import {
 
 const FOCUSED: TidalState = { visible: true, focused: true, recentUserInput: false };
 const AWAY: TidalState = { visible: true, focused: false, recentUserInput: false };
+
+describe("host questions", () => {
+	it("never cool down after denies, only after closes", () => {
+		const gate = confirmGate();
+		for (let i = 0; i < MAX_CANCELS * 2; i++) {
+			assert.equal(gate.refuse({ tidal: FOCUSED, now: i }), undefined);
+			gate.answered(isHostAnswer("choice:deny"), i);
+		}
+		for (let i = 0; i < MAX_CANCELS - 1; i++) {
+			assert.equal(gate.refuse({ tidal: FOCUSED, now: 100 + i }), undefined);
+			gate.answered(isHostAnswer("close"), 100 + i);
+		}
+		assert.equal(gate.refuse({ tidal: FOCUSED, now: 200 }), undefined);
+		gate.answered(isHostAnswer("close"), 200);
+		assert.match(gate.refuse({ tidal: FOCUSED, now: 201 })!, /cancelled in a row/);
+	});
+
+	const fakeWindow = (focused = false) => {
+		const listeners = new Map<string, Set<() => void>>();
+		const win: FocusTarget & { emit(event: string): void; listening(): number } = {
+			isDestroyed: () => false,
+			isFocused: () => focused,
+			on: (event, listener) => listeners.set(event, (listeners.get(event) ?? new Set()).add(listener)),
+			off: (event, listener) => listeners.get(event)?.delete(listener),
+			emit: (event) => [...(listeners.get(event) ?? [])].forEach((listener) => listener()),
+			listening: () => [...listeners.values()].reduce((n, set) => n + set.size, 0),
+		};
+		return win;
+	};
+
+	it("wait for TIDAL's focus: at once, on focus, or not after a close or the time", async () => {
+		assert.equal(await focusedWithin(fakeWindow(true), 10), true);
+		const later = fakeWindow();
+		const focused = focusedWithin(later, 1000);
+		later.emit("focus");
+		assert.equal(await focused, true);
+		assert.equal(later.listening(), 0);
+		const closing = fakeWindow();
+		const closed = focusedWithin(closing, 1000);
+		closing.emit("closed");
+		assert.equal(await closed, false);
+		assert.equal(await focusedWithin(fakeWindow(), 5), false);
+	});
+});
 
 describe("core confirmation gate", () => {
 	it("refuses while TIDAL is not in use", () => {

@@ -11,6 +11,13 @@ describe("pageAllowsUrl", () => {
 		assert.strictEqual(pageAllowsUrl(connect, "https://desktop.tidal.com", new URL("wss://api.example.com/s")), true);
 		assert.strictEqual(pageAllowsUrl(connect, "https://desktop.tidal.com", new URL("https://evil.example/x")), false);
 	});
+	it("leaves plain http and ws to luna.fetch, but for loopback (mixed content)", () => {
+		const plain = ["http://nas.example:8096", "ws://nas.example:8096", "http://localhost:24050", "ws://127.0.0.1:24050"];
+		assert.strictEqual(pageAllowsUrl(plain, "https://desktop.tidal.com", new URL("http://nas.example:8096/x")), false);
+		assert.strictEqual(pageAllowsUrl(plain, "https://desktop.tidal.com", new URL("ws://nas.example:8096/x")), false);
+		assert.strictEqual(pageAllowsUrl(plain, "https://desktop.tidal.com", new URL("http://localhost:24050/x")), true);
+		assert.strictEqual(pageAllowsUrl(plain, "https://desktop.tidal.com", new URL("ws://127.0.0.1:24050/x")), true);
+	});
 	it("matches an entry's path as written, like the CSP", () => {
 		assert.strictEqual(pageAllowsUrl(connect, "https://desktop.tidal.com", new URL("https://cdn.example.com/Covers/a.jpg")), true);
 		assert.strictEqual(pageAllowsUrl(connect, "https://desktop.tidal.com", new URL("https://cdn.example.com/covers/a.jpg")), false);
