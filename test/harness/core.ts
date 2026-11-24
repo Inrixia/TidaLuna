@@ -69,6 +69,21 @@ export * as ftch from "../../render/src/helpers/fetch";
 export { findModuleByProperty, findModuleProperty, recursiveSearch } from "../../render/src/helpers/findModule";
 export { unloadSet, type LunaUnload, type LunaUnloads, type NullishLunaUnloads } from "../../render/src/helpers/unloadSet";
 export { ReactiveStore } from "../../render/src/ReactiveStore";
+export * from "../../render/src/LunaRegistry";
+export { isCoreUrl } from "../../render/src/helpers/pluginUpdates";
+export {
+	asSentence,
+	defaultRegistryBase,
+	packageSha256s,
+	registryPublicKey,
+	unverifiedPlugins,
+	type CodeSha256,
+	type RegistryFileName,
+	type RevokedEntry,
+	type RevokedFile,
+	type VerifiedEntry,
+	type VerifiedFile,
+} from "../../render/src/helpers/registry";
 // SettingsTransfer is deliberately not re-exported: it imports render/src/LunaPlugin.ts, which loads boot code
 // (nativeScrollbars.ts and friends). Its own test mocks that import.
 export type { ExportData } from "../../render/src/SettingsTransfer";

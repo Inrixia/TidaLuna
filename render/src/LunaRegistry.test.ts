@@ -1,14 +1,13 @@
-// Run: pnpm exec tsx --test render/src/LunaRegistry.test.ts
 // LunaRegistry against a fake registry server (fetch) and an in-memory store, with the signed fixtures of helpers/registry.fixtures
-import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import path from "node:path";
+import { expect, test } from "vitest";
 
 // The trace module patches window on import
 globalThis.window ??= <any>globalThis;
 const { LunaRegistry } = await import("./LunaRegistry");
 
-const fixture = (name: string) => new Uint8Array(readFileSync(new URL(`./helpers/registry.fixtures/${name}`, import.meta.url)));
+const fixture = (name: string) => new Uint8Array(readFileSync(path.join(process.cwd(), "render/src/helpers/registry.fixtures", name)));
 const codes: { sha256: { verified: string; revoked: string } } = JSON.parse(new TextDecoder().decode(fixture("codes.json")));
 
 // The server: url > bytes. Missing urls are 404
@@ -48,13 +47,13 @@ test("refresh: fetched, checked and signed lists are used and stored with their 
 	restart();
 	serve(good);
 	await LunaRegistry.refresh();
-	assert.equal(LunaRegistry.verified._?.serial, 3);
-	assert.equal(LunaRegistry.revoked._?.serial, 2);
-	assert.equal(LunaRegistry.verifiedEntry(codes.sha256.verified, "Fixture")?.name, "Fixture");
-	assert.equal(LunaRegistry.loadDecision({ url: "https://example.com/Fixture", rawSha256: codes.sha256.revoked }).load, false);
-	assert.deepEqual(LunaRegistry.status._["revoked.json"], { source: "fetched", serial: 2, generated: LunaRegistry.revoked._?.generated });
-	assert.equal(stored.get(`${base}verified.json.serial`), 3);
-	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
+	expect(LunaRegistry.verified._?.serial).toBe(3);
+	expect(LunaRegistry.revoked._?.serial).toBe(2);
+	expect(LunaRegistry.verifiedEntry(codes.sha256.verified, "Fixture")?.name).toBe("Fixture");
+	expect(LunaRegistry.loadDecision({ url: "https://example.com/Fixture", rawSha256: codes.sha256.revoked }).load).toBe(false);
+	expect(LunaRegistry.status._["revoked.json"]).toStrictEqual({ source: "fetched", serial: 2, generated: LunaRegistry.revoked._?.generated });
+	expect(stored.get(`${base}verified.json.serial`)).toBe(3);
+	expect(stored.get(`${base}revoked.json.serial`)).toBe(2);
 });
 
 test("loadCached: the stored copies are checked again and used at the next start", async () => {
@@ -63,15 +62,15 @@ test("loadCached: the stored copies are checked again and used at the next start
 	await LunaRegistry.refresh();
 	restart(stored);
 	await LunaRegistry.loadCached();
-	assert.equal(LunaRegistry.revoked._?.serial, 2);
-	assert.equal(LunaRegistry.status._["revoked.json"].source, "cached");
+	expect(LunaRegistry.revoked._?.serial).toBe(2);
+	expect(LunaRegistry.status._["revoked.json"].source).toBe("cached");
 	// A stored copy that no longer checks out is not used
 	const copy = <{ bytes: string }>stored.get(`${base}verified.json`);
 	stored.set(`${base}verified.json`, { ...copy, bytes: Buffer.from("{}").toString("base64") });
 	restart(stored);
 	await LunaRegistry.loadCached();
-	assert.equal(LunaRegistry.verified._, undefined);
-	assert.equal(LunaRegistry.status._["verified.json"].source, "none");
+	expect(LunaRegistry.verified._).toBe(undefined);
+	expect(LunaRegistry.status._["verified.json"].source).toBe("none");
 });
 
 test("a failed or badly signed fetch keeps the copy in use and says why, without relabelling it", async () => {
@@ -81,15 +80,15 @@ test("a failed or badly signed fetch keeps the copy in use and says why, without
 	// verified.json with revoked.json's signature, and no revoked.json at all
 	serve({ "verified.json": "verified.json", "verified.json.sig": "revoked.json.sig" });
 	await LunaRegistry.refresh();
-	assert.equal(LunaRegistry.verified._?.serial, 3);
-	assert.equal(LunaRegistry.revoked._?.serial, 2);
-	assert.match(LunaRegistry.status._["verified.json"].error ?? "", /signature/);
-	assert.match(LunaRegistry.status._["revoked.json"].error ?? "", /404/);
-	assert.equal(LunaRegistry.status._["revoked.json"].source, "fetched");
+	expect(LunaRegistry.verified._?.serial).toBe(3);
+	expect(LunaRegistry.revoked._?.serial).toBe(2);
+	expect(LunaRegistry.status._["verified.json"].error ?? "").toMatch(/signature/);
+	expect(LunaRegistry.status._["revoked.json"].error ?? "").toMatch(/404/);
+	expect(LunaRegistry.status._["revoked.json"].source).toBe("fetched");
 	// The next good fetch clears the error
 	serve(good);
 	await LunaRegistry.refresh();
-	assert.equal(LunaRegistry.status._["revoked.json"].error, undefined);
+	expect(LunaRegistry.status._["revoked.json"].error).toBe(undefined);
 });
 
 test("a signed file with a lower serial than one accepted before is rejected (rollback), even after a restart", async () => {
@@ -99,9 +98,9 @@ test("a signed file with a lower serial than one accepted before is rejected (ro
 	restart(stored);
 	serve({ ...good, "revoked.json": "revoked-serial1.json", "revoked.json.sig": "revoked-serial1.json.sig" });
 	await LunaRegistry.refresh();
-	assert.equal(LunaRegistry.revoked._, undefined);
-	assert.match(LunaRegistry.status._["revoked.json"].error ?? "", /serial 1 is lower than 2/);
-	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
+	expect(LunaRegistry.revoked._).toBe(undefined);
+	expect(LunaRegistry.status._["revoked.json"].error ?? "").toMatch(/serial 1 is lower than 2/);
+	expect(stored.get(`${base}revoked.json.serial`)).toBe(2);
 });
 
 test("a stored copy read after a newer fetch does not replace it (slow IndexedDB at startup)", async () => {
@@ -116,16 +115,16 @@ test("a stored copy read after a newer fetch does not replace it (slow IndexedDB
 	stored.set(`${base}revoked.json`, olderCopy);
 	stored.delete(`${base}revoked.json.serial`);
 	await LunaRegistry.loadCached();
-	assert.equal(LunaRegistry.revoked._?.serial, 2);
-	assert.equal(LunaRegistry.status._["revoked.json"].source, "fetched");
+	expect(LunaRegistry.revoked._?.serial).toBe(2);
+	expect(LunaRegistry.status._["revoked.json"].source).toBe("fetched");
 });
 
 test("an invalid baseUrl override is ignored", async () => {
 	restart();
 	stored.set("baseUrl", "http://example.com/registry/");
-	assert.equal(await LunaRegistry.baseUrl(), "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
+	expect(await LunaRegistry.baseUrl()).toBe("https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
 	stored.set("baseUrl", "https://evil.example/registry/");
-	assert.equal(await LunaRegistry.baseUrl(), "https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
+	expect(await LunaRegistry.baseUrl()).toBe("https://raw.githubusercontent.com/Inrixia/luna-registry/signed/");
 });
 
 test("serials are kept per registry url: a local test registry doesn't block the real one", async () => {
@@ -136,10 +135,10 @@ test("serials are kept per registry url: a local test registry doesn't block the
 	stored.set("baseUrl", other);
 	serve({ "revoked.json": "revoked-serial1.json", "revoked.json.sig": "revoked-serial1.json.sig" }, other);
 	await LunaRegistry.refresh();
-	assert.equal(LunaRegistry.status._["revoked.json"].error, undefined);
-	assert.equal(LunaRegistry.revoked._?.serial, 1);
-	assert.equal(stored.get(`${other}revoked.json.serial`), 1);
-	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
+	expect(LunaRegistry.status._["revoked.json"].error).toBe(undefined);
+	expect(LunaRegistry.revoked._?.serial).toBe(1);
+	expect(stored.get(`${other}revoked.json.serial`)).toBe(1);
+	expect(stored.get(`${base}revoked.json.serial`)).toBe(2);
 });
 
 test("a stored copy older than the serial accepted before (saving it failed): revoked.json is still used, verified.json is not", async () => {
@@ -155,18 +154,18 @@ test("a stored copy older than the serial accepted before (saving it failed): re
 	restart(stored);
 	await LunaRegistry.loadCached();
 	// An older list of revocations still revokes what it lists, until the fetch replaces it
-	assert.equal(LunaRegistry.revoked._?.serial, 1);
-	assert.equal(LunaRegistry.status._["revoked.json"].source, "cached");
-	assert.match(LunaRegistry.status._["revoked.json"].error ?? "", /#1 is older than #2/);
+	expect(LunaRegistry.revoked._?.serial).toBe(1);
+	expect(LunaRegistry.status._["revoked.json"].source).toBe("cached");
+	expect(LunaRegistry.status._["revoked.json"].error ?? "").toMatch(/#1 is older than #2/);
 	// A verified build may have been dropped since: nothing is badged
-	assert.equal(LunaRegistry.verified._, undefined);
-	assert.equal(LunaRegistry.status._["verified.json"].source, "none");
-	assert.match(LunaRegistry.status._["verified.json"].error ?? "", /#3 is older than #4/);
+	expect(LunaRegistry.verified._).toBe(undefined);
+	expect(LunaRegistry.status._["verified.json"].source).toBe("none");
+	expect(LunaRegistry.status._["verified.json"].error ?? "").toMatch(/#3 is older than #4/);
 	// The serial is not lowered, and the next fetch is used
-	assert.equal(stored.get(`${base}revoked.json.serial`), 2);
+	expect(stored.get(`${base}revoked.json.serial`)).toBe(2);
 	await LunaRegistry.refresh();
-	assert.equal(LunaRegistry.revoked._?.serial, 2);
-	assert.equal(LunaRegistry.status._["revoked.json"].error, undefined);
+	expect(LunaRegistry.revoked._?.serial).toBe(2);
+	expect(LunaRegistry.status._["revoked.json"].error).toBe(undefined);
 });
 
 test("only verified updates: on by default and after a restart unless turned off; offers only verified code then", async () => {
@@ -174,26 +173,26 @@ test("only verified updates: on by default and after a restart unless turned off
 	serve(good);
 	await LunaRegistry.loadCached();
 	await LunaRegistry.refresh();
-	assert.equal(LunaRegistry.verifiedUpdatesOnly._, true);
-	assert.equal(LunaRegistry.updateOffered(codes.sha256.verified, "Fixture"), true);
+	expect(LunaRegistry.verifiedUpdatesOnly._).toBe(true);
+	expect(LunaRegistry.updateOffered(codes.sha256.verified, "Fixture")).toBe(true);
 	// Unlisted code, code verified under another name, code not hashed yet
-	assert.equal(LunaRegistry.updateOffered(codes.sha256.revoked, "Fixture"), false);
-	assert.equal(LunaRegistry.updateOffered(codes.sha256.verified, "Other"), false);
-	assert.equal(LunaRegistry.updateOffered(undefined, "Fixture"), false);
+	expect(LunaRegistry.updateOffered(codes.sha256.revoked, "Fixture")).toBe(false);
+	expect(LunaRegistry.updateOffered(codes.sha256.verified, "Other")).toBe(false);
+	expect(LunaRegistry.updateOffered(undefined, "Fixture")).toBe(false);
 
 	await LunaRegistry.setVerifiedUpdatesOnly(false);
-	assert.equal(LunaRegistry.updateOffered(codes.sha256.revoked, "Fixture"), true);
+	expect(LunaRegistry.updateOffered(codes.sha256.revoked, "Fixture")).toBe(true);
 	restart(stored);
 	LunaRegistry.verifiedUpdatesOnly._ = true;
 	await LunaRegistry.loadCached();
-	assert.equal(LunaRegistry.verifiedUpdatesOnly._, false);
+	expect(LunaRegistry.verifiedUpdatesOnly._).toBe(false);
 
 	await LunaRegistry.setVerifiedUpdatesOnly(true);
 	restart(stored);
 	await LunaRegistry.loadCached();
-	assert.equal(LunaRegistry.verifiedUpdatesOnly._, true);
+	expect(LunaRegistry.verifiedUpdatesOnly._).toBe(true);
 	// No verified list (registry unreachable, nothing cached): nothing is offered
 	restart();
 	await LunaRegistry.loadCached();
-	assert.equal(LunaRegistry.updateOffered(codes.sha256.verified, "Fixture"), false);
+	expect(LunaRegistry.updateOffered(codes.sha256.verified, "Fixture")).toBe(false);
 });
