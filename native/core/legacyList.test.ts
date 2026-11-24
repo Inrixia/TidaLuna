@@ -501,6 +501,27 @@ describe("old native format list", () => {
 		assert.strictEqual(store.usable(), true);
 	});
 
+	for (const by of ["allows", "refreshNow"] as const)
+		it(`ready waits for the fetch ${by} started when the list ran out while running`, async () => {
+			const until = "2026-12-01T00:00:00.000Z";
+			const time = { now: at(until) - DAY };
+			let fetches = 0;
+			let slow = false;
+			const { store } = storeAt(time, undefined, async () => {
+				fetches++;
+				if (slow) await new Promise((resolve) => setTimeout(resolve, 30));
+				return doc(5 + fetches, [A], { validUntil: fetches === 1 ? until : "2027-01-01T00:00:00.000Z" });
+			});
+			await store.ready();
+			slow = true;
+			time.now = at(until) + 3 * DAY;
+			if (by === "allows") assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+			else void store.refreshNow();
+			await store.ready();
+			assert.strictEqual(fetches, 2);
+			assert.strictEqual(store.usable(), true);
+		});
+
 	it("an expired cache stays the base: a fresh list must still be a subset of it", async () => {
 		const time = { now: at("2027-01-10T00:00:00.000Z") };
 		const C = entry("c.mjs", "code c");

@@ -272,14 +272,14 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	const start = () => (first !== undefined && (retryAt === undefined || now() < retryAt) ? first : tracked());
 	/**
 	 * Expired while running, after refreshes that went fine: due for a fetch now, not on the next scheduled refresh. One
-	 * fetch at a time (refreshTracked): checks while it runs wait for it. Whether this made one due
+	 * fetch at a time (refreshTracked): checks while it runs join it, and ready() waits for it (whoever started it)
 	 */
-	const dueOnExpiry = (): boolean => {
-		if (usable() || current === undefined || first === undefined || retryAt !== undefined) return false;
-		retryAt = now();
-		return true;
-	};
 	let waitUntil: number | undefined;
+	const dueOnExpiry = () => {
+		if (usable() || current === undefined || first === undefined || retryAt !== undefined) return;
+		retryAt = now();
+		waitUntil = now() + (deps.firstWaitMs ?? 10000);
+	};
 
 	return {
 		refresh,
@@ -306,7 +306,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 			waitUntil ??= now() + (deps.firstWaitMs ?? 10000);
 			for (;;) {
 				loadCache();
-				if (dueOnExpiry()) waitUntil = now() + (deps.firstWaitMs ?? 10000);
+				dueOnExpiry();
 				if (usable() || cache === "broken") return;
 				const left = waitUntil - now();
 				if (left <= 0) return;
