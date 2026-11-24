@@ -45,6 +45,7 @@ export type PluginPackage = {
 	/**
 	 * sha256 (hex) of the code Luna runs, set by Luna core (native/core/registry.ts).
 	 * To reproduce it: take the served `<url>.mjs` text, append `\n//# sourceURL=<url>.mjs`, and sha256 the result as UTF-8.
+	 * A plugin moved to another url with the same code keeps the url it was accepted from in that line until an update.
 	 */
 	codeSha256?: string;
 };
@@ -268,9 +269,7 @@ export class LunaPlugin {
 	 * @returns The plugins that failed to reload (each one also reports its own error), including dependants of a failed plugin, which are left unloaded
 	 */
 	public static async reloadAll(): Promise<LunaPlugin[]> {
-		const plugins = Object.values(LunaPlugin.plugins).filter(
-			(plugin) => plugin.installed && plugin.enabled && !plugin.isCore,
-		);
+		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => plugin.installed && plugin.enabled && !plugin.isCore);
 		const failed: LunaPlugin[] = [];
 		const dependants: LunaPlugin[] = [];
 		for (const plugin of plugins) {
@@ -297,17 +296,13 @@ export class LunaPlugin {
 	/**
 	 * Dump all plugin storage entries
 	 */
-	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>>
-	{
+	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>> {
 		const data = await this.pluginStorage.dump();
-		if (!stripCode) 
-			return data;
+		if (!stripCode) return data;
 
 		const stripped = structuredClone(data);
-		for (const value of Object.values(stripped))
-		{
-			if (value && typeof value === "object")
-				delete (value as any).package?.code;
+		for (const value of Object.values(stripped)) {
+			if (value && typeof value === "object") delete (value as any).package?.code;
 		}
 
 		return stripped;
@@ -430,16 +425,22 @@ export class LunaPlugin {
 	// #region Storage
 	/**
 	 * The non-core plugin whose bundle threw, found from the topmost stack frame that belongs to one.
-	 * Plugin code runs from a blob with `//# sourceURL=<url>.mjs`, so its frames carry that url.
+	 * Plugin code runs from a blob with `//# sourceURL=<url>.mjs`, so its frames carry that url: the one in its code's last
+	 * line, which after a move with the same code still names the url the code was accepted from.
 	 */
 	public static fromStack(stack?: string): LunaPlugin | undefined {
 		if (stack === undefined) return undefined;
 		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !plugin.isCore && plugin.url.length > 0);
 		for (const frame of stack.split("\n")) {
-			const plugin = plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
+			const plugin = plugins.find((plugin) => frame.includes(plugin.sourceName)) ?? plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
 			if (plugin !== undefined) return plugin;
 		}
 		return undefined;
+	}
+
+	/** The name the plugin's frames carry: the url in its code's `//# sourceURL=` line, else `<url>.mjs` */
+	private get sourceName(): string {
+		return this.code?.match(/\n\/\/# sourceURL=([^\n\r\u2028\u2029]*)$/)?.[1] ?? `${this.url}.mjs`;
 	}
 
 	/** Show an error that happened after the plugin loaded (e.g. in one of its listeners) on its card */

@@ -29,7 +29,10 @@ export type PluginPackage = {
 export type Version = {
 	package: PluginPackage;
 	code: string;
-	/** sha256 (hex) of `code` as UTF-8: the served `<url>.mjs` followed by `\n//# sourceURL=<url>.mjs`, exactly what the page runs */
+	/**
+	 * sha256 (hex) of `code` as UTF-8: the served `<url>.mjs` followed by `\n//# sourceURL=<url>.mjs`, exactly what the page
+	 * runs. After a move with the same code (moveUrl) the line keeps naming the url it was accepted from
+	 */
 	codeSha256: string;
 	/** Native files: the ones the page code registers, then the world's, named `world:<file>` */
 	natives: string[];
