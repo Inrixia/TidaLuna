@@ -75,7 +75,9 @@ export const lunaNativePlugin = (
 					// Expose built exports to plugin
 					${exportNames
 						.map((_export) => {
-							return `export ${_export === "default" ? "default" : `const ${_export}`} = (...args) => __ipcRenderer.invoke(channel, "${_export}", ...args);`;
+							// A default export binds no name, so it takes no `=`: `export default = (...)` is a syntax error
+							if (_export === "default") return `export default (...args) => __ipcRenderer.invoke(channel, "default", ...args);`;
+							return `export const ${_export} = (...args) => __ipcRenderer.invoke(channel, "${_export}", ...args);`;
 						})
 						.join("\n")}
 				`,
