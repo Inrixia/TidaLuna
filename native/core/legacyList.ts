@@ -10,6 +10,7 @@
 // nothing below this build's minimum serial (legacyMinSerial.ts, the list signed when it was built), nor past its
 // `validUntil` (the registry signs it again each week for 30 days; LEGACY_CLOCK_SKEW_MS for a wrong clock). An expired
 // list stays the base a new one must be a subset of, until a fresh one comes.
+import { asyncDebounce } from "@inrixia/helpers";
 import { createHash, createPublicKey, verify } from "crypto";
 
 import { legacyMinSerial } from "./legacyMinSerial";
@@ -253,31 +254,28 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	 */
 	let retryAt: number | undefined;
 	let failures = 0;
-	/** A tracked refresh hasn't settled yet */
-	let pending = false;
-	/** A refresh whose failure schedules the next try; never rejects */
-	const tracked = () => {
-		retryAt = undefined;
-		pending = true;
-		return (first = refresh().then(
-			() => void ((failures = 0), (pending = false)),
+	/** A refresh whose failure schedules the next try; never rejects. One at a time: a call while it runs gets that one */
+	const refreshTracked = asyncDebounce(() =>
+		refresh().then(
+			() => void ((failures = 0), (retryAt = undefined)),
 			(err) => {
-				pending = false;
 				// A cache that can't be read is logged by loadCache
 				if (cache === "unread") return void (retryAt = now());
 				deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
 				if (cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
+				else retryAt = undefined;
 			},
-		));
-	};
+		),
+	);
+	const tracked = () => (first = refreshTracked());
 	/** The first refresh of a start, and the tries after a failed one (on the next check once due) */
 	const start = () => (first !== undefined && (retryAt === undefined || now() < retryAt) ? first : tracked());
 	/**
 	 * Expired while running, after refreshes that went fine: due for a fetch now, not on the next scheduled refresh. One
-	 * fetch at a time: checks while it runs wait for it. Whether this made one due
+	 * fetch at a time (refreshTracked): checks while it runs wait for it. Whether this made one due
 	 */
 	const dueOnExpiry = (): boolean => {
-		if (usable() || current === undefined || first === undefined || retryAt !== undefined || pending) return false;
+		if (usable() || current === undefined || first === undefined || retryAt !== undefined) return false;
 		retryAt = now();
 		return true;
 	};
@@ -286,7 +284,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	return {
 		refresh,
 		/** The scheduled refresh: like refresh, but a failure is tried again soon and nothing is thrown */
-		refreshNow: (): Promise<void> => (pending && first !== undefined ? first : tracked()),
+		refreshNow: (): Promise<void> => tracked(),
 		/** Whether the current list has this plugin's code (see RegistryDeps.legacyAllows) */
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();
