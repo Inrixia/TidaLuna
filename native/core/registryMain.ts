@@ -153,6 +153,8 @@ const reasons: Record<string, string> = {
 	"not-listed": "This host is not in the hosts you accepted for it.",
 	"local-setting": "A local address, from the server in one of its settings.",
 	redirect: "A host it was redirected to.",
+	"resolves-local":
+		"This name points to an address on your own network (a home server, or a name made to reach your router). Allow it only if you run that server.",
 };
 /** Asks the user of `sender` about a host for luna.fetch (net.ts), in Luna's own window */
 export const hostAskerFor =
@@ -165,9 +167,11 @@ export const hostAskerFor =
 				`Host: ${question.entry}`,
 				`Example: ${question.example}`,
 				reasons[question.reason] ?? "",
-				question.notKept
-					? "Luna can't keep an answer for this host: Only now, Always and Deny all last until TIDAL restarts."
-					: "Only now allows it until TIDAL restarts. Always and Deny are remembered for this plugin: Luna Settings > Network shows them and can take them back.",
+				question.reason === "resolves-local"
+					? "Only now and Always allow it until TIDAL restarts. Deny lasts until restart too."
+					: question.notKept
+						? "Luna can't keep an answer for this host: Only now, Always and Deny all last until TIDAL restarts."
+						: "Only now allows it until TIDAL restarts. Always and Deny are remembered for this plugin: Luna Settings > Network shows them and can take them back.",
 			],
 			[
 				{ id: "deny", label: "Deny" },

@@ -9,27 +9,13 @@
 // The calling plugin is found from the stack, like lunaFetch: page code can get the page's fetch from elsewhere (an
 // iframe) and skip all this, and then the CSP blocks it.
 import { settingKeys, settingValueOf } from "../../native/core/hosts";
-import { toNetRequest, toResponse } from "./helpers/netMessages";
-import { pageAllowsUrl, refusalReason, toastGate } from "./helpers/pageNetRules";
+import { installPageNet } from "./helpers/pageNetHooks";
+import { refusalReason, toastGate } from "./helpers/pageNetRules";
 import { LunaPlugin } from "./LunaPlugin";
 import { ReactiveStore } from "./ReactiveStore";
 import { coreTrace } from "./trace";
 
 const trace = coreTrace.withSource(".net").trace;
-
-let connect: string[] | undefined;
-const connectReady = __LunaCore.pageConnect().then(
-	(entries) => void (connect = entries),
-	(err) => {
-		trace.err("Can't read the page's connect-src", err);
-		connect = [];
-	},
-);
-
-/** The page's enforced connect-src allows this url (TIDAL's own shell origin always) */
-const pageAllows = (url: URL) => pageAllowsUrl(connect ?? [], location.origin, url);
-
-const isNetwork = (url: URL) => ["http:", "https:", "ws:", "wss:"].includes(url.protocol);
 
 /** The plugin whose code is calling, found from the stack (deeper than the default 10 frames) */
 export const callingPlugin = (): LunaPlugin | undefined => {
@@ -71,91 +57,21 @@ export const settingsFor = async (plugin: LunaPlugin): Promise<Record<string, un
 	}
 	const keys = await cached.keys;
 	if (keys.length === 0) return undefined;
-	// Read as stored (a change is written at once), without making an entry for a storage name the plugin doesn't use
+	// The live values (a change reaches IndexedDB a moment later), without making an entry for a storage name the plugin
+	// doesn't use
 	const pluginStorage = ReactiveStore.getStore("@luna/pluginStorage");
-	const storage = (name: string) => pluginStorage.get<Record<string, unknown>>(name);
+	const storage = (name: string) => pluginStorage.current<Record<string, unknown>>(name);
 	return Object.fromEntries(await Promise.all(keys.map(async (key) => [key, await settingValueOf(key, plugin.name, storage)])));
 };
 
-const nativeFetch = window.fetch;
-window.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
-	let url: URL | undefined;
-	try {
-		url = new URL(input instanceof Request ? input.url : String(input), location.href);
-	} catch {}
-	// Before any await: the stack still holds the caller's frame
-	const plugin = url !== undefined && isNetwork(url) && url.origin !== location.origin ? callingPlugin() : undefined;
-	if (plugin === undefined) return nativeFetch.call(this, input, init);
-	return (async () => {
-		await connectReady;
-		if (pageAllows(url!)) return nativeFetch.call(this, input, init);
-		// Outside the page's CSP: luna.fetch asks the user and checks the answer for this plugin. No cookies, no CORS,
-		// the whole body at once
-		try {
-			return toResponse(await __LunaCore.fetch(plugin.url, await toNetRequest(input, init), await settingsFor(plugin)));
-		} catch (err) {
-			toastIfRefused(plugin.name, url!.host, err);
-			throw err;
-		}
-	})();
-} as typeof fetch;
-
-/** For the requests that can't go through luna.fetch: asks now, the answer reaches the page's CSP from its next load */
-const askLater = (rawUrl: string | URL, kind: string) => {
-	let url: URL;
-	try {
-		url = new URL(String(rawUrl), location.href);
-	} catch {
-		return;
-	}
-	if (!isNetwork(url) || url.origin === location.origin) return;
-	const plugin = callingPlugin();
-	if (plugin === undefined) return;
-	void connectReady.then(async () => {
-		if (pageAllows(url)) return;
-		const { allowed, reason, answer } = await __LunaCore
-			.askHost(plugin.url, url.href)
-			.catch((err): { allowed: boolean; reason?: string; answer?: string } => ({ allowed: false, reason: String(err?.message ?? err) }));
-		// This attempt was blocked by the page's CSP either way; an "always" answer, or a host accepted after the page
-		// loaded (no answer: a plugin enabled or updated since), is in it from the next load
-		if (!allowed) toastBlocked(plugin.name, url.host, reason);
-		else if (answer === "always" || answer === undefined)
-			trace.msg.warn(`${plugin.name} may reach ${url.host}: its ${kind} works once TIDAL reloads (Ctrl+R)`);
-		else toastBlocked(plugin.name, url.host, `its ${kind} needs "Always allow": the page's policy is built when it loads`);
-	});
-};
-
-const NativeWebSocket = window.WebSocket;
-window.WebSocket = new Proxy(NativeWebSocket, {
-	construct(target, args: [string | URL, (string | string[])?], newTarget) {
-		askLater(args[0], "WebSocket");
-		return Reflect.construct(target, args, newTarget);
-	},
-});
-const NativeEventSource = window.EventSource;
-window.EventSource = new Proxy(NativeEventSource, {
-	construct(target, args: [string | URL, EventSourceInit?], newTarget) {
-		askLater(args[0], "EventSource");
-		return Reflect.construct(target, args, newTarget);
-	},
-});
-const open = XMLHttpRequest.prototype.open;
-XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, ...args: [string, string | URL, ...unknown[]]) {
-	askLater(args[1], "XMLHttpRequest");
-	return (open as (...args: unknown[]) => void).apply(this, args);
-};
-const sendBeacon = navigator.sendBeacon.bind(navigator);
-navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => {
-	askLater(url, "sendBeacon");
-	return sendBeacon(url, data);
-};
-
-// What the enforced CSP blocked, whoever sent it: TIDAL's own requests too (a host the baseline misses shows here)
-document.addEventListener("securitypolicyviolation", (event) => {
-	if (event.disposition !== "enforce") return;
-	let host = event.blockedURI;
-	try {
-		host = new URL(event.blockedURI).host;
-	} catch {}
-	toastBlocked(event.effectiveDirective, host);
+installPageNet(window as unknown as Parameters<typeof installPageNet>[0], {
+	pageConnect: () => __LunaCore.pageConnect(),
+	lunaFetch: (pluginUrl, request, settings) => __LunaCore.fetch(pluginUrl, request, settings),
+	askHost: (pluginUrl, target) => __LunaCore.askHost(pluginUrl, target),
+	callingPlugin,
+	settingsFor: (plugin) => settingsFor(plugin as LunaPlugin),
+	blocked: toastBlocked,
+	refused: toastIfRefused,
+	warn: (message) => trace.msg.warn(message),
+	error: (message, err) => trace.err(message, err),
 });

@@ -62,6 +62,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export const createDerivedStore = (deps: DerivedStoreDeps) => {
 	let current: { list: VerifiedHosts; bytes: Buffer; sig: string } | undefined;
 	let cacheRead = false;
+	/** The cached copy fails its check: its serial is unknown, so no fetched list may replace it (legacyList.ts "broken") */
+	let cacheBroken = false;
 	/** The last reason the cache couldn't be read: it is tried again on each use, and logged once per reason */
 	let cacheError: string | undefined;
 	const loadCache = () => {
@@ -82,12 +84,16 @@ export const createDerivedStore = (deps: DerivedStoreDeps) => {
 			const bytes = Buffer.from(String(cached?.list), "base64");
 			current = { list: parseVerifiedHosts(bytes, String(cached?.sig), deps.publicKey), bytes, sig: String(cached?.sig) };
 		} catch (err) {
+			cacheBroken = true;
 			deps.log?.(`[Luna.core] The cached registry list fails its check, ignored: ${(err as Error)?.message ?? err}`);
 		}
 	};
 
 	const refresh = async () => {
 		loadCache();
+		// Without the cached serial an older signed list could replace a newer one
+		if (!cacheRead) throw new Error("the cached list can't be read yet: not replaced");
+		if (cacheBroken) throw new Error("the cached list fails its check: not replaced");
 		const { bytes, sig } = await deps.fetchList();
 		const next = parseVerifiedHosts(bytes, sig, deps.publicKey);
 		if (current !== undefined && next.serial < current.list.serial)

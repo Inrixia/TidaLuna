@@ -187,7 +187,7 @@ export const exposeCore = () => {
 			ipcRenderer.invoke("__LunaCore.fetch", pluginUrl, request, settings),
 		networkLog: (): Promise<NetLogEntry[]> => ipcRenderer.invoke("__LunaCore.networkLog"),
 		// Strict network (net.ts, injector.ts): a host page code wants that the page's CSP blocks, the user's answers
-		askHost: (pluginUrl: unknown, target: unknown): Promise<{ allowed: boolean; reason?: string }> =>
+		askHost: (pluginUrl: unknown, target: unknown): Promise<{ allowed: boolean; reason?: string; answer?: string; notKept?: true }> =>
 			ipcRenderer.invoke("__LunaCore.askHost", pluginUrl, target),
 		pageConnect: (): Promise<string[]> => ipcRenderer.invoke("__LunaCore.pageConnect"),
 		forgetGrant: (url: unknown, entry: unknown): Promise<boolean> => ipcRenderer.invoke("__LunaCore.forgetGrant", url, entry),

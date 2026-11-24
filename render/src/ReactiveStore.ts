@@ -62,6 +62,12 @@ export class ReactiveStore {
 	public get<T>(key: string): Promise<T | undefined> {
 		return idbGet<T>(key, this.idbStore);
 	}
+	/** The live value: the reactive object when one is loaded (its writes reach idb a moment later), else as stored */
+	public async current<T>(key: string): Promise<T | undefined> {
+		if (key in this.reactiveLoading) await this.reactiveLoading[key].catch(() => {});
+		if (key in this.reactiveCache) return obyStore.unwrap(this.reactiveCache[key]) as T;
+		return this.get<T>(key);
+	}
 
 	public async set<T>(key: string, value: T) {
 		try {
@@ -96,20 +102,16 @@ export class ReactiveStore {
 		return idbKeys(this.idbStore);
 	}
 
-	public async dump(): Promise<Record<string, unknown>>
-	{
+	public async dump(): Promise<Record<string, unknown>> {
 		const allKeys = await this.keys();
 		const data: Record<string, unknown> = {};
-		for (const key of allKeys)
-			data[key] = await this.get(key);
+		for (const key of allKeys) data[key] = await this.get(key);
 
 		return data;
 	}
 
-	public async clear()
-	{
+	public async clear() {
 		const allKeys = await this.keys();
-		for (const key of allKeys)
-			await this.del(key);
+		for (const key of allKeys) await this.del(key);
 	}
 }

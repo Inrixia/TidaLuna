@@ -233,6 +233,57 @@ describe("luna.fetch", () => {
 		);
 	});
 
+	it("asks about a public name that resolves to a local address (a server under split DNS), until restart only", async () => {
+		const home = { name: "Home", mode: "declared", hosts: ["{setting:serverUrl}"], allow: [], deny: [] } satisfies PluginHosts;
+		const questions: HostQuestion[] = [];
+		let answer: HostAnswer = "deny";
+		const ask: AskHost = async (question) => (questions.push(question), answer);
+		const { net, calls } = fakeNet(
+			{ "https://store/home": home },
+			{ "https://jelly.example.org/System/Info": () => new Response("ok") },
+			{ resolve: async () => ["192.168.1.10"] },
+		);
+		const get = () =>
+			net.fetch("https://store/home", "page", { url: "https://jelly.example.org/System/Info" }, ask, { serverUrl: "https://jelly.example.org" });
+		await assert.rejects(get(), /denied/);
+		assert.equal(questions[0].reason, "resolves-local");
+		// The deny holds until restart: not asked again
+		await assert.rejects(get(), /local address/);
+		assert.equal(questions.length, 1);
+		net.forget("https://store/home");
+		answer = "always";
+		assert.equal((await get()).status, 200);
+		assert.equal((await get()).status, 200);
+		assert.equal(questions.length, 2);
+		assert.equal(calls.length, 2);
+	});
+
+	it("a grant that throws at once still lets the answered request through", async () => {
+		const unlisted = { name: "U", mode: "unlisted", allow: [], deny: [] } satisfies PluginHosts;
+		const { net } = fakeNet(
+			{ "https://store/u": unlisted },
+			{ "https://a.example/": () => new Response("ok") },
+			{
+				grant: () => {
+					throw new Error("registry not ready");
+				},
+			},
+		);
+		const res = await net.fetch("https://store/u", "page", { url: "https://a.example/" }, async () => "always");
+		assert.equal(res.status, 200);
+	});
+
+	it("tells page code when an allowed host can't reach the page's CSP (not kept)", async () => {
+		const unlisted = { name: "U", mode: "unlisted", allow: [], deny: [] } satisfies PluginHosts;
+		const { net } = fakeNet({ "https://store/u": unlisted }, {});
+		assert.deepEqual(await net.ask("https://store/u", "ws://nas:8096/socket", async () => "always"), {
+			allowed: true,
+			answer: "always",
+			notKept: true,
+		});
+		assert.deepEqual(await net.ask("https://store/u", "wss://live.example.com/s", async () => "always"), { allowed: true, answer: "always" });
+	});
+
 	it("follows only redirect statuses, and drops the headers of an encoded body", async () => {
 		const { net, calls } = fakeNet(plugins, {
 			"https://a.org/": () => new Response(null, { status: 304, headers: { location: "https://b.org/" } }),

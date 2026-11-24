@@ -58,7 +58,7 @@ export type HostQuestion = {
 	/** The url asked for, without its query */
 	example: string;
 	/** Why it is asked */
-	reason: "unlisted" | "unconfirmed" | "not-listed" | "local-setting" | "redirect";
+	reason: "unlisted" | "unconfirmed" | "not-listed" | "local-setting" | "redirect" | "resolves-local";
 	/** Luna can't keep an answer for this host (an IPv6 address, a single-label name): any answer lasts until TIDAL restarts */
 	notKept?: true;
 };
@@ -122,6 +122,9 @@ export const createNet = (deps: NetDeps) => {
 	const onceAllowed = new Set<string>();
 	/** `${plugin url}\n${entry}` denied for a host the grammar can't keep: until TIDAL restarts, as written */
 	const onceDenied = new Set<string>();
+	/** `${plugin url}\n${entry}\nlocal`: the user's answer for a public name that resolved to a local address, until restart */
+	const resolvedLocalAllowed = new Set<string>();
+	const resolvedLocalDenied = new Set<string>();
 	/** Questions waiting for the user, so that many requests to one new host ask once */
 	const asking = new Map<string, Promise<HostAnswer | undefined>>();
 	const logs = new Map<string, NetLogEntry[]>();
@@ -138,10 +141,12 @@ export const createNet = (deps: NetDeps) => {
 	/** The user's answer for this plugin and host, asked once however many requests wait for it */
 	const askOnce = (pluginUrl: string, plugin: NonNullable<PluginHosts>, url: URL, reason: HostQuestion["reason"], ask: AskHost | undefined) => {
 		const entry = answerEntry(url);
-		const key = `${pluginUrl}\n${entry}`;
+		// A public name that resolves to a local address: its own question, answered until restart only
+		const resolvesLocal = reason === "resolves-local";
+		const key = `${pluginUrl}\n${entry}${resolvesLocal ? "\nlocal" : ""}`;
 		let answer = asking.get(key);
 		if (answer === undefined) {
-			const keepable = parseHostEntry(entry) !== undefined;
+			const keepable = !resolvesLocal && parseHostEntry(entry) !== undefined;
 			const question: HostQuestion = {
 				plugin: pluginUrl,
 				name: plugin.name,
@@ -151,13 +156,16 @@ export const createNet = (deps: NetDeps) => {
 				...(keepable ? {} : { notKept: true as const }),
 			};
 			answer = (ask === undefined ? Promise.resolve(undefined) : ask(question).catch(() => undefined)).then(async (got) => {
-				if (got === "once" || (got === "always" && !keepable)) onceAllowed.add(key);
+				if (resolvesLocal) {
+					if (got === "once" || got === "always") resolvedLocalAllowed.add(key);
+					else if (got === "deny") resolvedLocalDenied.add(key);
+				} else if (got === "once" || (got === "always" && !keepable)) onceAllowed.add(key);
 				else if (got === "deny" && !keepable) onceDenied.add(key);
 				else if (got === "always" || got === "deny")
 					// Not kept (plugins.json can't be written): the answer still counts for this request
-					await Promise.resolve(deps.grant?.(pluginUrl, entry, got)).catch((err) =>
-						console.error("[Luna.core] Can't keep the answer for", entry, err),
-					);
+					await Promise.resolve()
+						.then(() => deps.grant?.(pluginUrl, entry, got))
+						.catch((err) => console.error("[Luna.core] Can't keep the answer for", entry, err));
 				return got;
 			});
 			asking.set(key, answer);
@@ -235,7 +243,18 @@ export const createNet = (deps: NetDeps) => {
 				.catch(() => undefined)
 				.finally(() => clearTimeout(timer));
 			if (addresses === undefined || addresses.length === 0) return `${url.hostname} doesn't resolve`;
-			if (addresses.some(isLocalHost)) return local;
+			if (addresses.some(isLocalHost)) {
+				// A server the user runs under a public name (split DNS, a home server): asked, never let through silently
+				const key = `${pluginUrl}\n${answerEntry(url)}\nlocal`;
+				if (resolvedLocalAllowed.has(key)) return undefined;
+				if (resolvedLocalDenied.has(key)) return local;
+				const answer = await askOnce(pluginUrl, plugin, url, "resolves-local", ask);
+				if (answer === "once" || answer === "always") {
+					answered?.(answer);
+					return undefined;
+				}
+				return answer === "deny" ? `you denied ${url.host} for ${plugin.name}` : local;
+			}
 		}
 		return undefined;
 	};
@@ -423,13 +442,18 @@ export const createNet = (deps: NetDeps) => {
 		fetch: fetchFor,
 		/** Forgets the plugin's answers kept until restart: it was uninstalled, or moved to another url */
 		forget: (pluginUrl: string) => {
-			for (const kept of [onceAllowed, onceDenied]) for (const key of kept) if (key.startsWith(`${pluginUrl}\n`)) kept.delete(key);
+			for (const kept of [onceAllowed, onceDenied, resolvedLocalAllowed, resolvedLocalDenied])
+				for (const key of kept) if (key.startsWith(`${pluginUrl}\n`)) kept.delete(key);
 		},
 		/**
 		 * For a request page code makes with the page's own network (a WebSocket, an XMLHttpRequest) to a host the page's
 		 * CSP blocks: whether the plugin may reach it, asking the user like luna.fetch. Logged like a luna.fetch request
 		 */
-		ask: async (pluginUrl: unknown, target: unknown, ask?: AskHost): Promise<{ allowed: boolean; reason?: string; answer?: HostAnswer }> => {
+		ask: async (
+			pluginUrl: unknown,
+			target: unknown,
+			ask?: AskHost,
+		): Promise<{ allowed: boolean; reason?: string; answer?: HostAnswer; notKept?: true }> => {
 			const plugin = typeof pluginUrl === "string" ? deps.hostsOf(pluginUrl) : undefined;
 			let url: URL;
 			try {
@@ -455,7 +479,9 @@ export const createNet = (deps: NetDeps) => {
 			if (reason !== undefined) entry.error = reason;
 			record(entry, plugin !== undefined);
 			if (reason !== undefined) return { allowed: false, reason };
-			return entry.asked === undefined ? { allowed: true } : { allowed: true, answer: entry.asked };
+			// Allowed only as written, in memory: the page's CSP (built from kept grants) never has it
+			const notKept = parseHostEntry(answerEntry(url)) === undefined && onceAllowed.has(`${pluginUrl}\n${answerEntry(url)}`);
+			return { allowed: true, ...(entry.asked === undefined ? {} : { answer: entry.asked }), ...(notKept ? { notKept: true as const } : {}) };
 		},
 		/**
 		 * The newest entries last, copied. No way to clear it: any page code could, to hide its requests. It lasts until

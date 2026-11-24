@@ -83,6 +83,8 @@ describe("enforcedPolicy", () => {
 	it("gives page code the baseline's host entries only", () => {
 		assert.ok(baselineEntries.includes("*.tidal.com"));
 		assert.ok(baselineEntries.includes("api.github.com"));
+		// Luna's own Supporters tab
+		assert.ok(baselineEntries.includes("sponsors.hug.rip"));
 		assert.equal(baselineEntries.includes("'self'"), false);
 		assert.equal(baselineEntries.includes("blob:"), false);
 		assert.equal(baselineEntries.includes("https://luna"), false);

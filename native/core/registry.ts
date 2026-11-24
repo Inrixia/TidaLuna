@@ -209,7 +209,18 @@ const showEntry = (entry: string) => {
 	const key = settingKeyOf(entry);
 	return key !== undefined ? `the server in its setting "${key}"` : entry;
 };
-const showEntries = (hosts: string[]) => hosts.map(showEntry).join(", ");
+/** The hosts to show, as many as fit a window line (confirmPage.ts MAX_TEXT cuts longer ones), then how many more */
+export const showEntries = (hosts: string[], budget = 400) => {
+	const shown: string[] = [];
+	let length = 0;
+	for (const host of hosts.map(showEntry)) {
+		if (shown.length !== 0 && length + host.length + 2 > budget) break;
+		shown.push(host);
+		length += host.length + 2;
+	}
+	const more = hosts.length - shown.length;
+	return more === 0 ? shown.join(", ") : `${shown.join(", ")} and ${more} more (Luna Settings > Network lists them all once you accept)`;
+};
 
 /** What the confirmation says about a version's network hosts */
 const describeHosts = (version: Version, legacyNet = false): string[] => {

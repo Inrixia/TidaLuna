@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 
 import type { ConfirmRequest } from "./confirmPage";
 import { pluginIdOf, servedSha256 } from "./legacyList";
-import { createRegistry, type CoreState, type PluginPackage } from "./registry";
+import { createRegistry, showEntries, type CoreState, type PluginPackage } from "./registry";
 
 const URL = "https://example.com/plugin";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
@@ -1115,6 +1115,16 @@ describe("core registry", () => {
 });
 
 describe("core registry network modes", () => {
+	it("shows as many hosts as fit a window line, then how many more", () => {
+		assert.equal(showEntries(["a.com", "b.com"]), "a.com, b.com");
+		const many = Array.from({ length: 40 }, (_, i) => `host${i}.example.com`);
+		const shown = showEntries(many);
+		assert.ok(shown.length < 600, String(shown.length));
+		assert.match(shown, /and \d+ more \(Luna Settings > Network lists them all/);
+		const count = Number(shown.match(/and (\d+) more/)![1]);
+		assert.equal(shown.split(" and ")[0].split(", ").length + count, 40);
+	});
+
 	const servedSha = (hash: string) => servedSha256(`code ${hash}`);
 
 	it("shows the registry's derived hosts for a plugin that lists none, and uses them once confirmed", async () => {

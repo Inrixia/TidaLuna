@@ -87,6 +87,19 @@ describe("registry derived hosts", () => {
 		const broken = createDerivedStore({ ...deps, fetchList: () => new Promise<never>(() => {}) });
 		assert.strictEqual(broken.loaded(), false);
 		assert.ok(logs.some((line) => line.includes("fails its check")));
+		// …and with its serial unknown, no fetched list replaces it
+		const brokenFetch = createDerivedStore({ ...deps, fetchList: async () => signed(doc(1, {})) });
+		await assert.rejects(brokenFetch.refresh(), /fails its check: not replaced/);
+
+		// A cache that can't be read now (a locked file): no fetched list is taken until it is read
+		const locked = createDerivedStore({
+			...deps,
+			readCache: () => {
+				throw new Error("EBUSY");
+			},
+		});
+		await assert.rejects(locked.refresh(), /can't be read yet/);
+		assert.strictEqual(locked.loaded(), false);
 	});
 
 	it("logs a cache it can't read once per reason, and tries again on each use", async () => {

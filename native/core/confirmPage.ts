@@ -89,9 +89,21 @@ export const confirmGate = () => {
 	};
 };
 
-/** Luna's own lines past the limit go into the last one (an update that changes its natives and its hosts at once) */
-export const fitLines = (lines: string[]) =>
-	lines.length <= MAX_LINES ? lines : [...lines.slice(0, MAX_LINES - 1), lines.slice(MAX_LINES - 1).join(" ")];
+/**
+ * Luna's own lines past the limit (an update that changes its natives and its hosts at once): short neighbours share a
+ * line, so no text is cut; only if that isn't enough the rest goes into the last line
+ */
+export const fitLines = (lines: string[]) => {
+	if (lines.length <= MAX_LINES) return lines;
+	const packed: string[] = [];
+	for (const line of lines) {
+		const last = packed.length - 1;
+		if (last >= 0 && packed[last].length + 1 + line.length <= MAX_TEXT) packed[last] += ` ${line}`;
+		else packed.push(line);
+	}
+	const fitted = packed.length <= MAX_LINES ? packed : lines;
+	return fitted.length <= MAX_LINES ? fitted : [...fitted.slice(0, MAX_LINES - 1), fitted.slice(MAX_LINES - 1).join(" ")];
+};
 
 /** Checks a request that came over IPC: strings only, long texts are cut */
 export const confirmRequest = (title: unknown, lines: unknown, confirmText: unknown): ConfirmRequest => {

@@ -22,6 +22,8 @@ export const networkBaseline = [
 	"wss://*.tidal.com",
 	// @luna/lib's own MusicBrainz lookups (Album, MediaItem)
 	"musicbrainz.org",
+	// Luna's Supporters tab (plugins/ui GitHubSponsors)
+	"sponsors.hug.rip",
 	"*.gstatic.com",
 	"*.stripe.com",
 	"*.cookielaw.org",

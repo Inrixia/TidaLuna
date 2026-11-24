@@ -120,8 +120,11 @@ describe("core confirmation page", () => {
 		assert.deepEqual(confirmRequest("T", ["a"], "Go"), { title: "T", lines: ["a"], confirmText: "Go" });
 		// Luna's own lines past the limit go into the last one instead of failing the window
 		const many = Array.from({ length: 14 }, (_, i) => `l${i}`);
-		assert.deepEqual(fitLines(many), [...many.slice(0, 11), "l11 l12 l13"]);
-		assert.equal(confirmRequest("T", fitLines(many), "Go").lines.length, 12);
+		// Short lines share one, so no text is cut
+		assert.deepEqual(fitLines(many), [many.join(" ")]);
+		const long = Array.from({ length: 14 }, (_, i) => `${i}`.padEnd(400, "x"));
+		assert.deepEqual(fitLines(long), [...long.slice(0, 11), long.slice(11).join(" ")]);
+		assert.equal(confirmRequest("T", fitLines(long), "Go").lines.length, 12);
 		assert.deepEqual(fitLines(["a"]), ["a"]);
 		assert.throws(() => confirmRequest(1, [], "Go"));
 		assert.throws(() => confirmRequest("T", "a", "Go"));

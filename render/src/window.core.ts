@@ -80,7 +80,13 @@ declare global {
 		askHost(
 			pluginUrl: string,
 			target: string,
-		): Promise<{ allowed: boolean; reason?: string; answer?: import("../../native/core/net").HostAnswer }>;
+		): Promise<{
+			allowed: boolean;
+			reason?: string;
+			answer?: import("../../native/core/net").HostAnswer;
+			/** Luna can't keep an answer for this host (an IPv6 address, a single-label name): it never reaches the page's CSP */
+			notKept?: true;
+		}>;
 		/** The host entries the page's enforced connect-src was built from when it loaded */
 		pageConnect(): Promise<string[]>;
 		/** Forgets an "always"/"deny" answer: the host is asked again */
