@@ -43,10 +43,7 @@ const store = createLegacyStore({
 
 let timer: NodeJS.Timeout | undefined;
 const startTimer = () => {
-	timer ??= setInterval(
-		() => store.refresh().catch((err) => console.warn("[Luna.core] Old native format list not refreshed:", err?.message ?? err)),
-		REFRESH_MS,
-	);
+	timer ??= setInterval(() => void store.refreshNow(), REFRESH_MS);
 	timer.unref();
 };
 

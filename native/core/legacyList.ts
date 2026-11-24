@@ -182,15 +182,7 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 		if (cache === "unread") throw new Error("the cached list can't be read yet: not replaced");
 		if (cache === "broken") throw new Error("the cached list fails its check: not replaced");
 		writeCurrent();
-		let fetched: { bytes: Buffer; sig: string };
-		try {
-			fetched = await deps.fetchList();
-		} catch (err) {
-			fetchFailed = true;
-			throw err;
-		}
-		fetchFailed = false;
-		const { bytes, sig } = fetched;
+		const { bytes, sig } = await deps.fetchList();
 		loadCache();
 		const next = parseLegacyList(bytes, sig, deps.publicKey);
 		const replaces = replacesList(current?.list, next);
@@ -205,25 +197,33 @@ export const createLegacyStore = (deps: LegacyStoreDeps) => {
 	};
 
 	let first: Promise<void> | undefined;
-	/** The last refresh couldn't fetch (offline): tried again, also with a cached list, until one gets through */
-	let fetchFailed = false;
-	/** While no list was accepted or fetched: when to fetch again (a cache that can't be read yet: on the next call) */
+	/**
+	 * After a refresh that failed (offline, a page that isn't the list, a list refused): when to try again, also with a
+	 * cached list, so a removal isn't held back until the next scheduled refresh. A cache that can't be read yet: on the
+	 * next call. A cache that fails its check: never (no fetched list can be taken)
+	 */
 	let retryAt: number | undefined;
 	let failures = 0;
-	/** The first refresh, started again while no list was accepted yet (the 6 h refresh is the caller's); never rejects */
-	const start = () => {
-		if (first !== undefined && (retryAt === undefined || now() < retryAt)) return first;
+	/** A refresh whose failure schedules the next try; never rejects */
+	const tracked = () => {
 		retryAt = undefined;
-		return (first = refresh().catch((err) => {
-			deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
-			if (cache === "unread") retryAt = now();
-			else if ((current === undefined || fetchFailed) && cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
-		}));
+		return (first = refresh().then(
+			() => void (failures = 0),
+			(err) => {
+				deps.log?.(`[Luna.core] Old native format list not refreshed: ${(err as Error)?.message ?? err}`);
+				if (cache === "unread") retryAt = now();
+				else if (cache !== "broken") retryAt = now() + retryMs[Math.min(failures++, retryMs.length - 1)];
+			},
+		));
 	};
+	/** The first refresh of a start, and the tries after a failed one (on the next check once due) */
+	const start = () => (first !== undefined && (retryAt === undefined || now() < retryAt) ? first : tracked());
 	let waitUntil: number | undefined;
 
 	return {
 		refresh,
+		/** The scheduled refresh: like refresh, but a failure is tried again soon and nothing is thrown */
+		refreshNow: (): Promise<void> => tracked(),
 		/** Whether the current list has this plugin's code (see RegistryDeps.legacyAllows) */
 		allows: (id: string, servedSha256: string): boolean => {
 			loadCache();

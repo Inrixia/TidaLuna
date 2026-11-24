@@ -306,6 +306,43 @@ describe("old native format list", () => {
 		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
 	});
 
+	it("tries again soon after a fetched list that can't be used, and after a failed scheduled refresh", async () => {
+		const cached = signed(doc(1, [A, B]));
+		let time = 0;
+		let served: { bytes: Buffer; sig: string } = { bytes: Buffer.from("<html>portal</html>"), sig: "" };
+		let fetches = 0;
+		const store = createLegacyStore({
+			readCache: () => JSON.stringify({ list: cached.bytes.toString("base64"), sig: cached.sig }),
+			writeCache: () => {},
+			fetchList: async () => (fetches++, served),
+			publicKey: pub,
+			retryMs: [100],
+			now: () => time,
+		});
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+		store.allows("b.mjs", B.sha256);
+		await settle();
+		served = signed(doc(2, [A]));
+		time = 100;
+		store.allows("b.mjs", B.sha256);
+		await settle();
+		assert.strictEqual(fetches, 2);
+		assert.strictEqual(store.allows("b.mjs", B.sha256), false);
+		// The scheduled refresh fails: the next check after the wait fetches again
+		served = { bytes: Buffer.from("offline"), sig: "" };
+		await store.refreshNow();
+		served = signed(doc(3, []));
+		time = 150;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 3);
+		time = 200;
+		store.allows("a.mjs", A.sha256);
+		await settle();
+		assert.strictEqual(fetches, 4);
+		assert.strictEqual(store.allows("a.mjs", A.sha256), false);
+	});
+
 	it("allows exactly the listed code of a listed plugin", () => {
 		assert.strictEqual(listAllows(base, "https://example.com/store/a.mjs", "code a"), true);
 		// Served from another store (it moved): the id and the code decide
