@@ -630,8 +630,9 @@ export class LunaPlugin {
 	/**
 	 * Store the update and run it if the plugin is enabled.
 	 * @param update The update the user was shown. If the url has served a newer one since, that one becomes the pending update.
-	 * @param beforeLoad Runs once the update passed the registry's checks, right before it is applied (the dialog's "Ask
-	 * again" revokes there, so a refused update leaves the answers). If it throws, the update is not applied
+	 * @param beforeLoad Runs once the update passed the registry's checks, right before it is applied, holding
+	 * loadSemaphore (the dialog's "Ask again" revokes there, so a refused update leaves the answers). Once at most. If it
+	 * throws, the update is not applied
 	 */
 	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._, beforeLoad?: () => Promise<void>): Promise<void> {
 		if (update?.code === undefined) return;
@@ -640,10 +641,11 @@ export class LunaPlugin {
 		if (update.rawSha256 !== raw) update = { ...update, rawSha256: raw };
 		const refusal = this.updateRefusal(update);
 		if (refusal !== undefined) return this.refuseUpdate(update, refusal);
-		await beforeLoad?.();
+		let ran = false;
+		const beforeOnce = beforeLoad && (async () => (ran ? undefined : ((ran = true), beforeLoad())));
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
 		if (this.enabled) {
-			await this.loadExports(true, update);
+			await this.loadExports(true, update, undefined, beforeOnce);
 			// Turned off while it waited for the semaphore (loadExports returned before applying it): stored below without running, as for
 			// a plugin that is off
 			if (this.wanted || this.package?.hash === update.hash) {
@@ -657,6 +659,7 @@ export class LunaPlugin {
 			// Checked again: the list may have changed while waiting for the semaphore
 			const refusalNow = this.updateRefusal(update);
 			if (refusalNow !== undefined) return this.refuseUpdate(update, refusalNow);
+			await beforeOnce?.();
 			this.applyUpdate(update);
 		} finally {
 			release();
@@ -993,7 +996,7 @@ export class LunaPlugin {
 	 * (load(), reload, an accepted update, live reload, a lifted revocation, a restore) and may wait on the semaphore and fetch while the
 	 * user disables or uninstalls it (they don't wait for loads): it stops wherever it finds that, and unloads if it got as far as importing
 	 */
-	private async loadExports(reload?: true, update?: PluginPackage, enabling?: boolean): Promise<void> {
+	private async loadExports(reload?: true, update?: PluginPackage, enabling?: boolean, beforeLoad?: () => Promise<void>): Promise<void> {
 		// Ensure we cant start loading midway through loading
 		const release = await this.loadSemaphore.obtain();
 		const unwanted = () => !enabling && !this.wanted;
@@ -1007,6 +1010,13 @@ export class LunaPlugin {
 			release();
 			return this.refuseUpdate(update!, refusal);
 		}
+		// Under the semaphore: no other load of this plugin runs between it and the update (see acceptUpdate). Before the
+		// try below, whose catch would unload the running version
+		if (beforeLoad !== undefined)
+			await beforeLoad().catch((err) => {
+				release();
+				throw err;
+			});
 		let replaced: { previous: PluginPackage | undefined } | undefined;
 		try {
 			if (update !== undefined) replaced = { previous: this.applyUpdate(update) };
