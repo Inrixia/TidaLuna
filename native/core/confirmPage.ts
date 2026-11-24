@@ -191,17 +191,17 @@ export const confirmGate = () => {
  * Luna's own lines past the limit (an update that changes its natives and its hosts at once): short neighbours share a
  * line, so no text is cut; only if that isn't enough the rest goes into the last line
  */
-export const fitLines = (lines: string[]) => {
-	if (lines.length <= MAX_LINES) return lines;
+export const fitLines = (lines: string[], max = MAX_LINES) => {
+	if (lines.length <= max) return lines;
 	const packed: string[] = [];
 	for (const line of lines) {
 		const last = packed.length - 1;
 		if (last >= 0 && packed[last].length + 1 + line.length <= MAX_TEXT) packed[last] += ` ${line}`;
 		else packed.push(line);
 	}
-	if (packed.length <= MAX_LINES) return packed;
+	if (packed.length <= max) return packed;
 	// The last line takes what fits and counts the rest: confirmRequest would cut it without saying how much
-	const rest = packed.slice(MAX_LINES - 1);
+	const rest = packed.slice(max - 1);
 	let last = "";
 	let taken = 0;
 	const counted = (text: string, left: number) =>
@@ -215,9 +215,21 @@ export const fitLines = (lines: string[]) => {
 	if (taken === 0) {
 		// Even the first line doesn't fit with the count: its start, then the count
 		const suffix = ` \u2026 and ${rest.length - 1} more line${rest.length - 1 === 1 ? "" : "s"}`;
-		return [...packed.slice(0, MAX_LINES - 1), `${rest[0].slice(0, MAX_TEXT - suffix.length)}${suffix}`];
+		return [...packed.slice(0, max - 1), `${rest[0].slice(0, MAX_TEXT - suffix.length)}${suffix}`];
 	}
-	return [...packed.slice(0, MAX_LINES - 1), counted(last, rest.length - taken)];
+	return [...packed.slice(0, max - 1), counted(last, rest.length - taken)];
+};
+
+/**
+ * fitLines for a request's lines that may hold lines with links (an update's versions and trust lines): those stay as
+ * they are and Luna's text lines among them are packed into the room left
+ */
+export const fitConfirmLines = (lines: ConfirmLine[]): ConfirmLine[] => {
+	if (lines.length <= MAX_LINES) return lines;
+	const texts = lines.filter((line): line is string => typeof line === "string");
+	const fitted = fitLines(texts, Math.max(1, MAX_LINES - (lines.length - texts.length)));
+	const first = lines.findIndex((line) => typeof line === "string");
+	return [...lines.slice(0, first), ...fitted, ...lines.slice(first).filter((line) => typeof line !== "string")];
 };
 
 /** An http(s) url, normalized (`new URL`), else undefined: the only links a confirmation opens */

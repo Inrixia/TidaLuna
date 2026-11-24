@@ -12,6 +12,7 @@ import {
 	confirmRequest,
 	type ConfirmRequest,
 	type ConfirmWarning,
+	fitConfirmLines,
 	fitLines,
 	focusedWithin,
 	httpLink,
@@ -198,8 +199,8 @@ export const askerFor = (sender: Electron.WebContents) => {
 	const parent = BrowserWindow.fromWebContents(sender) ?? undefined;
 	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
 	return async ({ title, lines, confirmText, warning }: ConfirmRequest): Promise<boolean> => {
-		// Luna's own text lines past the limit are packed (lines with links stay as they are)
-		const fitted = Array.isArray(lines) && lines.every((line) => typeof line === "string") ? fitLines(lines) : lines;
+		// Luna's own text lines past the limit are packed (lines with links stay as they are, an update's notes among them)
+		const fitted = Array.isArray(lines) ? fitConfirmLines(lines) : lines;
 		const request = confirmRequest(title, fitted, confirmText, warning);
 		const { answer, refused } = await askConfirm(request, parent, recentUserInput);
 		if (refused === undefined) return answer;

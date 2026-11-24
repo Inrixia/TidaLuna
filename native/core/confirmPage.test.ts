@@ -8,6 +8,7 @@ import {
 	confirmGate,
 	confirmLinks,
 	confirmRequest,
+	fitConfirmLines,
 	fitLines,
 	focusedWithin,
 	isHostAnswer,
@@ -253,6 +254,20 @@ describe("core confirmation page", () => {
 		expect(() => confirmRequest("", [], "Go")).toThrow();
 		expect(() => confirmRequest("T", new Array(13).fill("a"), "Go")).toThrow();
 		expect(confirmRequest("x".repeat(700), [], "Go").title.length).toBe(601);
+	});
+
+	it("packs an update's many notes around its link lines, so the request still passes", () => {
+		const link = { text: "v2", href: "https://example.com/owner/repo/commit/abc1234" };
+		const notes = Array.from({ length: 15 }, (_, i) => `${i}`.padEnd(300, "n"));
+		const lines = [["a ", link], ["b ", link], ...notes, ["Update only if you trust the author and ", link]];
+		const fitted = fitConfirmLines(lines);
+		expect(fitted.length).toBeLessThanOrEqual(12);
+		// The link lines are kept, versions first and the trust line last
+		expect(fitted[0]).toBe(lines[0]);
+		expect(fitted.at(-1)).toBe(lines.at(-1));
+		expect(() => confirmRequest("T", fitted, "Go")).not.toThrow();
+		// Short enough lines are left as they are
+		expect(fitConfirmLines(lines.slice(0, 4))).toStrictEqual(lines.slice(0, 4));
 	});
 
 	it("takes http(s) links only, and a warning only with an action to run", () => {
