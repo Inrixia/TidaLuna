@@ -130,9 +130,13 @@ const withoutSource = (code: string, url: string) => {
 	return code.endsWith(suffix) ? code.slice(0, -suffix.length) : code;
 };
 const isNative = (version: Version) => version.natives.length !== 0;
-/** A new hash of either the page code or the world is a new version */
-const sameVersion = (version: Version | undefined, pkg: PluginPackage) =>
-	version !== undefined && version.package.hash === pkg.hash && version.package.worldHash === pkg.worldHash;
+/**
+ * Any change is a new version: a new hash of the page code or the world in the package, or other served code under the
+ * same hash (whatever the version number says). The world needs no own check: a world is only taken when it matches
+ * its worldHash
+ */
+const sameVersion = (version: Version | undefined, pkg: PluginPackage, codeSha256: string) =>
+	version !== undefined && version.package.hash === pkg.hash && version.package.worldHash === pkg.worldHash && version.codeSha256 === codeSha256;
 
 const legacyNativesOf = (version: Version) => version.natives.filter((fileName) => !isWorldNative(fileName));
 export const legacyFormatMessage = (name: string) =>
@@ -210,9 +214,9 @@ export const createRegistry = (deps: RegistryDeps) => {
 		return run;
 	};
 
-	const fetchVersion = async (url: string, pkg?: PluginPackage): Promise<Version> => {
+	const fetchVersion = async (url: string, pkg?: PluginPackage, code?: string): Promise<Version> => {
 		pkg ??= await deps.fetchPackage(url);
-		const code = await deps.fetchCode(url);
+		code ??= await deps.fetchCode(url);
 		const natives = Object.keys(deps.nativeSources(code));
 		if (typeof pkg.lunaWorld !== "string") return { package: pkg, code, codeSha256: sha256(code), natives };
 		// The world is pinned with the code: worlds.ts runs exactly this text, whatever the url serves later
@@ -346,8 +350,11 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (record === undefined || !record.enabled) throw new Error(`[Luna.core] ${url} is not enabled`);
 		try {
 			const pkg = await deps.fetchPackage(url);
-			if (!sameVersion(record.accepted, pkg)) {
-				const version = sameVersion(record.pending, pkg) ? record.pending! : await fetchVersion(url, pkg);
+			// The code too, not only the package: code changed under the same hash is an update the user sees
+			const code = await deps.fetchCode(url);
+			const codeSha256 = sha256(code);
+			if (!sameVersion(record.accepted, pkg, codeSha256)) {
+				const version = sameVersion(record.pending, pkg, codeSha256) ? record.pending! : await fetchVersion(url, pkg, code);
 				if (record.accepted === undefined && record.unreviewed && isNative(version)) {
 					// Migrated native plugin: it runs only once the user enables it
 					record.enabled = false;

@@ -179,6 +179,37 @@ describe("core registry", () => {
 		assert.strictEqual(registry.info(URL)?.legacyNatives, "refused");
 	});
 
+	it("takes any change of the served code as an update the user is asked about, whatever the package says", async () => {
+		const { deps, serve, served } = fakeDeps();
+		serve(URL, "v1", {}, { version: "1.2.0" });
+		const registry = createRegistry(deps);
+		await registry.install(URL, asker(true));
+
+		// Other code under the same hash and version: the accepted code keeps running, the new code waits
+		served.get(URL)!.code = "code changed";
+		let loaded = await registry.load(URL);
+		assert.strictEqual(loaded.code, "code v1");
+		assert.strictEqual(loaded.pending?.codeSha256, sha256("code changed"));
+		const no = asker(false);
+		assert.strictEqual(await registry.acceptUpdate(URL, no), false);
+		assert.ok(no.asked[0].lines.includes("1.2.0 -> 1.2.0"));
+		assert.ok(no.asked[0].lines.includes(`Code sha256: ${sha256("code v1").slice(0, 12)} -> ${sha256("code changed").slice(0, 12)}`));
+		assert.strictEqual((await registry.load(URL)).code, "code v1");
+
+		// A new hash at a lower version number: an update too, asked about like any other
+		serve(URL, "v0", {}, { version: "1.0.0" });
+		loaded = await registry.load(URL);
+		assert.strictEqual(loaded.code, "code v1");
+		assert.strictEqual(loaded.pending?.version, "1.0.0");
+		const yes = asker(true);
+		assert.strictEqual(await registry.acceptUpdate(URL, yes), true);
+		assert.strictEqual(yes.asked.length, 1);
+		assert.strictEqual((await registry.load(URL)).code, "code v0");
+
+		// The url serves the accepted code again: no update
+		assert.strictEqual((await registry.load(URL)).pending, undefined);
+	});
+
 	it("accepts the update the user was asked about, a newer one found meanwhile waits", async () => {
 		const { deps, serve } = fakeDeps();
 		serve(URL, "v1");
