@@ -533,6 +533,20 @@ describe("core registry", () => {
 		assert.strictEqual(restarted.nativeOwner("a.native.ts", "native a"), undefined);
 	});
 
+	it("takes a plugin off the old format when an update changes only its world", async () => {
+		const { deps, serve, serveWorld, served } = fakeDeps();
+		serve(URL, "v1", { "a.native.ts": "native a" });
+		const registry = createRegistry(deps);
+		await installLegacy(registry, deps, URL, "v1");
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), URL);
+		// The same bundle, now with a world
+		serveWorld(URL, "v2", { "w.native.ts": "native w" });
+		Object.assign(served.get(URL)!, { code: "code v1", natives: { "a.native.ts": "native a" } });
+		await registry.load(URL);
+		assert.strictEqual(await registry.acceptUpdate(URL, asker(true)), true);
+		assert.strictEqual(registry.nativeOwner("a.native.ts", "native a"), undefined);
+	});
+
 	it("takes the url a plugin moved from off the old format once it leaves at the new one", async () => {
 		const NEW_URL = "https://example.org/plugin";
 		const { deps, serve, served, writes } = fakeDeps();

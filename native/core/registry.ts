@@ -54,7 +54,7 @@ export type CoreState = {
 	 */
 	legacyOff?: string[];
 	/**
-	 * Url -> the sha256 of the first code accepted (or run) here, natives or not. Accepting other code at that url takes
+	 * Url -> the sha256 of the first code accepted (or run) here, natives or not (and of its world, if it has one). Accepting other code at that url takes
 	 * it off the old format for good, whatever the list says at that moment and also after an uninstall.
 	 */
 	legacyRan?: Record<string, string>;
@@ -209,17 +209,19 @@ export const createRegistry = (deps: RegistryDeps) => {
 		if (found === undefined) served.set(version, (found = servedSha256(version.code)));
 		return found;
 	};
+	/** All the code a version brings: the bundle and its world (an update may change only the world) */
+	const codeOf = (version: Version) => (version.world === undefined ? servedOf(version) : `${servedOf(version)} ${sha256(version.world)}`);
 	/** Old-format natives of this version run: a dev url, or its exact code is on the list (and the plugin didn't leave it here) */
 	const legacyRuns = (url: string, version: Version | undefined) =>
 		isDevUrl(url) ||
 		(version !== undefined &&
 			!legacyOff.has(url) &&
-			(legacyRan[url] === undefined || legacyRan[url] === servedOf(version)) &&
+			(legacyRan[url] === undefined || legacyRan[url] === codeOf(version)) &&
 			deps.legacyAllows?.(pluginIdOf(url), servedOf(version)) === true);
 	/** Old-format natives of this url's accepted version ran: remembered, so other code accepted later leaves the format */
 	const ranLegacy = (url: string, version: Version) => {
 		if (isDevUrl(url) || legacyRan[url] !== undefined) return;
-		legacyRan[url] = servedOf(version);
+		legacyRan[url] = codeOf(version);
 		void save();
 	};
 	/** Off the old format for good: this url and every url the plugin moved between with it */
@@ -237,10 +239,10 @@ export const createRegistry = (deps: RegistryDeps) => {
 	const leaves = (url: string, before: Version | undefined, version: Version) => {
 		if (isDevUrl(url)) return false;
 		const ran = legacyRan[url];
-		const sha = servedOf(version);
+		const sha = codeOf(version);
 		// Not asking the list: it may be missing or older at this moment. Code without old-format natives counts too: going
 		// back from it to listed code is still other code
-		return (ran !== undefined && ran !== sha) || (before !== undefined && servedOf(before) !== sha);
+		return (ran !== undefined && ran !== sha) || (before !== undefined && codeOf(before) !== sha);
 	};
 	const leavesLegacy = (url: string, before: Version | undefined, version: Version) => {
 		if (!leaves(url, before, version)) return;
@@ -256,7 +258,7 @@ export const createRegistry = (deps: RegistryDeps) => {
 	 * then): other code accepted there later leaves the format, also after an uninstall
 	 */
 	const noteLegacy = (url: string, version: Version) => {
-		if (!isDevUrl(url) && legacyRan[url] === undefined) legacyRan[url] = servedOf(version);
+		if (!isDevUrl(url) && legacyRan[url] === undefined) legacyRan[url] = codeOf(version);
 	};
 	// Records accepted before first versions were remembered for all code
 	for (const record of Object.values(state.plugins)) if (record?.accepted !== undefined) noteLegacy(record.url, record.accepted);
