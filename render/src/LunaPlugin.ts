@@ -630,14 +630,17 @@ export class LunaPlugin {
 	/**
 	 * Store the update and run it if the plugin is enabled.
 	 * @param update The update the user was shown. If the url has served a newer one since, that one becomes the pending update.
+	 * @param beforeLoad Runs once the update passed the registry's checks, right before it is applied (the dialog's "Ask
+	 * again" revokes there, so a refused update leaves the answers). If it throws, the update is not applied
 	 */
-	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._): Promise<void> {
+	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._, beforeLoad?: () => Promise<void>): Promise<void> {
 		if (update?.code === undefined) return;
 		// Hashed here from the code that would be stored, not taken from the package: any caller can hand one in
 		const raw = await rawSha256(update.code);
 		if (update.rawSha256 !== raw) update = { ...update, rawSha256: raw };
 		const refusal = this.updateRefusal(update);
 		if (refusal !== undefined) return this.refuseUpdate(update, refusal);
+		await beforeLoad?.();
 		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
 		if (this.enabled) {
 			await this.loadExports(true, update);
