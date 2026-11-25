@@ -40,7 +40,6 @@ const untestable = [
 	"render/src/window.core.ts",
 	"render/src/loadingContainer.ts",
 	"render/src/nativeScrollbars.ts",
-	"render/src/tidalPatches.ts",
 	"render/src/tidalTransform.ts",
 	"native/injector.ts",
 	"native/preload.ts",
@@ -67,7 +66,7 @@ export default defineConfig({
 				test: {
 					name: "node",
 					environment: "node",
-					include: ["native/**/*.test.ts", "build/**/*.test.ts"],
+					include: ["native/**/*.test.ts", "build/**/*.test.ts", "scripts/**/*.test.ts"],
 					setupFiles: [resolvePath("./test/setup-node.ts")],
 					// Under coverage instrumentation a file with a heavy import graph is far slower than its dry run
 					testTimeout: 30_000,
