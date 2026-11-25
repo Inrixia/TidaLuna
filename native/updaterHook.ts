@@ -72,6 +72,8 @@ export const hookUpdater = ({ updater, spawnRepair, log }: HookUpdaterDeps): (()
 export type RepairResult =
 	/** Luna was put into the new version and TIDAL started */
 	| { action: "injected"; version?: string; launched: true }
+	/** This build did not fit, so a release that does was installed instead, and TIDAL started */
+	| { action: "installed-release"; version?: string; launched: true }
 	/** The new version is outside what this Luna supports: started without it rather than risking a broken client */
 	| { action: "skipped-incompatible"; version?: string; launched: true }
 	/** The update never appeared: TIDAL was started as it is, so the user is not left with nothing */
@@ -88,6 +90,11 @@ export type RepairDeps = {
 	inject: (install: TidalInstall) => Promise<LunaInstall>;
 	/** Whether this Luna is known to work against that TIDAL. undefined: not known, so it is not installed */
 	compatible?: (install: TidalInstall) => Promise<boolean | undefined>;
+	/**
+	 * Installs a release that does fit, for when the running build does not. Resolves true when something was installed.
+	 * Without this the repair can only start an unmodded TIDAL, which is why the logon schedule still exists
+	 */
+	escalate?: () => Promise<boolean>;
 	/** Starts TIDAL */
 	launch: () => void;
 	sleep: (ms: number) => Promise<void>;
@@ -149,7 +156,17 @@ export const repairAfterUpdate = async (deps: RepairDeps, fromVersion?: string):
 		return undefined;
 	});
 	if (supported !== true) {
-		deps.log(`[repair] not installing this Luna into ${update.version ?? update.appDir}: support is ${supported === false ? "refused" : "unknown"}`);
+		deps.log(`[repair] this Luna may not fit ${update.version ?? update.appDir}: support is ${supported === false ? "refused" : "unknown"}`);
+		// Fall back to a release that says it fits, which is the same answer the logon run would reach, reached now
+		const installed = await deps.escalate?.().catch((err) => {
+			deps.log(`[repair] could not install a matching release: ${String(err)}`);
+			return false;
+		});
+		if (installed === true) {
+			deps.log(`[repair] installed a release that fits ${update.version ?? update.appDir}`);
+			deps.launch();
+			return { action: "installed-release", version: update.version, launched: true };
+		}
 		deps.launch();
 		return { action: "skipped-incompatible", version: update.version, launched: true };
 	}

@@ -1,7 +1,7 @@
 import { rename, rm, stat } from "fs/promises";
 import path from "path";
 
-import { readLunaState, recordInstall, writeLunaState, type LunaState } from "./lunaState";
+import { forgetLunaState, readLunaState, recordInstall, writeLunaState, type LunaState } from "./lunaState";
 import { verifyLunaZip } from "./releaseGate";
 import { resolveRelease, type Resolution } from "./releaseResolver";
 import { findTidalInstalls, injectLuna, injectionState, type TidalRoot } from "./tidalInstall";
@@ -30,6 +30,11 @@ export type GuardDeps = {
 	fetchReleases: () => Promise<ReleaseInfo[]>;
 	fetchCompat: (release: ReleaseInfo) => Promise<unknown | string>;
 	fetchZip: (url: string) => Promise<Uint8Array>;
+	/**
+	 * Removes the schedule that starts a run, used when the user has removed Luna and it must not be put back. Supplied
+	 * by the caller, which owns the platform detail the schedule needs
+	 */
+	unregisterSchedule?: () => Promise<unknown>;
 	/** TIDAL writing while it runs would corrupt a live install, so a run refuses rather than racing */
 	isTidalRunning?: () => Promise<boolean>;
 	/**
@@ -44,7 +49,7 @@ export type GuardDeps = {
 };
 
 export type GuardOutcome = {
-	action: "none" | "installed" | "refused" | "failed";
+	action: "none" | "installed" | "refused" | "failed" | "forgotten";
 	/** One line, for the log and the settings card */
 	reason: string;
 	/** What it did and why, in order */
@@ -86,6 +91,13 @@ export const runUpdateGuard = async (deps: GuardDeps): Promise<GuardOutcome> => 
 	const plan = planOf(state, observation);
 	notes.push(plan.reason);
 	if (plan.action === "none") return outcome("none", plan.reason, notes);
+	if (plan.action === "forget") {
+		// The user removed Luna. Forget it before unregistering: a state file that is already gone cannot make a later run
+		// put Luna back, so a failed unregister is the lesser problem
+		await forgetLunaState(deps.stateRoot).catch((err) => notes.push(`could not forget the install record: ${String(err)}`));
+		await deps.unregisterSchedule?.().catch((err) => notes.push(`could not remove the update check: ${String(err)}`));
+		return outcome("forgotten", plan.reason, notes);
+	}
 	if (state === undefined) return outcome("none", "Luna has no record of being installed here", notes);
 
 	if ((await deps.isTidalRunning?.()) === true) return outcome("refused", "TIDAL is running, so its files are left alone until it closes", notes);

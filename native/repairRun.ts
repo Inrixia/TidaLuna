@@ -23,6 +23,8 @@ export type RepairRunDeps = {
 	home?: string;
 	env?: NodeJS.ProcessEnv;
 	log?: (message: string) => void;
+	/** Installs a release that fits the new TIDAL when this build does not. See RepairDeps.escalate */
+	escalate?: () => Promise<boolean>;
 	timeoutMs?: number;
 };
 
@@ -82,6 +84,7 @@ export const runRepair = async (deps: RepairRunDeps): Promise<RepairResult> => {
 						? undefined
 						: deps.fromVersion.split(".")[0] === install.version.split(".")[0],
 			launch: () => launchInstall(newest, platform),
+			escalate: deps.escalate,
 			sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 			now: () => Date.now(),
 			log,

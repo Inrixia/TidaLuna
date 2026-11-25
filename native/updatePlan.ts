@@ -26,10 +26,16 @@ export type UpdatePlan =
 	/** Nothing to do. The reason is logged, and is the only record of why an unattended run did nothing */
 	| { action: "none"; reason: string }
 	/** Put Luna into this install */
-	| { action: "inject"; install: TidalInstall; reason: string };
+	| { action: "inject"; install: TidalInstall; reason: string }
+	/**
+	 * Luna was removed from an install it had recorded, and TIDAL's asar has not moved since: the user uninstalled it.
+	 * What puts Luna back has to go too, or the mod would undo its own uninstall
+	 */
+	| { action: "forget"; reason: string };
 
 const none = (reason: string): UpdatePlan => ({ action: "none", reason });
 const inject = (install: TidalInstall, reason: string): UpdatePlan => ({ action: "inject", install, reason });
+const forget = (reason: string): UpdatePlan => ({ action: "forget", reason });
 
 /**
  * @param state Luna's own record, undefined when Luna has never been installed here
@@ -50,8 +56,19 @@ export const planUpdate = (state: LunaState | undefined, observations: Observati
 		case "foreign":
 			// Someone else's app folder, or a dev symlink: not ours to replace
 			return none(`${where}: ${injection.reason}`);
-		case "vanilla":
+		case "vanilla": {
+			// Same install Luna recorded, and TIDAL's asar has not moved since it was installed next to it: Luna was not
+			// removed by an update, it was removed by the user. Putting it back would undo that, so it is forgotten
+			// instead, schedule and all. A new `app-<version>` folder has no record here, which is an update, not this
+			const recorded = state.installs[install.resourcesDir];
+			const sameAsar =
+				recorded !== undefined &&
+				currentAsar !== undefined &&
+				currentAsar.bytes === recorded.asarBytes &&
+				currentAsar.mtimeMs === recorded.asarMtimeMs;
+			if (sameAsar) return forget(`${where}: Luna was removed from it, so it stays removed`);
 			return inject(install, `${where} has no Luna in it`);
+		}
 		case "injected": {
 			const recorded = injection.install;
 			if (currentAsar === undefined) return inject(install, `${where}: Luna is installed but TIDAL's asar is missing`);

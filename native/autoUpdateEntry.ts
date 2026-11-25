@@ -41,6 +41,16 @@ const main = async () => {
 			distDir: dirname(fileURLToPath(import.meta.url)),
 			fromVersion: process.argv[afterUpdate + 1] || undefined,
 			lunaVersion: process.argv[afterUpdate + 2] || "unknown",
+			// This build may not fit the new TIDAL. The release path answers that, and it is the same run the logon
+			// schedule would do, just now instead of next login
+			escalate: async () => {
+				const guard = await runAutoUpdate({
+					platform: { platform: process.platform, env: process.env, home: os.homedir() },
+					httpFetch: fetch,
+					run,
+				});
+				return guard.action === "installed";
+			},
 		});
 		console.log(`[Luna] after update: ${outcome.action}`);
 		return;

@@ -4,6 +4,7 @@ import path from "path";
 
 import { remoteCompat } from "./releaseResolver";
 import type { ReleaseInfo } from "./releaseGate";
+import { removeSchedule } from "./installSchedule";
 import { runUpdateGuard, type GuardOutcome } from "./updateGuard";
 import { defaultTidalRoots, type TidalRoot } from "./tidalInstall";
 
@@ -120,6 +121,20 @@ export const runAutoUpdate = async (deps: AutoUpdateDeps): Promise<GuardOutcome>
 	const outcome = await runUpdateGuard({
 		roots: deps.roots ?? defaultTidalRoots(platform.env, platform.platform, platform.home),
 		stateRoot,
+		// A run that finds Luna removed stops putting it back, and has to stop starting itself too
+		unregisterSchedule: () =>
+			removeSchedule({
+				platform: platform.platform,
+				home: platform.home,
+				// The schedule's runner reports an exit code; this one throws, so it is adapted rather than swapped out
+				run: async (command, args) => {
+					try {
+						return { code: 0, stdout: await run(command, args) };
+					} catch {
+						return undefined;
+					}
+				},
+			}),
 		fetchReleases: () => readReleases(httpFetch),
 		fetchCompat: remoteCompat(httpFetch),
 		fetchZip: (url) => downloadZip(httpFetch, url),

@@ -206,3 +206,56 @@ describe("repairAfterUpdate", () => {
 		expect(injected).toHaveLength(1);
 	});
 });
+
+describe("falling back to a release that fits", () => {
+	const deps = (over: Partial<RepairDeps> = {}) => {
+		let clock = 0;
+		const launched = vi.fn();
+		const logs: string[] = [];
+		const base: RepairDeps = {
+			listInstalls: async () => [install("2.49.0")],
+			written: async () => true,
+			inject: async () => ({ lunaVersion: "1.25.0", asarBytes: 1, asarMtimeMs: 1, injectedAt: "" }),
+			compatible: async () => undefined,
+			launch: launched,
+			sleep: async (ms) => void (clock += ms),
+			now: () => clock,
+			log: (m) => logs.push(m),
+			timeoutMs: 1000,
+			pollMs: 100,
+			...over,
+		};
+		return { deps: base, launched, logs };
+	};
+
+	test("installs a matching release when this build does not fit", async () => {
+		// Risk: relaunching a new TIDAL into a Luna written for the old one. This is the logon run's answer, reached now
+		const escalate = vi.fn(async () => true);
+		const { deps: d, launched } = deps({ escalate });
+
+		const result = await repairAfterUpdate(d, "2.48.0");
+
+		expect(result).toMatchObject({ action: "installed-release", launched: true });
+		expect(escalate).toHaveBeenCalledTimes(1);
+		expect(launched).toHaveBeenCalledTimes(1);
+	});
+
+	test("a fallback that finds nothing still starts TIDAL", async () => {
+		const { deps: d, launched } = deps({ escalate: async () => false });
+
+		expect((await repairAfterUpdate(d, "2.48.0")).action).toBe("skipped-incompatible");
+		expect(launched).toHaveBeenCalledTimes(1);
+	});
+
+	test("a fallback that throws still starts TIDAL", async () => {
+		const { deps: d, launched, logs } = deps({
+			escalate: async () => {
+				throw new Error("no network");
+			},
+		});
+
+		expect((await repairAfterUpdate(d, "2.48.0")).action).toBe("skipped-incompatible");
+		expect(launched).toHaveBeenCalledTimes(1);
+		expect(logs.join("\n")).toContain("no network");
+	});
+});

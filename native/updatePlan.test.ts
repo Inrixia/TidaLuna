@@ -186,3 +186,32 @@ describe("lunaState", () => {
 		expect(recorded.installedAt).toBe("2026-01-01T00:00:00.000Z");
 	});
 });
+
+describe("planUpdate: a user who removes Luna stays uninstalled", () => {
+	// The asar is what tells an update from an uninstall: TIDAL moved vs the user deleted Luna's folder
+	test("forgets Luna removed from an install it recorded, with TIDAL unchanged", () => {
+		const plan = planUpdate(state(), [observe({ kind: "vanilla", hasAsar: true }, { version: "2.48.0", currentAsar: asar(100, 1000) })]);
+
+		expect(plan).toMatchObject({ action: "forget" });
+	});
+
+	test("puts Luna back when TIDAL changed that same install", () => {
+		// In place update (a flatpak or /opt install): the asar moved, so this is an update and not a removal
+		const plan = planUpdate(state(), [observe({ kind: "vanilla", hasAsar: true }, { version: "2.48.0", currentAsar: asar(200, 2000) })]);
+
+		expect(plan).toMatchObject({ action: "inject" });
+	});
+
+	test("puts Luna back into a new version folder", () => {
+		// A new app-<version> has no record of its own, which is an update rather than the user removing anything
+		const plan = planUpdate(state(), [observe({ kind: "vanilla", hasAsar: true }, { version: "2.49.0" })]);
+
+		expect(plan).toMatchObject({ action: "inject" });
+	});
+
+	test("puts Luna back when that install was never recorded", () => {
+		const plan = planUpdate(state(), [observe({ kind: "vanilla", hasAsar: true }, { version: "2.48.0" })]);
+
+		expect(plan).toMatchObject({ action: "inject" });
+	});
+});
