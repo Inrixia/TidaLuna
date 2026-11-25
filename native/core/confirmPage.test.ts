@@ -4,6 +4,7 @@ import {
 	actionToRun,
 	ANSWER_IN_USE_MS,
 	buildConfirmHtml,
+	CANCEL_GAP_MS,
 	confirmGate,
 	confirmLinks,
 	confirmRequest,
@@ -75,6 +76,33 @@ describe("core confirmation gate", () => {
 		}
 		expect(ask(100)!).toMatch(/cancelled in a row/);
 		expect(ask(20 + MAX_CANCELS + COOL_DOWN_MS)).toBe(undefined);
+	});
+
+	it("doesn't let an unpaired answered() raise the limit", () => {
+		const gate = confirmGate();
+		gate.answered(true, 0);
+		gate.answered(true, 0);
+		expect(gate.pending).toBe(0);
+		for (let i = 0; i < MAX_PENDING; i++) expect(gate.refuse({ tidal: FOCUSED, now: 0 })).toBe(undefined);
+		expect(gate.refuse({ tidal: FOCUSED, now: 0 })!).toMatch(/already waiting/);
+	});
+
+	it("counts only cancels close together as in a row", () => {
+		const cancels = (gapMs: number) => {
+			const gate = confirmGate();
+			let now = 0;
+			for (let i = 0; i < MAX_CANCELS; i++) {
+				expect(gate.refuse({ tidal: FOCUSED, now })).toBe(undefined);
+				gate.answered(false, now);
+				now += gapMs;
+			}
+			return gate.refuse({ tidal: FOCUSED, now });
+		};
+		// The user's own cancels, a bit apart (the old threshold was the whole cool-down: 45 s apart tripped it)
+		expect(cancels(CANCEL_GAP_MS + 1)).toBe(undefined);
+		expect(cancels(45_000)).toBe(undefined);
+		expect(cancels(CANCEL_GAP_MS)!).toMatch(/cancelled in a row/);
+		expect(cancels(1_000)!).toMatch(/cancelled in a row/);
 	});
 
 	it("doesn't count windows that were never shown", () => {
