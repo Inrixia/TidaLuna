@@ -49,7 +49,7 @@ const blurOf = (target: unknown, isTrusted: boolean) => {
 };
 const userInputSent = () => electron.ipcRenderer.send.mock.calls.filter(([channel]) => channel === "__Luna.userInput").map(([, value]) => value);
 
-const listeners: [string, EventListenerOrEventListenerObject, unknown][] = [];
+const listeners: [string, EventListenerOrEventListenerObject, AddEventListenerOptions | undefined][] = [];
 describe("preload", () => {
 	const realAdd = window.addEventListener.bind(window);
 	beforeEach(() => {
