@@ -1,9 +1,9 @@
 # Tidal Luna
 
 [![Build & Release](https://github.com/Inrixia/TidaLuna/actions/workflows/build.yml/badge.svg)](https://github.com/Inrixia/TidaLuna/actions/workflows/build.yml)
-[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Inrixia/TidaLuna/master/.github/badges/coverage.json)](docs/testing.md)
-[![branch coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Inrixia/TidaLuna/master/.github/badges/coverage-branches.json)](docs/testing.md)
-[![tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Inrixia/TidaLuna/master/.github/badges/tests.json)](docs/testing.md)
+[![coverage](https://img.shields.io/endpoint?url=https://cdn.jsdelivr.net/gh/Inrixia/TidaLuna@master/.github/badges/coverage.json)](docs/testing.md)
+[![branch coverage](https://img.shields.io/endpoint?url=https://cdn.jsdelivr.net/gh/Inrixia/TidaLuna@master/.github/badges/coverage-branches.json)](docs/testing.md)
+[![tests](https://img.shields.io/endpoint?url=https://cdn.jsdelivr.net/gh/Inrixia/TidaLuna@master/.github/badges/tests.json)](docs/testing.md)
 
 Luna is a client mod for the [TIDAL Client](https://tidal.com/) & successor to [Neptune](https://github.com/uwu/neptune).  
 Luna lets developers create and users run plugins to modify and enhance the Tidal Client.
