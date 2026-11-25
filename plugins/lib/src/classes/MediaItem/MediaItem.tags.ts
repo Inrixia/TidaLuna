@@ -21,6 +21,7 @@ export type FlacTags = {
 	genres?: string;
 	organization?: string;
 	totalTracks?: string;
+	totalDiscs?: string;
 	lyrics?: string;
 };
 export const availableTags: (keyof FlacTags)[] = [
@@ -44,6 +45,7 @@ export const availableTags: (keyof FlacTags)[] = [
 	"genres",
 	"organization",
 	"totalTracks",
+	"totalDiscs",
 	"lyrics",
 ];
 
@@ -108,6 +110,7 @@ export const makeTags = async (mediaItem: MediaItem): Promise<MetaTags> => {
 		tags.organization = album.recordLabel;
 
 		tags.totalTracks = album.numberOfTracks?.toString();
+		tags.totalDiscs = album.numberOfVolumes?.toString();
 
 		tags.date = album.releaseDate ?? tags.date;
 		tags.year = album.releaseYear ?? tags.year;

@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 import { BufferTarget, CmafOutputFormat, EncodedAudioPacketSource, EncodedPacket, MpegTsOutputFormat, Output } from "mediabunny";
-import { File as TagFile } from "node-taglib-sharp";
+import { parseBuffer, parseFile } from "music-metadata/node";
 
 import { finalizeDashDownload, finalizeHlsDownload } from "./MediaItem.finalizeDash.native";
 
@@ -20,7 +20,7 @@ import type { MetaTags } from "./MediaItem.tags";
  * A DASH download is a concatenation of raw CMAF fragments, which `finalizeDashDownload` remuxes into a standard
  * progressive MP4 (or, for lossless streams, into a native FLAC file) and then tags. The fixtures below are real
  * fragmented files built with the same muxer the remuxer uses, so the box surgery and the tag writing run for real:
- * tags are read back with node-taglib-sharp, and the odd shapes (a cover that won't download, a file that isn't
+ * tags are read back with music-metadata, and the odd shapes (a cover that won't download, a file that isn't
  * media) are the ones the download path has to survive.
  */
 
@@ -34,7 +34,7 @@ afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
-/** 1x1 PNG: node-taglib-sharp sniffs image formats, so the cover has to be a real one */
+/** Real 1x1 PNG cover artwork. */
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64");
 
 const stubCover = (body: Buffer = png, contentType = "image/png") =>
@@ -187,21 +187,11 @@ const cmafFlac = async (frames = 16): Promise<Buffer> => {
 	return Buffer.concat([Buffer.from(init.buffer!), Buffer.from(output.target.buffer!)]);
 };
 
-/** Read a tag through node-taglib-sharp with the reader the file's container needs */
-const readTags = <T>(path: string, mimeType: string, read: (tag: any) => T): T => {
-	const file = TagFile.createFromPath(path, mimeType);
-	try {
-		return read(file.tag);
-	} finally {
-		file.dispose();
-	}
-};
-
 const metaTags = (overrides: Partial<MetaTags["tags"]> = {}, cover = true): MetaTags => ({
 	tags: {
 		title: "Track Title",
 		artist: ["Artist One", "Artist Two"],
-		albumArtist: ["Album Artist"],
+		albumArtist: ["Album Artist", "Guest Album Artist"],
 		album: "Album Title",
 		year: "1998",
 		date: "1998-07-21",
@@ -210,15 +200,45 @@ const metaTags = (overrides: Partial<MetaTags["tags"]> = {}, cover = true): Meta
 		genres: "Electronic",
 		trackNumber: "3",
 		totalTracks: "12",
+		totalDiscs: "3",
 		discNumber: "2",
 		bpm: "128",
 		isrc: "ABC123456789",
+		lyrics: "First line\nSecond line",
+		musicbrainz_trackid: "b3a4cb3a-f1e6-4d37-b68d-78fbd418ee35",
+		musicbrainz_albumid: "965b5044-6485-413f-b287-3e260074df84",
 		REPLAYGAIN_TRACK_GAIN: "-7.35",
 		REPLAYGAIN_TRACK_PEAK: "0.98765",
 		...overrides,
 	},
 	coverUrl: cover ? "https://cover.example/art.png" : undefined,
 });
+
+// MP4 covr has no picture-role field; FLAC's front-cover type is checked separately.
+const expectedTags = {
+	title: "Track Title",
+	artist: "Artist One, Artist Two",
+	artists: ["Artist One", "Artist Two"],
+	albumArtist: "Album Artist, Guest Album Artist",
+	albumArtists: ["Album Artist", "Guest Album Artist"],
+	album: "Album Title",
+	year: 1998,
+	trackNumber: 3,
+	trackTotal: 12,
+	discNumber: 2,
+	discTotal: 3,
+	bpm: 128,
+	copyright: "(C) 1998 A Label",
+	comments: [{ text: "https://tidal.com/browse/track/1" }],
+	genres: ["Electronic"],
+	isrcs: ["ABC123456789"],
+	lyrics: [{ text: "First line\nSecond line" }],
+	mbRecordingId: "b3a4cb3a-f1e6-4d37-b68d-78fbd418ee35",
+	mbReleaseId: "965b5044-6485-413f-b287-3e260074df84",
+	replayGainTrackGain: { dB: -7.35 },
+	replayGainTrackPeak: { ratio: 0.98765 },
+	picture: [{ format: "image/png", data: new Uint8Array(png) }],
+};
 
 describe("finalizeDashDownload", () => {
 	test("a fragmented DASH download becomes a progressive MP4 with the tags in it", async () => {
@@ -241,39 +261,8 @@ describe("finalizeDashDownload", () => {
 		// The cover was fetched and attached
 		expect(vi.mocked(fetch)).toHaveBeenCalledWith("https://cover.example/art.png");
 
-		const tags = readTags(path, "taglib/m4a", (tag) => ({
-			title: tag.title,
-			performers: tag.performers,
-			albumArtists: tag.albumArtists,
-			album: tag.album,
-			year: tag.year,
-			track: tag.track,
-			trackCount: tag.trackCount,
-			disc: tag.disc,
-			beatsPerMinute: tag.beatsPerMinute,
-			copyright: tag.copyright,
-			comment: tag.comment,
-			genres: tag.genres,
-			isrc: tag.isrc,
-			pictures: tag.pictures.map((picture: any) => ({ type: picture.type, mimeType: picture.mimeType, dataLength: picture.data.length })),
-		}));
-		expect(tags).toEqual({
-			title: "Track Title",
-			performers: ["Artist One", "Artist Two"],
-			albumArtists: ["Album Artist"],
-			album: "Album Title",
-			year: 1998,
-			track: 3,
-			trackCount: 12,
-			disc: 2,
-			beatsPerMinute: 128,
-			copyright: "(C) 1998 A Label",
-			comment: "https://tidal.com/browse/track/1",
-			genres: ["Electronic"],
-			isrc: "ABC123456789",
-			// 3 = FrontCover in taglib-sharp's PictureType; the cover's own content type is kept
-			pictures: [{ type: 3, mimeType: "image/png", dataLength: png.length }],
-		});
+		const tags = (await parseFile(path)).common;
+		expect(tags).toMatchObject(expectedTags);
 	});
 
 	test("the year falls back to the release date, and an empty artist adds nothing", async () => {
@@ -287,33 +276,56 @@ describe("finalizeDashDownload", () => {
 
 		// Nothing to fetch when the item has no cover
 		expect(fetchSpy).not.toHaveBeenCalled();
-		const tags = readTags(path, "taglib/m4a", (tag) => ({
-			year: tag.year,
-			performers: tag.performers,
-			genres: tag.genres,
-			pictures: tag.pictures.length,
-		}));
+		const tags = (await parseFile(path)).common;
 		expect(tags.year).toBe(2001);
-		expect(tags.performers).toEqual([]);
-		expect(tags.genres).toEqual([]);
-		expect(tags.pictures).toBe(0);
+		expect(tags.artists).toBeUndefined();
+		expect(tags.genres).toBeUndefined();
+		expect(tags.picture).toBeUndefined();
 	});
 
-	test("a cover that cannot be downloaded does not stop the file being tagged", async () => {
+	test("invalid release and count tags are omitted while valid tags are saved", async () => {
+		const path = join(dir, "invalid-tags.m4a");
+		await writeFile(path, await cmafAac(8));
+
+		await finalizeDashDownload(path, metaTags({ year: "10000", date: "not a date", totalTracks: "unknown", totalDiscs: "unknown" }, false));
+
+		const tags = (await parseFile(path)).common;
+		expect(tags.title).toBe("Track Title");
+		expect(tags.year).toBeUndefined();
+		expect(tags.trackTotal).toBeUndefined();
+		expect(tags.discTotal).toBeUndefined();
+	});
+
+	test.each(["network error", "HTTP 404"])("a cover failure (%s) does not stop the file being tagged", async (failure) => {
 		const path = join(dir, "no-cover.m4a");
 		await writeFile(path, await cmafAac(8));
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => {
+				if (failure === "HTTP 404") return new Response(null, { status: 404 });
 				throw new Error("offline");
 			}),
 		);
 
 		await finalizeDashDownload(path, metaTags());
 
-		const tags = readTags(path, "taglib/m4a", (tag) => ({ title: tag.title, pictures: tag.pictures.length }));
+		const tags = (await parseFile(path)).common;
 		expect(tags.title).toBe("Track Title");
-		expect(tags.pictures).toBe(0);
+		expect(tags.picture).toBeUndefined();
+	});
+
+	test.each([
+		{ name: "AAC with the wrong extension", fixture: cmafAac, filename: "track.flac", mimeType: "audio/mp4" },
+		{ name: "FLAC without an extension", fixture: cmafFlac, filename: "download", mimeType: "audio/flac" },
+	])("tags $name by detecting the remuxed bytes", async ({ fixture, filename, mimeType }) => {
+		const path = join(dir, filename);
+		await writeFile(path, await fixture(8));
+		stubCover();
+
+		await finalizeDashDownload(path, metaTags());
+
+		expect((await parseBuffer(await readFile(path), { mimeType })).common).toMatchObject(expectedTags);
+		expect(await readdir(dir)).toEqual([filename]);
 	});
 
 	test("a file that is not media rejects and is left exactly as it was downloaded", async () => {
@@ -339,16 +351,20 @@ describe("finalizeDashDownload", () => {
 		expect(file.subarray(0, 4).toString("latin1")).toBe("fLaC");
 		expect(await readdir(dir)).toEqual(["lossless.flac"]);
 
-		const tags = readTags(path, "taglib/flac", (tag) => ({ title: tag.title, performers: tag.performers, album: tag.album, year: tag.year }));
-		expect(tags).toEqual({ title: "Track Title", performers: ["Artist One", "Artist Two"], album: "Album Title", year: 1998 });
+		const tags = (await parseFile(path)).common;
+		expect(tags).toMatchObject(expectedTags);
+		expect(tags.picture?.[0].type).toBe("Cover (front)");
+		// Metadata rewriting must leave the encoded FLAC frames untouched.
+		expect(file.subarray(-8 * 128)).toEqual(Buffer.alloc(8 * 128, 0x44));
 	});
 
-	test("an AAC encoder delay in the source is carried into the muxed file as an edit list", async () => {
+	test.each([false, true])("preserves AAC delay, chunk offsets and media bytes (tagged: %s)", async (tagged) => {
 		const path = join(dir, "delay.m4a");
 		// A DASH AAC stream normally starts with an edit list trimming the encoder's priming samples
 		await writeFile(path, insertBox(await cmafAac(40), ["moov", "trak"], "tkhd", editListBox(1, 1024)));
 
-		await finalizeDashDownload(path);
+		stubCover();
+		await finalizeDashDownload(path, tagged ? metaTags() : undefined);
 
 		const file = await readFile(path);
 		const edts = findPath(file, ["moov", "trak", "edts"]);
@@ -363,7 +379,9 @@ describe("finalizeDashDownload", () => {
 		expect(stco).toBeDefined();
 		const mdat = topLevelBoxes(file).find((box) => box.type === "mdat")!;
 		const firstChunkOffset = file.readUInt32BE(stco!.start + 16);
-		expect(firstChunkOffset).toBeGreaterThanOrEqual(mdat.start);
+		expect(firstChunkOffset).toBe(mdat.start + 8);
+		expect(file.subarray(mdat.start + 8, mdat.start + mdat.size)).toEqual(Buffer.alloc(40 * 64, 0x21));
+		if (tagged) expect((await parseFile(path)).common).toMatchObject(expectedTags);
 		expect(firstChunkOffset).toBeLessThan(mdat.start + mdat.size);
 	});
 
@@ -376,6 +394,7 @@ describe("finalizeDashDownload", () => {
 		const file = await readFile(path);
 		expect(file.subarray(4, 8).toString("latin1")).toBe("ftyp");
 		expect(topLevelBoxes(file).map((box) => box.type)).toContain("moov");
+		expect(findPath(file, ["moov", "udta"])).toBeUndefined();
 	});
 });
 
@@ -396,17 +415,12 @@ describe("finalizeHlsDownload", () => {
 		expect(file.subarray(4, 8).toString("latin1")).toBe("ftyp");
 		expect(await readdir(dir)).toEqual(["video.mp4"]);
 
-		const tags = readTags(path, "taglib/m4a", (tag) => ({
-			title: tag.title,
-			performers: tag.performers,
-			year: tag.year,
-			pictures: tag.pictures.length,
-		}));
+		const tags = (await parseFile(path)).common;
 		expect(tags.title).toBe("Video Title");
 		// The tag format has one artist field, so the names are joined
-		expect(tags.performers).toEqual(["Artist One, Artist Two"]);
+		expect(tags.artist).toBe("Artist One, Artist Two");
 		expect(tags.year).toBe(2019);
-		expect(tags.pictures).toBe(1);
+		expect(tags.picture).toHaveLength(1);
 	});
 
 	test("an unparseable date is dropped rather than failing the remux", async () => {
@@ -415,9 +429,9 @@ describe("finalizeHlsDownload", () => {
 
 		await finalizeHlsDownload(path, hlsMeta({ date: "not a date" }, false));
 
-		const tags = readTags(path, "taglib/m4a", (tag) => ({ title: tag.title, year: tag.year }));
+		const tags = (await parseFile(path)).common;
 		expect(tags.title).toBe("Video Title");
-		expect(tags.year).toBe(0);
+		expect(tags.year).toBeUndefined();
 	});
 
 	test("a file that is not media rejects and keeps its bytes", async () => {

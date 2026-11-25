@@ -15,3 +15,4 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - '@inrixia/helpers@3.22.0'
+  - music-metadata@13.0.1

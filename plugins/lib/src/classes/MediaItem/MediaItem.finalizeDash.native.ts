@@ -10,7 +10,7 @@ import {
 	Output,
 	type MetadataTags,
 } from "mediabunny";
-import { ByteVector, File as TagFile, Picture, PictureType } from "node-taglib-sharp";
+import { updateFile, type IPicture, type TagPatch } from "music-metadata/node";
 
 import { readFile, rename, writeFile } from "fs/promises";
 
@@ -117,32 +117,8 @@ const buildEdts = (segmentDuration: number, mediaTime: number): Buffer => {
 };
 
 /**
- * Empty udta > meta > hdlr(mdir/appl) > ilst skeleton.
- * node-taglib-sharp (up to at least 6.0.3) crashes saving a file with no Apple ilst box
- * (Mpeg4File.save dereferences an empty IsoUserDataBox's parentTree), so give it one to edit in place.
- */
-const buildUdta = (): Buffer => {
-	const udta = Buffer.alloc(61);
-	udta.writeUInt32BE(61, 0);
-	udta.write("udta", 4, "latin1");
-	udta.writeUInt32BE(53, 8);
-	udta.write("meta", 12, "latin1");
-	udta.writeUInt32BE(0, 16); // meta version/flags
-	udta.writeUInt32BE(33, 20);
-	udta.write("hdlr", 24, "latin1");
-	udta.writeUInt32BE(0, 28); // hdlr version/flags
-	udta.writeUInt32BE(0, 32); // pre_defined
-	udta.write("mdir", 36, "latin1");
-	udta.write("appl", 40, "latin1");
-	// 8 reserved bytes + 1 empty name byte, already zeroed
-	udta.writeUInt32BE(8, 53);
-	udta.write("ilst", 57, "latin1");
-	return udta;
-};
-
-/**
  * Insert an edts/elst into the muxed output's trak replicating the source's encoder delay
- * (shrinking mvhd/tkhd to the trimmed presentation duration), and append the empty udta.
+ * (shrinking mvhd/tkhd to the trimmed presentation duration).
  * The muxer puts moov before mdat, so stco/co64 chunk offsets are shifted by the inserted bytes.
  */
 const patchMoov = (buf: Buffer, mediaTime?: number): Buffer => {
@@ -169,8 +145,8 @@ const patchMoov = (buf: Buffer, mediaTime?: number): Buffer => {
 			edts = buildEdts(presentation, mediaTime);
 		}
 	}
-	const udta = buildUdta();
-	const inserted = (edts?.length ?? 0) + udta.length;
+	if (edts === undefined) return buf;
+	const inserted = edts.length;
 
 	// Growing moov shifts mdat: fix up chunk offsets
 	if (moov.start < mdat.start) {
@@ -189,12 +165,11 @@ const patchMoov = (buf: Buffer, mediaTime?: number): Buffer => {
 		}
 	}
 
-	// edts goes right after tkhd, udta at the end of moov; both grow moov
+	// edts goes right after tkhd and grows both trak and moov.
 	const edtsAt = tkhd.start + tkhd.size;
-	const udtaAt = moov.start + moov.size;
 	buf.writeUInt32BE(moov.size + inserted, moov.start);
-	if (edts !== undefined) buf.writeUInt32BE(trak.size + edts.length, trak.start);
-	return Buffer.concat(edts !== undefined ? [buf.subarray(0, edtsAt), edts, buf.subarray(edtsAt, udtaAt), udta, buf.subarray(udtaAt)] : [buf.subarray(0, udtaAt), udta, buf.subarray(udtaAt)]);
+	buf.writeUInt32BE(trak.size + inserted, trak.start);
+	return Buffer.concat([buf.subarray(0, edtsAt), edts, buf.subarray(edtsAt)]);
 };
 // #endregion
 
@@ -223,68 +198,53 @@ const yearFrom = (tags: MetaTags["tags"]): number | undefined => {
 	return undefined;
 };
 
-const writeTags = async (path: string, mimeType: string, { tags, coverUrl }: MetaTags): Promise<void> => {
+const writeTags = async (path: string, { tags, coverUrl }: MetaTags): Promise<void> => {
 	// Fetch the cover before opening the file so a network failure can't interrupt the save
-	let cover: Picture | undefined;
+	let cover: IPicture | undefined;
 	if (coverUrl !== undefined) {
 		try {
 			const res = await fetchTidal(coverUrl);
 			if (res.ok) {
-				cover = Picture.fromData(ByteVector.fromByteArray(Buffer.from(await res.arrayBuffer())));
-				cover.type = PictureType.FrontCover;
-				cover.mimeType = res.headers.get("content-type") ?? "image/jpeg";
+				cover = {
+					data: new Uint8Array(await res.arrayBuffer()),
+					type: "Cover (front)",
+					format: res.headers.get("content-type") ?? "image/jpeg",
+				};
 			}
 		} catch {}
 	}
 
-	let file: TagFile | undefined;
-	try {
-		// Pick the reader by container, not by the file extension the caller chose
-		file = TagFile.createFromPath(path, mimeType);
-		const tag = file.tag;
-
-		const title = first(tags.title);
-		if (title !== undefined) tag.title = title;
-		const performers = asArray(tags.artist);
-		if (performers.length > 0) tag.performers = performers;
-		const albumArtists = asArray(tags.albumArtist);
-		if (albumArtists.length > 0) tag.albumArtists = albumArtists;
-		const album = first(tags.album);
-		if (album !== undefined) tag.album = album;
-		const year = yearFrom(tags);
-		if (year !== undefined) tag.year = year;
-		const copyright = first(tags.copyright);
-		if (copyright !== undefined) tag.copyright = copyright;
-		const comment = first(tags.comment);
-		if (comment !== undefined) tag.comment = comment;
-		const genres = asArray(tags.genres);
-		if (genres.length > 0) tag.genres = genres;
-		const trackNumber = asInt(first(tags.trackNumber));
-		if (trackNumber !== undefined) tag.track = trackNumber;
-		const totalTracks = asInt(first(tags.totalTracks));
-		if (totalTracks !== undefined) tag.trackCount = totalTracks;
-		const discNumber = asInt(first(tags.discNumber));
-		if (discNumber !== undefined) tag.disc = discNumber;
-		const bpm = asInt(first(tags.bpm));
-		if (bpm !== undefined) tag.beatsPerMinute = bpm;
-		const lyrics = first(tags.lyrics);
-		if (lyrics !== undefined) tag.lyrics = lyrics;
-		const isrc = first(tags.isrc);
-		if (isrc !== undefined) tag.isrc = isrc;
-		const musicBrainzTrackId = first(tags.musicbrainz_trackid);
-		if (musicBrainzTrackId !== undefined) tag.musicBrainzTrackId = musicBrainzTrackId;
-		const musicBrainzAlbumId = first(tags.musicbrainz_albumid);
-		if (musicBrainzAlbumId !== undefined) tag.musicBrainzReleaseId = musicBrainzAlbumId;
-		const replayGain = asFloat(first(tags.REPLAYGAIN_TRACK_GAIN));
-		if (replayGain !== undefined) tag.replayGainTrackGain = replayGain;
-		const replayGainPeak = asFloat(first(tags.REPLAYGAIN_TRACK_PEAK));
-		if (replayGainPeak !== undefined) tag.replayGainTrackPeak = replayGainPeak;
-		if (cover !== undefined) tag.pictures = [cover];
-
-		file.save();
-	} finally {
-		file?.dispose();
-	}
+	const artists = asArray(tags.artist);
+	const albumArtists = asArray(tags.albumArtist);
+	const genres = asArray(tags.genres);
+	const replayGain = asFloat(first(tags.REPLAYGAIN_TRACK_GAIN));
+	const replayGainPeak = asFloat(first(tags.REPLAYGAIN_TRACK_PEAK));
+	const patch: TagPatch = {
+		title: first(tags.title),
+		artist: artists.length > 0 ? artists.join(", ") : undefined,
+		artists: artists.length > 0 ? artists : undefined,
+		albumArtist: albumArtists.length > 0 ? albumArtists.join(", ") : undefined,
+		albumArtists: albumArtists.length > 0 ? albumArtists : undefined,
+		album: first(tags.album),
+		year: yearFrom(tags),
+		copyright: first(tags.copyright),
+		comments: first(tags.comment),
+		genres: genres.length > 0 ? genres : undefined,
+		trackNumber: asInt(first(tags.trackNumber)),
+		trackTotal: asInt(first(tags.totalTracks)),
+		discNumber: asInt(first(tags.discNumber)),
+		discTotal: asInt(first(tags.totalDiscs)),
+		bpm: asInt(first(tags.bpm)),
+		lyrics: first(tags.lyrics),
+		isrcs: first(tags.isrc),
+		mbRecordingId: first(tags.musicbrainz_trackid),
+		mbReleaseId: first(tags.musicbrainz_albumid),
+		replayGainTrackGain: replayGain !== undefined ? `${replayGain} dB` : undefined,
+		replayGainTrackPeak: replayGainPeak !== undefined ? String(replayGainPeak) : undefined,
+		picture: cover !== undefined ? [cover] : undefined,
+	};
+	// The writer detects the container from its bytes and creates MP4 metadata boxes when absent.
+	await updateFile(path, patch);
 };
 // #endregion
 
@@ -305,10 +265,10 @@ export const finalizeDashDownload = async (path: string, tags?: MetaTags): Promi
 	await writeFile(tmpPath, muxed);
 	await rename(tmpPath, path);
 
-	if (tags !== undefined) await writeTags(path, isFlac ? "taglib/flac" : "taglib/m4a", tags);
+	if (tags !== undefined) await writeTags(path, tags);
 };
 
-/** Tags written by mediabunny while remuxing, node-taglib-sharp can't tag its MP4 output (no udta box) */
+/** Keep HLS metadata in the remux pass, including its full release date and joined artist credit. */
 const toMetadataTags = async ({ tags, coverUrl }: MetaTags): Promise<MetadataTags> => {
 	const metadata: MetadataTags = {};
 	const title = first(tags.title);
