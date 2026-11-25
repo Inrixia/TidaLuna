@@ -61,11 +61,11 @@ export class Quality {
 	}
 
 	/**
-	 * Convert Tidal `mediaItem.mediaMetadata?.tags` to Quality
+	 * Convert Tidal `mediaItem.mediaMetadata?.tags` to Quality. Tags Luna has no quality for (TIDAL can add new ones) are left out.
 	 */
 	public static fromMetaTags(qualityTags?: redux.MediaMetadataTag[]): Quality[] {
 		if (!qualityTags) return [];
-		return qualityTags.map((tag) => this.lookups.metadataTags[tag]);
+		return qualityTags.map((tag) => this.lookups.metadataTags[tag]).filter((quality) => quality instanceof Quality);
 	}
 
 	/**

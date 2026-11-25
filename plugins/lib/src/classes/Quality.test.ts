@@ -29,10 +29,10 @@ describe("fromMetaTags", () => {
 		expect(Quality.fromMetaTags(["SONY_360RA", "HIRES_LOSSLESS", "LOSSLESS"])).toEqual([Quality.Sony630, Quality.HiRes, Quality.High]);
 	});
 
-	test("leaves a tag with no matching quality as an undefined entry", () => {
-		// TIDAL can serve a tag Luna has no rank for; the entry is undefined rather than dropped
-		expect(Quality.fromMetaTags(["NOT_A_TAG"] as unknown as redux.MediaMetadataTag[])).toEqual([undefined]);
-		expect(Quality.fromMetaTags(["NOT_A_TAG", "MQA"] as unknown as redux.MediaMetadataTag[])).toEqual([undefined, Quality.MQA]);
+	test("leaves out a tag with no matching quality", () => {
+		// TIDAL can serve a tag Luna has no rank for: the result holds only real qualities
+		expect(Quality.fromMetaTags(["NOT_A_TAG"] as unknown as redux.MediaMetadataTag[])).toEqual([]);
+		expect(Quality.fromMetaTags(["NOT_A_TAG", "MQA"] as unknown as redux.MediaMetadataTag[])).toEqual([Quality.MQA]);
 	});
 });
 
@@ -106,7 +106,7 @@ describe("min/max with undefined entries", () => {
 		expect(Quality.min(Quality.MQA, undefined, Quality.Atmos)).toBe(Quality.Atmos);
 	});
 
-	test("ignore the entry an unknown tag leaves in fromMetaTags", () => {
+	test("work on what fromMetaTags returns for unknown tags", () => {
 		expect(Quality.max(...unknownTags("NOT_A_TAG", "MQA"))).toBe(Quality.MQA);
 		expect(Quality.min(...unknownTags("NOT_A_TAG", "MQA"))).toBe(Quality.MQA);
 		expect(Quality.max(...unknownTags("LOSSLESS", "NOT_A_TAG", "HIRES_LOSSLESS"))).toBe(Quality.HiRes);

@@ -178,6 +178,22 @@ describe("qualityTags", () => {
 	});
 });
 
+describe("qualityTags with a tag that has no known quality", () => {
+	const unknown = "NOT_A_TAG" as unknown as redux.MediaMetadataTag;
+
+	test("leaves the unknown tag out", () => {
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: [unknown, "MQA"] }, audioQuality: "HI_RES" });
+
+		expect(mediaItem.qualityTags).toEqual([Quality.MQA]);
+	});
+
+	test("still adds the High placeholder to a lossy track", () => {
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: [unknown] }, audioQuality: "HIGH" });
+
+		expect(mediaItem.qualityTags).toEqual([Quality.High]);
+	});
+});
+
 describe("bestQuality", () => {
 	test("is the highest of the metadata tags and TIDAL's audioQuality", () => {
 		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: ["LOSSLESS"] }, audioQuality: "HI_RES_LOSSLESS" });
@@ -194,6 +210,13 @@ describe("bestQuality", () => {
 		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: [unknown, "LOSSLESS"] }, audioQuality: "LOW" });
 
 		expect(mediaItem.bestQuality).toBe(Quality.High);
+	});
+
+	test("defaults a spatial-only track with an unknown tag to HiRes", () => {
+		const unknown = "NOT_A_TAG" as unknown as redux.MediaMetadataTag;
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: ["DOLBY_ATMOS", unknown] }, audioQuality: "LOSSLESS" });
+
+		expect(mediaItem.bestQuality).toBe(Quality.HiRes);
 	});
 
 	test("ignores the spatial tags, which say nothing about the quality of the stream", () => {
