@@ -33,6 +33,8 @@ export type LunaState = {
 	autoUpgrade: boolean;
 	/** The installs Luna has recorded, by TIDAL resources folder */
 	installs: Record<string, RecordedInstall>;
+	/** How the run that puts Luna back is started, once Luna has registered it. Absent: not registered */
+	schedule?: { mechanism: string; installedAt: string };
 };
 
 export const newLunaState = (lunaVersion: string, now = new Date().toISOString()): LunaState => ({

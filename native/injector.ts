@@ -15,6 +15,8 @@ import Module, { createRequire } from "module";
 import { rewritePlayerMessage } from "./audioCache";
 import { stateRootFor } from "./autoUpdate";
 import { updateGuardStatus } from "./autoUpdateStatus";
+import { execRunner, installSchedule } from "./installSchedule";
+import { readLunaState, writeLunaState } from "./lunaState";
 import { publishRunner } from "./publishRunner";
 import { recordLunaInstalled } from "./registerSelf";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
@@ -261,21 +263,35 @@ const unregisterHttpsHandler = () => {
 
 // Ensure app is ready
 electron.app.whenReady().then(async () => {
-	// Luna recording that it is installed here, which is what lets a later run put it back after TIDAL updates itself. It
-	// is the only thing that can tell "an update removed Luna" from "this machine never had Luna", and only a booting
-	// install can write it. Not awaited: a machine that cannot write its own record should still start TIDAL
+	// Recording that Luna is installed here, publishing the run that puts it back, and registering that run with the
+	// platform's schedule: in that order, since each needs what the one before wrote. Not awaited: a machine that cannot
+	// do any of it should still start TIDAL
 	void pkg()
-		.then(({ version }) => {
+		.then(async ({ version }) => {
 			const stateRoot = stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() });
-			void recordLunaInstalled({
+			await recordLunaInstalled({
 				stateRoot,
 				resourcesDir: process.resourcesPath,
 				lunaVersion: typeof version === "string" ? version : "unknown",
 			}).catch((err) => console.error("[Luna] Could not record this install:", err));
-			// The schedule needs one path that a TIDAL update cannot replace, and it must match the Luna that is running
-			void publishRunner({ stateRoot, resourcesDir: process.resourcesPath }).catch((err) =>
+			// One path a TIDAL update cannot replace, kept in step with the Luna that is running
+			await publishRunner({ stateRoot, resourcesDir: process.resourcesPath }).catch((err) =>
 				console.error("[Luna] Could not publish the update check:", err),
 			);
+
+			// Registered once and recorded, so a user who removes the schedule is not fought by every later start
+			const state = await readLunaState(stateRoot);
+			if (state === undefined || state.schedule !== undefined) return;
+			const scheduled = await installSchedule({
+				platform: process.platform,
+				stateRoot,
+				home: os.homedir(),
+				electron: process.execPath,
+				run: execRunner,
+			});
+			if (!scheduled.installed) return console.error(`[Luna] Could not schedule the update check: ${scheduled.reason}`);
+			await writeLunaState(stateRoot, { ...state, schedule: { mechanism: scheduled.mechanism, installedAt: new Date().toISOString() } });
+			console.log(`[Luna] TIDAL update check scheduled: ${scheduled.reason}`);
 		})
 		.catch((err) => console.error("[Luna] Could not record this install:", err));
 
