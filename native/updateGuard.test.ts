@@ -349,3 +349,28 @@ describe("runUpdateGuard when the installed Luna no longer fits TIDAL", () => {
 		expect(patchesStale).not.toHaveBeenCalled();
 	});
 });
+
+/**
+ * Releases that predate compat.json.
+ *
+ * Before this feature there were none that published it, so a run that refuses them can never act on the releases that
+ * exist today. They are installed with the caveat recorded, because the download is still checked against a digest.
+ */
+describe("runUpdateGuard with a release that publishes no compat.json", () => {
+	test("installs it, and says it knows nothing about this TIDAL", async () => {
+		await tidalInstall();
+		await withState();
+		const zipBytes = await makeZip();
+		const { release } = releaseFixture(zipBytes);
+		// The zip asset only: no compat.json beside it, as every published release is today
+		const d = deps(zipBytes, undefined, {
+			fetchReleases: async () => [{ ...release, assets: [release.assets![0]] }],
+		});
+
+		const result = await runUpdateGuard(d);
+
+		expect(result).toMatchObject({ action: "installed", installed: { version: VERSION } });
+		expect(result.notes.join(" ")).toMatch(/says nothing about which TIDAL/);
+		expect((await injectionState(resourcesDir)).kind).toBe("injected");
+	});
+});

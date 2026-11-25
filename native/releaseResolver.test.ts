@@ -221,3 +221,51 @@ describe("reading a release's compat.json over the network", () => {
 		expect(await remoteCompat((async () => Promise.reject(new Error("offline"))) as never)(rel("1.27.0"))).toMatch(/could not be read: offline/);
 	});
 });
+
+/**
+ * Releases published before compat.json existed.
+ *
+ * Those declare nothing, which is what every release did until now. Refusing them would leave an install unable to act
+ * until a newer release ships, so they are treated as unknown — flagged, and only used when nothing better exists — but
+ * the download still has to be checkable against a digest GitHub reports.
+ */
+describe("resolveRelease with releases that publish no compat.json", () => {
+	const withoutCompat = (version: string, options: { digest?: boolean } = {}) => {
+		const assets = [{ name: LUNA_ASSET, browser_download_url: releaseAssetUrl(version), size: 1024 }];
+		if (options.digest !== false) assets[0] = { ...assets[0], digest: `sha256:${SHA("a")}` } as never;
+		return { tag_name: version, draft: false, prerelease: false, assets };
+	};
+
+	test("uses one when there is nothing better, and says it knows nothing", async () => {
+		const resolution = await resolveRelease([withoutCompat("1.27.0")], { tidalVersion: "2.48.0", fetchCompat: fetchFrom({}) });
+
+		expect(resolution).toMatchObject({ ok: true, candidate: { version: "1.27.0" }, verdict: "unknown", compat: undefined });
+		expect(resolution.ok && resolution.notes.join(" ")).toMatch(/says nothing about which TIDAL/);
+		// The digest it will check the download against is the asset's own
+		expect(resolution).toMatchObject({ candidate: { sha256: SHA("a") } });
+	});
+
+	test("prefers one that does declare what it supports", async () => {
+		const resolution = await resolveRelease([withoutCompat("1.28.0"), rel("1.27.0")], {
+			tidalVersion: "2.48.0",
+			fetchCompat: fetchFrom({ "1.27.0": compatFor("1.27.0", { tested: ["2.48.0"] }) }),
+		});
+
+		expect(resolution).toMatchObject({ ok: true, candidate: { version: "1.27.0" }, verdict: "tested" });
+	});
+
+	test("refuses one it could not check the download of", async () => {
+		const resolution = await resolveRelease([withoutCompat("1.27.0", { digest: false })], { tidalVersion: "2.48.0", fetchCompat: fetchFrom({}) });
+
+		expect(resolution.ok).toBe(false);
+		expect(resolution.ok === false && resolution.reason).toMatch(/no release publishes a compat\.json|no digest/);
+	});
+
+	test("still skips one whose compat.json is there but unreadable", async () => {
+		// A 404 on an asset that exists is a broken release, not an old one
+		const resolution = await resolveRelease([rel("1.28.0"), withoutCompat("1.27.0")], { tidalVersion: "2.48.0", fetchCompat: fetchFrom({}) });
+
+		expect(resolution).toMatchObject({ ok: true, candidate: { version: "1.27.0" }, verdict: "unknown" });
+		expect(resolution.ok && resolution.notes.join(" ")).toMatch(/1\.28\.0's compat\.json could not be read/);
+	});
+});

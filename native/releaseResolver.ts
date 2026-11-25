@@ -88,13 +88,23 @@ export const resolveRelease = async (releases: ReleaseInfo[], options: ResolveOp
 
 	const judge = async (candidate: ReleaseCandidate): Promise<Judged | string> => {
 		const release = ordered.find(({ tag_name }) => tag_name === candidate.version)!;
+		const where = compatUrlOf(release);
+		if ("reason" in where) {
+			// A release published before compat.json existed declares nothing. That is unknown, not untrustworthy: it is what
+			// every release was until now, and refusing them would leave this unable to act until a new one ships
+			if (!where.reason.includes(`has no ${COMPAT_ASSET} asset`)) return `${candidate.version}'s ${COMPAT_ASSET} ${where.reason}`;
+			// With no file, the only digest left is the one GitHub reports for the asset. None at all means the download
+			// could not be checked, which is a refusal rather than a caveat
+			if (candidate.sha256 === undefined) return `${candidate.version} publishes no digest, so its download could not be checked`;
+			return { release, candidate, compat: undefined, verdict: "unknown" };
+		}
 		const raw = await fetchCompat(release).catch((err: Error) => `could not be read: ${err.message}`);
-		if (typeof raw === "string") return `${candidate.version}'s ${"compat.json"} ${raw}`;
+		if (typeof raw === "string") return `${candidate.version}'s ${COMPAT_ASSET} ${raw}`;
 		const compat = parseCompat(raw, candidate.version);
-		if (typeof compat === "string") return `${candidate.version}'s compat.json ${compat}`;
+		if (typeof compat === "string") return `${candidate.version}'s ${COMPAT_ASSET} ${compat}`;
 		// Two digests that disagree describe two different archives: neither is trusted
 		if (candidate.sha256 !== undefined && candidate.sha256 !== compat.zip.sha256) {
-			return `${candidate.version}'s compat.json names a sha256 that is not the asset's`;
+			return `${candidate.version}'s ${COMPAT_ASSET} names a sha256 that is not the asset's`;
 		}
 		return { release, candidate, compat, verdict: compatVerdict(compat, tidalVersion) };
 	};
