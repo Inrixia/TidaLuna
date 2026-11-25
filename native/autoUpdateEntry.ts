@@ -30,6 +30,22 @@ const isEntryPoint = (): boolean => {
 };
 
 const main = async () => {
+	// Started by the updater hook rather than by the schedule: TIDAL is closing, so wait for the version it is installing
+	// and put this Luna into it, then start the app the update was told not to relaunch (see updaterHook.ts)
+	const afterUpdate = process.argv.indexOf("--after-update");
+	if (afterUpdate !== -1) {
+		const { runRepair } = await import("./repairRun");
+		const { fileURLToPath } = await import("url");
+		const { dirname } = await import("path");
+		const outcome = await runRepair({
+			distDir: dirname(fileURLToPath(import.meta.url)),
+			fromVersion: process.argv[afterUpdate + 1] || undefined,
+			lunaVersion: process.argv[afterUpdate + 2] || "unknown",
+		});
+		console.log(`[Luna] after update: ${outcome.action}`);
+		return;
+	}
+
 	const outcome = await runAutoUpdate({
 		platform: { platform: process.platform, env: process.env, home: os.homedir() },
 		httpFetch: fetch,

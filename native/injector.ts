@@ -1,5 +1,6 @@
 import electron from "electron";
 
+import { spawn } from "child_process";
 import { readFileSync } from "fs";
 import os from "os";
 import { readFile } from "fs/promises";
@@ -9,6 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { transformTidalModule } from "../render/src/tidalTransform";
+import { hookUpdater } from "./updaterHook";
 
 import Module, { createRequire } from "module";
 
@@ -38,6 +40,23 @@ const readTidalHifiConfig = (): Record<string, unknown> | undefined => {
 
 // #region Bundle
 const bundleDir = process.env.TIDALUNA_DIST_PATH ?? path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Starts the detached repair for an update that `quitAndInstall` is about to apply.
+ *
+ * TIDAL closes as soon as that returns, so nothing here may be waited on: start the process and let the app go. The
+ * version it is coming from is the `app-<version>` folder this Luna sits in, which is how the repair knows which install
+ * is the new one.
+ */
+const spawnAfterUpdateRepair = (lunaVersion: string) => {
+	const fromVersion = /^app-(\d[\d.]*)/.exec(path.basename(path.dirname(process.resourcesPath)))?.[1];
+	const runner = path.join(bundleDir, "autoUpdate.mjs");
+	spawn(process.execPath, [runner, "--after-update", fromVersion ?? "", lunaVersion], {
+		detached: true,
+		stdio: "ignore",
+		env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+	}).unref();
+};
 const tidalAppPath = path.join(process.resourcesPath, "original.asar");
 const tidalPackagePromise = readFile(path.join(tidalAppPath, "package.json"), "utf8").then(JSON.parse);
 // #endregion
@@ -292,6 +311,15 @@ electron.app.whenReady().then(async () => {
 			await publishRunner({ stateRoot, resourcesDir: process.resourcesPath }).catch((err) =>
 				console.error("[Luna] Could not publish the update check:", err),
 			);
+
+			// TIDAL updates by calling electron.autoUpdater.quitAndInstall(), which applies the new version and relaunches
+			// into it. Wrapping it keeps this Luna in the new version before that relaunch, which is the same session, so
+			// the logon schedule is only the backstop (see updaterHook.ts)
+			hookUpdater({
+				updater: electron.autoUpdater,
+				spawnRepair: () => spawnAfterUpdateRepair(typeof version === "string" ? version : "unknown"),
+				log: (message) => console.log(`[Luna] ${message}`),
+			});
 
 			// Registered once and recorded, so a user who removes the schedule is not fought by every later start.
 			// Opt-in: only an answer the user gave registers anything, so a machine nobody asked is left alone
