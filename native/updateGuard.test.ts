@@ -255,8 +255,12 @@ describe("runUpdateGuard refuses rather than half installing", () => {
 
 		const result = await runUpdateGuard(deps(zipBytes));
 
-		expect(result).toMatchObject({ action: "failed", reason: expect.stringMatching(/unpacked|refused/) });
-		expect((await injectionState(resourcesDir)).kind).toBe("vanilla");
+		// A Windows backslash is the only entry name that can still escape: JSZip strips a `../` on load, and a backslash
+		// is a separator only on Windows. On POSIX this archive is an ordinary one, so the run installs it
+		if (process.platform === "win32") {
+			expect(result).toMatchObject({ action: "failed", reason: expect.stringMatching(/unpacked|refused/) });
+			expect((await injectionState(resourcesDir)).kind).toBe("vanilla");
+		} else expect(result).toMatchObject({ action: "installed" });
 	});
 
 	test("when the release list cannot be read at all", async () => {

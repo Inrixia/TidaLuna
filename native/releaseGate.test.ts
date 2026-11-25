@@ -153,9 +153,12 @@ describe("verifyLunaZip", () => {
 	});
 
 	test("refuses an archive with an entry outside the install folder", async () => {
-		// JSZip strips a `../` from an entry name as it loads, so the case that can actually escape is a Windows
-		// backslash, which it keeps as written
+		// Only Windows can be escaped through a zip entry: JSZip strips a `../` from an entry name as it loads, and a
+		// backslash is a path separator only there. On POSIX that name is a legal file name inside the folder
 		const zip = await lunaZip({ "..\\escape.mjs": "escaped" });
-		await expect(verifyLunaZip(zip, { version: VERSION })).rejects.toThrow(/Zip Slip/);
+		const verifying = verifyLunaZip(zip, { version: VERSION });
+
+		if (process.platform === "win32") await expect(verifying).rejects.toThrow(/Zip Slip/);
+		else await expect(verifying).resolves.toBeUndefined();
 	});
 });
