@@ -416,32 +416,40 @@ describe("fromId", () => {
 		expect(mediaItem?.contentType).toBe("video");
 	});
 
-	test("loads the item through TIDAL when its store doesn't have it", async () => {
-		const id = nextId();
-		const tidalItem = track(id, { title: "Loaded" });
+	type DispatchedAction = { type?: string; payload?: unknown };
+	/**
+	 * TIDAL's action creators are what run Luna's interceptors (see exposeTidalInternals.patchAction), so a load's
+	 * response has to be built by a patched creator: dispatching the action object alone would not reach the wait.
+	 */
+	const tidalAction = (type: string) => {
+		const actionCreators = { _: (actionType: string) => (payload?: unknown) => ({ type: actionType, payload }) };
+		window.patchAction(actionCreators);
+		return actionCreators._(type);
+	};
+	/** TIDAL answers each load with its own action, dispatched after the one that asked for it: `answers` are used in order, one per load */
+	const answerLoads = (...answers: Array<() => void>) => {
 		const storeDispatch = reduxStore.dispatch.bind(reduxStore);
-		type DispatchedAction = { type?: string; payload?: unknown };
-		/**
-		 * TIDAL's action creators are what run Luna's interceptors (see exposeTidalInternals.patchAction), so the load's
-		 * response has to be built by a patched creator — dispatching the action object alone would not reach the wait.
-		 */
-		const tidalAction = (type: string) => {
-			const actionCreators = { _: (actionType: string) => (payload?: unknown) => ({ type: actionType, payload }) };
-			window.patchAction(actionCreators);
-			return actionCreators._(type);
-		};
-		const dispatch = vi.spyOn(reduxStore, "dispatch").mockImplementation((action: DispatchedAction) => {
+		const pending = [...answers];
+		return vi.spyOn(reduxStore, "dispatch").mockImplementation((action: DispatchedAction) => {
 			const result = storeDispatch(action as never);
 			if (action.type === "content/LOAD_SINGLE_MEDIA_ITEM") {
-				// TIDAL answers a load with its own action, dispatched after the one that asked for it
-				void Promise.resolve().then(() => {
-					// Building the action through the patched creator is what lets the wait see it
-					const loaded = tidalAction("content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS");
-					reduxStore.dispatch(loaded({ mediaItem: { type: "track", item: tidalItem } }) as never);
-				});
+				const answer = pending.shift();
+				if (answer) void Promise.resolve().then(answer);
 			}
 			return result;
 		});
+	};
+	const loaded = (tidalItem: redux.Track) => () => {
+		// Building the action through the patched creator is what lets the wait see it
+		reduxStore.dispatch(tidalAction("content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS")({ mediaItem: { type: "track", item: tidalItem } }) as never);
+	};
+	const failed = (payload?: unknown) => () => {
+		reduxStore.dispatch(tidalAction("content/LOAD_SINGLE_MEDIA_ITEM_FAIL")(payload) as never);
+	};
+
+	test("loads the item through TIDAL when its store doesn't have it", async () => {
+		const id = nextId();
+		const dispatch = answerLoads(loaded(track(id, { title: "Loaded" })));
 
 		const mediaItem = await MediaItem.fromId(id);
 
@@ -453,26 +461,27 @@ describe("fromId", () => {
 		expect(mediaItem?.tidalItem.title).toBe("Loaded");
 	});
 
-	test("resolves undefined when TIDAL answers the load with a failure", async () => {
-		const id = nextId();
-		const storeDispatch = reduxStore.dispatch.bind(reduxStore);
-		type DispatchedAction = { type?: string; payload?: unknown };
-		const tidalAction = (type: string) => {
-			const actionCreators = { _: (actionType: string) => (payload?: unknown) => ({ type: actionType, payload }) };
-			window.patchAction(actionCreators);
-			return actionCreators._(type);
-		};
-		vi.spyOn(reduxStore, "dispatch").mockImplementation((action: DispatchedAction) => {
-			const result = storeDispatch(action as never);
-			if (action.type === "content/LOAD_SINGLE_MEDIA_ITEM") {
-				void Promise.resolve().then(() => {
-					const failed = tidalAction("content/LOAD_SINGLE_MEDIA_ITEM_FAIL");
-					reduxStore.dispatch(failed({ error: { message: "gone" } }) as never);
-				});
-			}
-			return result;
-		});
+	test("resolves undefined when TIDAL answers the load with a failure that carries no payload", async () => {
+		// The case that differs from before: destructuring the undefined payload threw a TypeError
+		answerLoads(failed());
 
-		await expect(MediaItem.fromId(id)).resolves.toBeUndefined();
+		await expect(MediaItem.fromId(nextId())).resolves.toBeUndefined();
+	});
+
+	test("resolves undefined when TIDAL answers the load with a failure payload", async () => {
+		answerLoads(failed({ error: { message: "gone" } }));
+
+		await expect(MediaItem.fromId(nextId())).resolves.toBeUndefined();
+	});
+
+	test("a failed load frees the load lock for the next one", async () => {
+		const secondId = nextId();
+		// One load at a time: the second only starts once the first has finished, however it finished
+		answerLoads(failed(), loaded(track(secondId, { title: "Second" })));
+
+		const [first, second] = await Promise.all([MediaItem.fromId(nextId()), MediaItem.fromId(secondId)]);
+
+		expect(first).toBeUndefined();
+		expect(second?.tidalItem.title).toBe("Second");
 	});
 });
