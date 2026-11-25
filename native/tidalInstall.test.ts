@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -32,12 +32,20 @@ const tidalInstall = async (name = "app-2.48.0", asar = "tidal-asar-bytes") => {
 	return { appDir, resourcesDir };
 };
 /** A folder shaped like a Luna dist (what `pnpm run build` writes) */
-const lunaDist = async (files = { "injector.mjs": "luna-injector", "luna.mjs": "luna-core" }) => {
+const lunaDist = async (files: Record<string, string> = {}) => {
 	const dist = path.join(dir, "dist");
 	await mkdir(dist, { recursive: true });
-	for (const [name, contents] of Object.entries(files)) await writeFile(path.join(dist, name), contents);
+	const contents = {
+		"package.json": JSON.stringify({ name: "luna", version: "1.26.0" }),
+		"injector.mjs": "luna-injector",
+		"luna.mjs": "luna-core",
+		...files,
+	};
+	for (const [name, value] of Object.entries(contents)) await writeFile(path.join(dist, name), value);
 	return dist;
 };
+/** A directory link, which needs no admin rights on Windows (a junction) */
+const linkDir = async (target: string, at: string) => symlink(target, at, process.platform === "win32" ? "junction" : "dir");
 const namesIn = async (target: string) => (await readdir(target)).sort();
 
 beforeEach(async () => {
@@ -193,7 +201,7 @@ describe("injectLuna", () => {
 
 		expect(await readFile(path.join(resourcesDir, "original.asar"), "utf8")).toBe("tidal-asar-bytes");
 		expect(await namesIn(resourcesDir)).toEqual(["app", "original.asar"]);
-		expect(await namesIn(path.join(resourcesDir, "app"))).toEqual([INSTALL_MARKER, "injector.mjs", "luna.mjs"]);
+		expect(await namesIn(path.join(resourcesDir, "app"))).toEqual([INSTALL_MARKER, "injector.mjs", "luna.mjs", "package.json"]);
 		expect(JSON.parse(await readFile(path.join(resourcesDir, "app", INSTALL_MARKER), "utf8"))).toEqual(install);
 	});
 
@@ -216,7 +224,7 @@ describe("injectLuna", () => {
 		await injectLuna(resourcesDir, await lunaDist(), { lunaVersion: "1.26.0" });
 
 		expect(await namesIn(resourcesDir)).toEqual(["app", "original.asar"]);
-		expect(await namesIn(path.join(resourcesDir, "app"))).toEqual([INSTALL_MARKER, "injector.mjs", "luna.mjs"]);
+		expect(await namesIn(path.join(resourcesDir, "app"))).toEqual([INSTALL_MARKER, "injector.mjs", "luna.mjs", "package.json"]);
 	});
 
 	test("is idempotent: installing twice leaves one install and a fresh marker", async () => {
@@ -279,5 +287,100 @@ describe("uninjectLuna", () => {
 		await uninjectLuna(resourcesDir);
 
 		expect(await readFile(path.join(resourcesDir, "app.asar"), "utf8")).toBe("tidal-asar-bytes");
+	});
+});
+
+/**
+ * What an install refuses.
+ *
+ * These are the cases where writing anyway would mean writing somewhere else, or booting something that is not Luna: a
+ * folder that is a link, a build that is not a Luna build, and a path that is not a TIDAL install at all.
+ */
+describe("injectLuna refuses what it cannot trust", () => {
+	test("a resources folder that is a link to somewhere else", async () => {
+		const elsewhere = path.join(dir, "elsewhere");
+		await mkdir(elsewhere, { recursive: true });
+		await writeFile(path.join(elsewhere, "app.asar"), "someone else's app folder");
+		const appDir = path.join(dir, "app-2.48.0");
+		await mkdir(appDir, { recursive: true });
+		const linked = path.join(appDir, "resources");
+		await linkDir(elsewhere, linked);
+
+		await expect(injectLuna(linked, await lunaDist(), { lunaVersion: "1.26.0" })).rejects.toThrow(/not a resources folder|resolves to/);
+
+		// Nothing was written where the link points
+		expect(await namesIn(elsewhere)).toEqual(["app.asar"]);
+	});
+
+	test("a resources/app that is a link", async () => {
+		const { resourcesDir } = await tidalInstall();
+		const outside = path.join(dir, "outside");
+		await mkdir(outside, { recursive: true });
+		await writeFile(path.join(outside, "keep.txt"), "keep");
+		await linkDir(outside, path.join(resourcesDir, "app"));
+
+		await expect(injectLuna(resourcesDir, await lunaDist(), { lunaVersion: "1.26.0" })).rejects.toThrow(/is a link/);
+
+		// The folder it points at is untouched, and TIDAL's asar was not moved aside
+		expect(await namesIn(outside)).toEqual(["keep.txt"]);
+		expect(await namesIn(resourcesDir)).toEqual(["app", "app.asar"]);
+	});
+
+	test("a resources path that is not there", async () => {
+		await expect(injectLuna(path.join(dir, "nope", "resources"), await lunaDist(), { lunaVersion: "1.26.0" })).rejects.toThrow(/it is not there/);
+	});
+
+	test("a dist that is not a Luna build", async () => {
+		const { resourcesDir } = await tidalInstall();
+		const notLuna = path.join(dir, "not-luna");
+		await mkdir(notLuna, { recursive: true });
+		await writeFile(path.join(notLuna, "package.json"), JSON.stringify({ name: "something-else", version: "1.0.0" }));
+
+		await expect(injectLuna(resourcesDir, notLuna, { lunaVersion: "1.26.0" })).rejects.toThrow(/not Luna/);
+
+		expect(await namesIn(resourcesDir)).toEqual(["app.asar"]);
+	});
+
+	test("a dist with no package.json at all", async () => {
+		const { resourcesDir } = await tidalInstall();
+		const bare = path.join(dir, "bare");
+		await mkdir(bare, { recursive: true });
+
+		await expect(injectLuna(resourcesDir, bare, { lunaVersion: "1.26.0" })).rejects.toThrow(/no package\.json/);
+	});
+
+	test("a dist without the files the injector boots", async () => {
+		const { resourcesDir } = await tidalInstall();
+		const dist = await lunaDist();
+		await rm(path.join(dist, "luna.mjs"));
+
+		await expect(injectLuna(resourcesDir, dist, { lunaVersion: "1.26.0" })).rejects.toThrow(/no usable luna\.mjs/);
+
+		// Refused before TIDAL's asar was moved aside, so TIDAL still boots
+		expect(await namesIn(resourcesDir)).toEqual(["app.asar"]);
+	});
+
+	test("a dist whose boot files are there but empty", async () => {
+		const { resourcesDir } = await tidalInstall();
+
+		await expect(injectLuna(resourcesDir, await lunaDist({ "injector.mjs": "" }), { lunaVersion: "1.26.0" })).rejects.toThrow(
+			/no usable injector\.mjs/,
+		);
+	});
+});
+
+describe("injectLuna refuses a build tree that holds a link", () => {
+	test("a link inside the dist would be served as part of Luna, so it is not installed", async () => {
+		const { resourcesDir } = await tidalInstall();
+		const dist = await lunaDist();
+		const outside = path.join(dir, "outside");
+		await mkdir(outside, { recursive: true });
+		await writeFile(path.join(outside, "secret.mjs"), "not luna");
+		await linkDir(outside, path.join(dist, "smuggled"));
+
+		await expect(injectLuna(resourcesDir, dist, { lunaVersion: "1.26.0" })).rejects.toThrow(/is a link/);
+
+		// Refused before anything was written into TIDAL's install
+		expect(await namesIn(resourcesDir)).toEqual(["app.asar"]);
 	});
 });

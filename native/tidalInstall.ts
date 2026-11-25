@@ -1,4 +1,4 @@
-import { copyFile, cp, lstat, readdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
+import { copyFile, cp, lstat, readdir, readFile, realpath, rename, rm, stat, writeFile } from "fs/promises";
 import path from "path";
 
 import { isInside } from "./isInside";
@@ -162,13 +162,71 @@ export const defaultTidalRoots = (env: NodeJS.ProcessEnv, platform: NodeJS.Platf
 /**
  * A `resources` folder is the only thing an install mutates, so refuse anything that is not one: an absolute path whose
  * last segment is `resources`, with the app folder above it. Same shape check the updater makes before its own swap.
+ *
+ * Links are resolved first and the resolved path is what callers work with. A `resources` that is a junction pointing
+ * somewhere else would otherwise send every write, rename and delete to that somewhere else, and checking the path string
+ * alone cannot see it.
  */
-const assertResourcesDir = (resourcesDir: string) => {
+const assertResourcesDir = async (resourcesDir: string) => {
 	const resolved = path.resolve(resourcesDir);
 	if (path.basename(resolved) !== "resources") throw new Error(`[TIDAL] Refusing to write to "${resolved}": not a resources folder`);
-	const segments = resolved.split(path.sep).filter(Boolean);
-	if (segments.length < 3) throw new Error(`[TIDAL] Refusing to write to "${resolved}": path too shallow`);
-	return resolved;
+	const real = await realpath(resolved).catch(() => {
+		throw new Error(`[TIDAL] Refusing to write to "${resolved}": it is not there`);
+	});
+	if (path.basename(real) !== "resources") {
+		throw new Error(`[TIDAL] Refusing to write to "${resolved}": it resolves to "${real}", which is not a resources folder`);
+	}
+	const segments = real.split(path.sep).filter(Boolean);
+	if (segments.length < 3) throw new Error(`[TIDAL] Refusing to write to "${real}": path too shallow`);
+	return real;
+};
+
+/**
+ * Refuses a name that exists as a link. Deleting, renaming or copying through one writes to wherever it points, so the
+ * only safe answer is to leave it alone and let a person look.
+ */
+const assertNotLink = async (target: string, what: string) => {
+	const info = await lstat(target).catch(() => undefined);
+	if (info?.isSymbolicLink() === true) throw new Error(`[TIDAL] Refusing to touch ${what}: "${target}" is a link`);
+};
+
+/**
+ * Refuses a build tree that holds a link.
+ *
+ * `cp` with `verbatimSymlinks` keeps links as links, so a link inside a dist would be installed as one and Luna would
+ * then serve whatever it points at. A release archive cannot carry one (entries are extracted as regular files), so a
+ * link here means the folder was assembled by something other than an unpacked release, and it is not installed.
+ */
+const assertNoLinks = async (root: string, dir = root): Promise<void> => {
+	for (const entry of await readdir(dir, { withFileTypes: true })) {
+		const target = path.join(dir, entry.name);
+		if (entry.isSymbolicLink()) throw new Error(`[TIDAL] Refusing to install "${root}": "${target}" is a link`);
+		if (entry.isDirectory()) await assertNoLinks(root, target);
+	}
+};
+
+/**
+ * Checks a folder is a Luna build before it becomes one: the same promise the release gate makes about the archive, made
+ * about what will actually be installed. A truncated extraction, a tampered copy or a path that is not a Luna dist stops
+ * here rather than after TIDAL's asar has been moved aside.
+ */
+const assertDist = async (distDir: string) => {
+	if (!(await isDir(distDir))) throw new Error(`[TIDAL] No dist to install at "${distDir}"`);
+	await assertNoLinks(distDir);
+	const raw = await readFile(path.join(distDir, "package.json"), "utf8").catch(() => undefined);
+	if (raw === undefined) throw new Error(`[TIDAL] "${distDir}" has no package.json, so it is not a Luna build`);
+	let name: unknown;
+	try {
+		name = JSON.parse(raw).name;
+	} catch {
+		throw new Error(`[TIDAL] "${distDir}" has a package.json that is not json`);
+	}
+	if (name !== "luna") throw new Error(`[TIDAL] "${distDir}" is the build of "${String(name)}", not Luna`);
+	// The two files the injector boots: installing without them, or with an empty one, would leave TIDAL unbootable
+	for (const required of ["injector.mjs", "luna.mjs"]) {
+		const info = await stat(path.join(distDir, required)).catch(() => undefined);
+		if (info?.isFile() !== true || info.size === 0) throw new Error(`[TIDAL] "${distDir}" has no usable ${required}`);
+	}
 };
 
 const readMarker = async (appDir: string): Promise<LunaInstall | undefined> => {
@@ -209,13 +267,23 @@ export const injectLuna = async (
 	distDir: string,
 	{ lunaVersion, tidalVersion }: { lunaVersion: string; tidalVersion?: string },
 ): Promise<LunaInstall> => {
-	const resolved = assertResourcesDir(resourcesDir);
-	if (!(await isDir(distDir))) throw new Error(`[TIDAL] No dist to install at "${distDir}"`);
+	const resolved = await assertResourcesDir(resourcesDir);
+	await assertDist(distDir);
 
 	const appDir = path.join(resolved, "app");
 	const appAsar = path.join(resolved, "app.asar");
 	const originalAsar = path.join(resolved, "original.asar");
-	if (!isInside(resolved, appDir) || !isInside(resolved, originalAsar)) throw new Error(`[TIDAL] Refusing to write outside "${resolved}"`);
+	const staged = path.join(resolved, "app.new");
+	const previous = path.join(resolved, "app.old");
+	for (const target of [appDir, appAsar, originalAsar, staged, previous]) {
+		if (!isInside(resolved, target)) throw new Error(`[TIDAL] Refusing to write outside "${resolved}": "${target}"`);
+	}
+	// Every one of these is renamed, copied or deleted below, so a link among them is refused before anything happens
+	await assertNotLink(appDir, "resources/app");
+	await assertNotLink(appAsar, "app.asar");
+	await assertNotLink(originalAsar, "original.asar");
+	await assertNotLink(staged, "app.new");
+	await assertNotLink(previous, "app.old");
 
 	if (!(await isFile(originalAsar))) {
 		if (!(await isFile(appAsar))) throw new Error(`[TIDAL] "${resolved}" holds neither app.asar nor original.asar: not a TIDAL install`);
@@ -224,8 +292,6 @@ export const injectLuna = async (
 	const asar = await stat(originalAsar);
 
 	// Staged beside the install, so a copy that fails part way leaves the current Luna untouched
-	const staged = path.join(resolved, "app.new");
-	const previous = path.join(resolved, "app.old");
 	const install: LunaInstall = {
 		lunaVersion,
 		tidalVersion,
@@ -237,14 +303,15 @@ export const injectLuna = async (
 	try {
 		await cp(distDir, staged, { recursive: true, verbatimSymlinks: true });
 		await writeFile(path.join(staged, INSTALL_MARKER), JSON.stringify(install, null, "\t"));
+		// What was staged has to be the build that was checked, not a link that was followed into it
+		await assertDist(staged);
 	} catch (err) {
 		await rm(staged, { recursive: true, force: true }).catch(() => {});
 		throw err;
 	}
 
 	await rm(previous, { recursive: true, force: true });
-	const hadApp = await isDir(appDir);
-	if (hadApp) await rename(appDir, previous);
+	if (await isDir(appDir)) await rename(appDir, previous);
 	try {
 		await rename(staged, appDir);
 	} catch (err) {
@@ -255,16 +322,25 @@ export const injectLuna = async (
 	// Only now is there an `app` to boot: nothing may shadow it
 	await rm(appAsar, { force: true });
 	await rm(previous, { recursive: true, force: true }).catch(() => {});
-	return install;
+
+	// Read it back: an install that does not report a marker is not one, whatever the steps above returned
+	const written = await injectionState(resolved);
+	if (written.kind !== "injected" || written.install.lunaVersion !== lunaVersion) {
+		throw new Error(`[TIDAL] The install into "${resolved}" did not verify after writing it (${written.kind})`);
+	}
+	return written.install;
 };
 
 /** Takes Luna back out: TIDAL's asar returns to `app.asar` and `resources/app` goes */
 export const uninjectLuna = async (resourcesDir: string): Promise<void> => {
-	const resolved = assertResourcesDir(resourcesDir);
+	const resolved = await assertResourcesDir(resourcesDir);
 	const appDir = path.join(resolved, "app");
 	const appAsar = path.join(resolved, "app.asar");
 	const originalAsar = path.join(resolved, "original.asar");
 	if (!isInside(resolved, appDir) || !isInside(resolved, appAsar)) throw new Error(`[TIDAL] Refusing to write outside "${resolved}"`);
+	await assertNotLink(appDir, "resources/app");
+	await assertNotLink(appAsar, "app.asar");
+	await assertNotLink(originalAsar, "original.asar");
 
 	if (!(await isFile(appAsar)) && (await isFile(originalAsar))) await copyFile(originalAsar, appAsar);
 	await rm(appDir, { recursive: true, force: true });
