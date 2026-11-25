@@ -10,6 +10,8 @@ export const MAX_PENDING = 3;
 /** After this many cancels in a row, confirmations are refused for COOL_DOWN_MS: page code calling an update again after each cancel */
 export const MAX_CANCELS = 4;
 export const COOL_DOWN_MS = 60_000;
+/** Cancels further apart than this are the user's own choices, not a page asking again after each one */
+export const CANCEL_GAP_MS = 15_000;
 /** A trusted click or key in TIDAL counts as using it this long (the preload reports them, see confirmWindow.ts) */
 export const USER_INPUT_MS = 10_000;
 /** An answer in a confirmation window counts as using TIDAL this long (the next of several installs follows it) */
@@ -48,7 +50,8 @@ export const confirmGate = () => {
 		},
 		/** A request that was let through got its answer, or undefined if no window could be shown (not the user's cancel) */
 		answered(answer: boolean | undefined, now: number) {
-			pending--;
+			// Never below 0: an unpaired call would otherwise raise the limit
+			pending = Math.max(0, pending - 1);
 			if (answer === undefined) return;
 			lastAnswer = now;
 			if (answer) {
@@ -56,7 +59,7 @@ export const confirmGate = () => {
 				return;
 			}
 			// Cancels long apart are the user's own choices, not a page asking again and again
-			if (now - lastCancel > COOL_DOWN_MS) cancelsInARow = 0;
+			if (now - lastCancel > CANCEL_GAP_MS) cancelsInARow = 0;
 			lastCancel = now;
 			if (++cancelsInARow >= MAX_CANCELS) {
 				refusedUntil = now + COOL_DOWN_MS;
