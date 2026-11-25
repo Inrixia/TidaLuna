@@ -18,7 +18,8 @@ export const LUNA_ASSET = "luna.zip";
 export const RELEASE_REPO = "Inrixia/TidaLuna";
 
 /** The url a release's asset must point at. Built from the validated tag, never taken from the payload */
-export const releaseAssetUrl = (version: string) => `https://github.com/${RELEASE_REPO}/releases/download/${version}/${LUNA_ASSET}`;
+export const releaseAssetUrl = (version: string, asset: string = LUNA_ASSET) =>
+	`https://github.com/${RELEASE_REPO}/releases/download/${version}/${asset}`;
 
 /** As much of GitHub's release object as Luna reads */
 export type ReleaseAsset = { name: string; browser_download_url: string; size?: number; digest?: string | null };

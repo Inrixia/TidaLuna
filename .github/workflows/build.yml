@@ -42,12 +42,18 @@ jobs:
    - name: Zip Build Output
      run: cd dist && zip -r ../luna.zip *
 
+   # The file an automatic install reads before downloading: which TIDAL this release was tested on, and the digest the
+   # archive must match. It has to be its own asset - a file cannot carry the digest of the archive it is packed in
+   - name: Write compatibility file
+     run: pnpm exec tsx build/writeCompat.ts luna.zip package.json compat.json
+
    - name: Upload Build Artifact
      uses: actions/upload-artifact@v7
      with:
       name: luna-artifacts
       path: |
        ./luna.zip
+       ./compat.json
        ./package.json
 
  Release:
@@ -73,4 +79,4 @@ jobs:
         exit 0
       fi
       PRERELEASE=$([ "$GITHUB_REF_NAME" = dev ] && echo --prerelease || true)
-      gh release create "$VERSION" luna.zip --target "$GITHUB_SHA" --title "Release $VERSION" --generate-notes $PRERELEASE
+      gh release create "$VERSION" luna.zip compat.json --target "$GITHUB_SHA" --title "Release $VERSION" --generate-notes $PRERELEASE
