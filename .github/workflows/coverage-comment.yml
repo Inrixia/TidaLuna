@@ -31,17 +31,22 @@ jobs:
       script: |
        const run = context.payload.workflow_run;
        let number = run.pull_requests?.[0]?.number;
-       if (number === undefined) {
-        // A run from a fork's branch does not always carry its PR in the payload, so look it up from the commit
-        const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+       if (number === undefined && run.head_branch !== null) {
+        // A run from a fork's branch does not carry its pull request in the payload, and its commit does not exist in
+        // this repo (a fork's SHA is only here once merged), so ask for the pull request by the branch it ran on. The
+        // head filter needs `<owner>:<branch>`, and for a branch of this repo the owner is this repo's.
+        const owner = run.head_repository?.owner?.login ?? context.repo.owner;
+        const { data } = await github.rest.pulls.list({
          owner: context.repo.owner,
          repo: context.repo.repo,
-         commit_sha: run.head_sha,
+         head: `${owner}:${run.head_branch}`,
+         state: "open",
         });
-        number = data.find((pr) => pr.state === "open")?.number;
+        number = data[0]?.number;
        }
        if (number === undefined) {
-        core.info("No open pull request for this run, nothing to comment on");
+        // A warning, not info: this job exists to post a comment, and doing nothing quietly is the failure mode it had
+        core.warning("No open pull request for this run, nothing to comment on");
         return;
        }
        core.setOutput("number", number);
