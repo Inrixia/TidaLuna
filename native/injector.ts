@@ -15,7 +15,9 @@ import Module, { createRequire } from "module";
 import { rewritePlayerMessage } from "./audioCache";
 import { stateRootFor } from "./autoUpdate";
 import { updateGuardStatus } from "./autoUpdateStatus";
+import { recordLunaInstalled } from "./registerSelf";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
+import { pkg } from "./update";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
@@ -258,6 +260,19 @@ const unregisterHttpsHandler = () => {
 
 // Ensure app is ready
 electron.app.whenReady().then(async () => {
+	// Luna recording that it is installed here, which is what lets a later run put it back after TIDAL updates itself. It
+	// is the only thing that can tell "an update removed Luna" from "this machine never had Luna", and only a booting
+	// install can write it. Not awaited: a machine that cannot write its own record should still start TIDAL
+	void pkg()
+		.then(({ version }) =>
+			recordLunaInstalled({
+				stateRoot: stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() }),
+				resourcesDir: process.resourcesPath,
+				lunaVersion: typeof version === "string" ? version : "unknown",
+			}),
+		)
+		.catch((err) => console.error("[Luna] Could not record this install:", err));
+
 	// Register the HTTPS handler
 	registerHttpsHandler();
 	electron.protocol.handle(moduleScheme, tidalModuleHandler);
