@@ -74,3 +74,25 @@ It prints `applied` / `stale` / `noop` / `absent` per patch and exits 1 if a pat
 
 The probes read state; they do not start playback, move the window, install plugins or write to the repo. The
 login-dependent check does not put account data in its output - it reports counts and verdicts, not titles or ids.
+
+## Running it on a runner (`.github/workflows/smoke.yml`)
+
+Manual (`workflow_dispatch`) only, for release prep and after a TIDAL update. It is not on push or PR because it needs a
+real client, and that is the whole reason the offline half exists to carry the every-PR load.
+
+What the runner has to provide, none of which a GitHub-hosted runner has:
+
+|                                                              | Why                                                                                                                                                          |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| label `tidal` (configurable)                                 | the workflow targets `runs-on: <runner>`                                                                                                                     |
+| TIDAL installed (Windows) or tidal-hifi at `/opt/tidal-hifi` | `setup` copies the installed app; it cannot download one                                                                                                     |
+| a desktop session                                            | `start` launches the real Electron app, and there is no headless mode                                                                                        |
+| a logged-in daily profile                                    | the instance copies `%APPDATA%\TIDAL` / `~/.config/tidal-hifi` to be logged in. Logged out, the media check reports `skipped` and everything else still runs |
+| macOS? no                                                    | `tidal.mjs` only knows `win32` and `linux`                                                                                                                   |
+
+The first run copies a few hundred MB into `.tidal-test/<n>/app` (hence `clean: false`, which keeps it), so it is a
+one-off cost per runner. The checks themselves take seconds.
+
+Only `summary.json` is uploaded: a Markdown table of check, verdict and reason. `observations.json` stays on the runner,
+because a logged-in run holds library titles and filesystem paths and this repository's artifacts are public. For the
+same reason the details themselves carry counts, names and shapes - never a title, an id or an account.

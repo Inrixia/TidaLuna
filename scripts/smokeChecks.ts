@@ -113,11 +113,25 @@ const sameValue = (a: unknown, b: unknown): boolean => {
 	return canonical(a) === canonical(b);
 };
 
+/**
+ * A shape, never a value: these details are what a CI run uploads as its artifact, so they must not carry a filesystem
+ * path, an account name or a library title off the runner.
+ */
+const shapeOf = (value: unknown): string => {
+	if (value === null) return "null";
+	if (Array.isArray(value)) return `array(${value.length})`;
+	if (typeof value === "object")
+		return `{${Object.keys(value as Record<string, unknown>)
+			.sort()
+			.join(",")}}`;
+	return typeof value;
+};
+
 export const checkNativeBridge = (bridge: Observations["nativeBridge"]): CheckResult => {
 	const name = "native bridge round-trips";
 	if (bridge === undefined) return fail(name, "no observation: the probe for this did not run");
-	if (!sameValue(bridge.page, bridge.native))
-		return fail(name, `page got ${JSON.stringify(bridge.page)}, main process got ${JSON.stringify(bridge.native)}`);
+	// Shapes and key names, not values: a difference is all a failure has to say, and the values can name a user or folder
+	if (!sameValue(bridge.page, bridge.native)) return fail(name, `page sent ${shapeOf(bridge.page)}, main process sent ${shapeOf(bridge.native)}`);
 	// A value that cannot be structured-cloned must reject, not hang the renderer
 	if (bridge.nonCloneableError === undefined) return fail(name, "a non-cloneable argument neither rejected nor errored: the call hung");
 	return pass(name, `equal both sides; non-cloneable argument errored as it should`);
@@ -177,14 +191,20 @@ export const checkFingerprint = (buildActions: Observations["buildActions"], com
 	return pass(name, `${buildActions.length} types, no drift`);
 };
 
-/** Login-dependent, so it runs only when the instance has a session. No playback: these are metadata reads. */
+/**
+ * Login-dependent, so it runs only when the instance has a session. No playback: these are metadata reads.
+ *
+ * `errors` holds the label of each call that threw, not its message, and the pass detail names the fields rather than
+ * printing them: this runs against a real account and its verdict is uploaded.
+ */
 export const checkMediaData = (media: Observations["media"]): CheckResult => {
 	const name = "@luna/lib reads real media data";
 	if (media === undefined) return warn(name, "skipped: no observation (needs a logged-in instance)");
-	if (media.errors.length > 0) return fail(name, `threw: ${media.errors.join(", ")}`);
+	const errors = media.errors ?? [];
+	if (errors.length > 0) return fail(name, `threw in ${errors.join(", ")}`);
 	const empty = (["title", "artist", "album"] as const).filter((field) => media[field] === null || media[field] === "");
 	if (empty.length > 0) return fail(name, `returned nothing for ${empty.join(", ")} where TIDAL has the data`);
-	return pass(name, `${JSON.stringify(media.title)} by ${JSON.stringify(media.artist)} on ${JSON.stringify(media.album)}`);
+	return pass(name, `title, artist and album all read for one item`);
 };
 
 /** Every check, in the order a run reports them. A missing observation fails, so a skipped probe cannot look like a pass. */

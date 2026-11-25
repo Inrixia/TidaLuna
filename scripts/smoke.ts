@@ -10,7 +10,7 @@
  * the observations it saved. Nothing here is sampled: the same observations always give the same verdict.
  */
 import { spawnSync } from "node:child_process";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { actionTypes } from "../plugins/lib/src/redux/types/actions/actionTypes";
@@ -109,9 +109,10 @@ const nativeBridgeProbe = `(async () => {
 /** Login-dependent metadata reads. No playback: these are reads, and the rules for the instance still apply. */
 const mediaProbe = `(async () => {
 	const id = luna.lib.reduxStore.getState()?.content?.mediaItems?.[0]?.item?.id;
-	if (id === undefined) return { skip: true };
+	if (id === undefined) return null;
+	// Labels only: the message can carry an id or a url, and the verdict is uploaded
 	const errors = [];
-	const read = async (label, fn) => { try { return await fn(); } catch (err) { errors.push(label + ": " + (err?.message ?? err)); return null; } };
+	const read = async (label, fn) => { try { return await fn(); } catch (err) { console.error("[smoke] " + label + ": " + (err?.message ?? err)); errors.push(label); return null; } };
 	const item = await read("MediaItem.fromId", () => luna.lib.MediaItem.fromId(id));
 	if (item === null) return { title: null, artist: null, album: null, errors };
 	const title = await read("title()", () => item.title());
@@ -147,7 +148,11 @@ const collect = async (): Promise<Observations> => {
 		const rejected = probe(`luna.native.offlineCacheStats(() => 1).then(() => null, (err) => String((err && err.message) || err))`);
 		return { ...both, nonCloneableError: typeof rejected === "string" ? rejected : undefined };
 	});
-	observations.media = step("media data", () => probe(mediaProbe) as Observations["media"]);
+	// null is the probe's "logged out, nothing to read", which is a skip rather than a missing probe
+	observations.media = step("media data", () => {
+		const media = probe(mediaProbe) as Observations["media"] | null;
+		return media === null ? undefined : media;
+	});
 
 	// The dump is a folder of TIDAL's served sources, which the patch check reads
 	const dumped = step("dump", () => {
@@ -185,5 +190,23 @@ for (const { name, verdict, detail } of results) console.log(`${verdict.padEnd(4
 
 const failed = results.filter(({ verdict }) => verdict === "fail").length;
 const warned = results.filter(({ verdict }) => verdict === "warn").length;
-console.log(`\n${results.length - failed - warned} passed, ${warned} warned, ${failed} failed`);
+const totals = `${results.length - failed - warned} passed, ${warned} warned, ${failed} failed`;
+console.log(`\n${totals}`);
+
+// A summary is safe to publish because the details are counts, names and shapes: no titles, ids, paths or accounts.
+// It goes to the run page, and to a file the workflow uploads.
+const markdown = [
+	`**${totals}**`,
+	"",
+	"| check | verdict | detail |",
+	"| --- | --- | --- |",
+	...results.map(({ name, verdict, detail }) => `| ${name} | ${verdict} | ${detail.replaceAll("|", "\\|")} |`),
+].join("\n");
+const summary = option("summary", "");
+if (summary !== "") {
+	await mkdir(path.dirname(summary), { recursive: true });
+	await writeFile(summary, `${markdown}\n`);
+}
+if (process.env.GITHUB_STEP_SUMMARY !== undefined) await appendFile(process.env.GITHUB_STEP_SUMMARY, `${markdown}\n`);
+
 process.exitCode = exitCodeFor(results);

@@ -96,7 +96,8 @@ test("a broken instance fails every check, names each one, and exits 1", async (
 	expect(stdout).toContain("not registered: @luna/ui");
 	expect(stdout).toContain("OverlayScrollbars to native scrolling (stale)");
 	expect(stdout).toContain("no router/NAVIGATED action arrived");
-	expect(stdout).toContain("main process got");
+	// Shapes, not values: this output is uploaded from a machine logged into a real account
+	expect(stdout).toContain("main process sent {a}");
 	expect(stdout).toContain("the style survived unload");
 });
 

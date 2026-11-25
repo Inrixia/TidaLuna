@@ -130,9 +130,27 @@ describe("checks report a pass only when the probe agreed", () => {
 	test("media data", () => {
 		expect(checkMediaData({ title: "T", artist: "A", album: "B", errors: [] }).verdict).toBe("pass");
 		expect(checkMediaData({ title: null, artist: "A", album: "B", errors: [] }).detail).toContain("title");
-		expect(checkMediaData({ title: "T", artist: "A", album: "B", errors: ["lyrics() threw"] }).verdict).toBe("fail");
+		expect(checkMediaData({ title: "T", artist: "A", album: "B", errors: ["lyrics()"] }).verdict).toBe("fail");
 		// Login-dependent, so an unobserved run is a skip rather than a red build
 		expect(checkMediaData(undefined).verdict).toBe("warn");
+	});
+
+	test("no detail carries a value off the runner", () => {
+		// These details are uploaded from a machine logged into a real account, so they name fields and shapes only
+		const bridge = checkNativeBridge({
+			page: { path: "C:\\Users\\someone\\AppData", usage: 1 },
+			native: { path: "C:\\Users\\someone\\AppData", usage: 2 },
+			nonCloneableError: "x",
+		});
+		expect(bridge.verdict).toBe("fail");
+		expect(bridge.detail).not.toContain("someone");
+		expect(bridge.detail).not.toContain("AppData");
+		// Key names are fine, they are code
+		expect(bridge.detail).toContain("path");
+
+		const media = checkMediaData({ title: "Secret Song", artist: "Secret Artist", album: "Secret Album", errors: [] });
+		expect(media.verdict).toBe("pass");
+		for (const secret of ["Secret Song", "Secret Artist", "Secret Album"]) expect(media.detail).not.toContain(secret);
 	});
 });
 

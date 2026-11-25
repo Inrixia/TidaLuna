@@ -1,0 +1,95 @@
+name: "TIDAL smoke"
+
+# Manual only. Runs scripts/smoke.ts against a real client: the checks that need a running TIDAL, for release prep and
+# after a TIDAL update. See scripts/README.md.
+#
+# Requirements, because a hosted runner has none of them:
+# - a self-hosted runner with the `tidal` label that has TIDAL (Windows) or tidal-hifi (Linux) installed
+# - a desktop session: `start` launches the real Electron app, there is no headless mode
+# - for the media check, a logged-in profile the instance can copy (`%APPDATA%\TIDAL` / `~/.config/tidal-hifi`).
+#   Logged out, that one check reports `skipped` and the rest still run.
+# - macOS is not supported: tidal.mjs only knows win32 and linux.
+on:
+ workflow_dispatch:
+  inputs:
+   runner:
+    description: "Self-hosted runner label"
+    required: false
+    default: "tidal"
+   instance:
+    description: "Test instance number"
+    required: false
+    default: "1"
+
+# One client at a time on a runner: two instances sharing a profile fight over the CDP port and the login
+concurrency:
+ group: smoke-${{ inputs.instance }}
+ cancel-in-progress: false
+
+jobs:
+ Smoke:
+  runs-on: ${{ inputs.runner }}
+  # Setup copies several hundred MB the first time, then the checks themselves are seconds
+  timeout-minutes: 45
+  permissions:
+   contents: read
+  steps:
+   # clean: false keeps the ignored .tidal-test/ (the instance copy and its profile) that git clean -ffdx would delete
+   - name: Checkout
+     uses: actions/checkout@v7
+     with:
+      clean: false
+
+   - name: Install pnpm 📥
+     uses: pnpm/action-setup@v6
+     with:
+      version: latest
+
+   - name: Install Node.js 📥
+     uses: actions/setup-node@v7
+     with:
+      cache: pnpm
+      node-version: lts/*
+
+   - name: Install dependencies 📥
+     run: pnpm install
+
+   - name: Build
+     run: pnpm run build
+
+   # Copies the installed client into .tidal-test/<n>/app and points its resources/app at dist/. Once per runner.
+   - name: Set up the test instance
+     shell: bash
+     env:
+      INSTANCE: ${{ inputs.instance }}
+     run: |
+      if [ -d ".tidal-test/$INSTANCE/app" ]; then
+       echo "Instance $INSTANCE is already set up"
+      else
+       node .claude/skills/tidal-test-instance/tidal.mjs --instance "$INSTANCE" setup
+      fi
+
+   - name: Smoke checks
+     shell: bash
+     env:
+      INSTANCE: ${{ inputs.instance }}
+     run: pnpm exec tsx scripts/smoke.ts --instance "$INSTANCE" --summary ".tidal-test/smoke/summary.json"
+
+   # Never leave a client running on the runner, including after a failure or a cancelled run
+   - name: Stop the instance
+     if: always()
+     shell: bash
+     env:
+      INSTANCE: ${{ inputs.instance }}
+     run: node .claude/skills/tidal-test-instance/tidal.mjs --instance "$INSTANCE" stop || true
+
+   # Verdicts and reasons only. observations.json stays on the runner: a logged-in run holds library titles and paths,
+   # and this repository's artifacts are public.
+   - name: Upload summary
+     if: always()
+     uses: actions/upload-artifact@v7
+     with:
+      name: smoke-summary
+      path: .tidal-test/smoke/summary.json
+      retention-days: 14
+      if-no-files-found: warn
