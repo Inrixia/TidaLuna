@@ -35,6 +35,11 @@ export type LunaState = {
 	installs: Record<string, RecordedInstall>;
 	/** How the run that puts Luna back is started, once Luna has registered it. Absent: not registered */
 	schedule?: { mechanism: string; installedAt: string };
+	/**
+	 * What the user answered when asked whether Luna may keep itself installed after a TIDAL update. Undefined until
+	 * asked, and only `enabled` ever registers anything: this is opt-in, so silence must not be read as yes.
+	 */
+	updateRecovery?: "enabled" | "declined";
 };
 
 export const newLunaState = (lunaVersion: string, now = new Date().toISOString()): LunaState => ({

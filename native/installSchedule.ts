@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
 
 import { launchAgentPlist, systemdUnits, windowsTaskXml, wrapperFor, wrapperName } from "./autoUpdateSchedule";
@@ -129,5 +129,33 @@ export const installSchedule = async (deps: InstallScheduleDeps): Promise<Schedu
 		return await attemptInstall(deps);
 	} catch (err) {
 		return { installed: false, mechanism: "none", reason: `could not register the schedule: ${(err as Error).message}` };
+	}
+};
+
+/**
+ * Takes the schedule back off the machine, for a user who changes their mind.
+ *
+ * A logon task is a persistent change, so turning it off has to be possible from inside the app rather than only by
+ * finding the task by hand. The files it wrote are removed too, since nothing else reads them.
+ */
+export const removeSchedule = async (deps: Pick<InstallScheduleDeps, "platform" | "home" | "run">): Promise<ScheduleOutcome> => {
+	try {
+		if (deps.platform === "win32") {
+			const removed = await ok(deps as InstallScheduleDeps, "schtasks", ["/Delete", "/TN", TASK_NAME, "/F"]);
+			return { installed: false, mechanism: "schtasks", reason: removed ? `removed "${TASK_NAME}"` : `"${TASK_NAME}" was not registered` };
+		}
+		if (deps.platform === "darwin") {
+			const plist = path.join(deps.home, "Library/LaunchAgents", `${LABEL}.plist`);
+			await ok(deps as InstallScheduleDeps, "launchctl", ["unload", "-w", plist]);
+			await rm(plist, { force: true }).catch(() => {});
+			return { installed: false, mechanism: "launchd", reason: "unloaded the LaunchAgent" };
+		}
+		const unitDir = path.join(deps.home, ".config/systemd/user");
+		await ok(deps as InstallScheduleDeps, "systemctl", ["--user", "disable", "--now", `${UNIT}.timer`]);
+		for (const file of [`${UNIT}.service`, `${UNIT}.timer`]) await rm(path.join(unitDir, file), { force: true }).catch(() => {});
+		await ok(deps as InstallScheduleDeps, "systemctl", ["--user", "daemon-reload"]);
+		return { installed: false, mechanism: "systemd", reason: `disabled ${UNIT}.timer` };
+	} catch (err) {
+		return { installed: false, mechanism: "none", reason: `could not remove the schedule: ${(err as Error).message}` };
 	}
 };

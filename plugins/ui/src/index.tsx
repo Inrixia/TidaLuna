@@ -8,6 +8,7 @@ import { ContextMenu, ipcRenderer, safeTimeout } from "@luna/lib";
 import { Page } from "./classes/Page";
 
 import { confirm } from "./helpers/confirm";
+import { askAboutUpdateRecovery } from "./updateRecoveryPrompt";
 import { MuiTheme, lunaMuiTheme, LunaMuiThemeProvider } from "./lunaTheme";
 export type { MuiThemeOverride } from "./lunaTheme";
 import { currentSettingsTab, LunaPage } from "./SettingsPage";
@@ -85,23 +86,31 @@ ipcRenderer.onOpenUrl(unloads, async (reqUrl) => {
 });
 
 safeTimeout(unloads, async () => {
-	const latestReleaseTag = (await fetchReleases())
-		.filter((release) => !release.prerelease)
-		.map((rel) => rel.tag_name)
-		.sort(semverRcompare)[0];
-	if (semverGt(latestReleaseTag, (await pkg()).version!, true)) {
-		const res = await confirm({
-			title: (
-				<>
-					New version available! <b>{latestReleaseTag}</b>
-				</>
-			),
-			description: "There is a new TidaLuna client version available. Open settings to update?",
-			confirmationText: "Open Settings",
-			cancellationText: "Close",
-		});
-		if (!res.confirmed) return;
-		currentSettingsTab._ = "Settings";
-		settingsPage.open();
+	try {
+		const latestReleaseTag = (await fetchReleases())
+			.filter((release) => !release.prerelease)
+			.map((rel) => rel.tag_name)
+			.sort(semverRcompare)[0];
+		if (semverGt(latestReleaseTag, (await pkg()).version!, true)) {
+			const res = await confirm({
+				title: (
+					<>
+						New version available! <b>{latestReleaseTag}</b>
+					</>
+				),
+				description: "There is a new TidaLuna client version available. Open settings to update?",
+				confirmationText: "Open Settings",
+				cancellationText: "Close",
+			});
+			if (res.confirmed) {
+				currentSettingsTab._ = "Settings";
+				settingsPage.open();
+			}
+		}
+	} catch (err) {
+		// A release feed that cannot be read must not stop the question below from being asked
+		console.error("[Luna] Could not check for a new Luna version:", err);
 	}
+	// Asked once ever, and only when the answer is not already known. After the version question, so two dialogs never stack
+	await askAboutUpdateRecovery();
 });

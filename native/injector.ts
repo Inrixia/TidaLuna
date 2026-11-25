@@ -15,10 +15,9 @@ import Module, { createRequire } from "module";
 import { rewritePlayerMessage } from "./audioCache";
 import { stateRootFor } from "./autoUpdate";
 import { updateGuardStatus } from "./autoUpdateStatus";
-import { execRunner, installSchedule } from "./installSchedule";
-import { readLunaState, writeLunaState } from "./lunaState";
 import { publishRunner } from "./publishRunner";
 import { recordLunaInstalled } from "./registerSelf";
+import { applyRecordedDecision, decideUpdateRecovery, recoveryStatus } from "./updateRecovery";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { pkg } from "./update";
 import { staleIfError } from "./offlineCache";
@@ -144,12 +143,27 @@ ipcHandle("__Luna.renderJs", () => {
 const lunaPages = new Set<string>();
 ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
 
+// Luna's own folder, outside TIDAL's tree: the state, and the run kept for repairs
+const lunaStateRoot = () => stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() });
+
 // Read-only, and deliberately so: the settings page can see what the unattended run did and why, but cannot start one.
 // An install asked for by page code is what #292 puts behind a confirmation window, so a channel here would be a way
 // around it. When that window lands, a repair action goes behind it rather than here.
-ipcHandle("__Luna.getUpdateGuardStatus", async () =>
-	updateGuardStatus(stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() })),
-);
+ipcHandle("__Luna.getUpdateGuardStatus", async () => updateGuardStatus(lunaStateRoot()));
+
+// Whether Luna may keep itself installed after TIDAL updates: asked once in the page, answered here. Registering a logon
+// task is a persistent change to the machine, so the answer is recorded and only an `enabled` one registers anything.
+ipcHandle("__Luna.getUpdateRecovery", async () => recoveryStatus(lunaStateRoot()));
+ipcHandle("__Luna.setUpdateRecovery", async (_event, decision: unknown) => {
+	if (decision !== "enabled" && decision !== "declined") throw new Error(`[Luna] Not an answer to the recovery question: ${String(decision)}`);
+	return decideUpdateRecovery({
+		stateRoot: lunaStateRoot(),
+		decision,
+		platform: process.platform,
+		home: os.homedir(),
+		electron: process.execPath,
+	});
+});
 
 const httpsHandler = async (req: Request): Promise<Response> => {
 	if (req.url.startsWith("https://luna/")) {
@@ -268,7 +282,7 @@ electron.app.whenReady().then(async () => {
 	// do any of it should still start TIDAL
 	void pkg()
 		.then(async ({ version }) => {
-			const stateRoot = stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() });
+			const stateRoot = lunaStateRoot();
 			await recordLunaInstalled({
 				stateRoot,
 				resourcesDir: process.resourcesPath,
@@ -279,19 +293,15 @@ electron.app.whenReady().then(async () => {
 				console.error("[Luna] Could not publish the update check:", err),
 			);
 
-			// Registered once and recorded, so a user who removes the schedule is not fought by every later start
-			const state = await readLunaState(stateRoot);
-			if (state === undefined || state.schedule !== undefined) return;
-			const scheduled = await installSchedule({
-				platform: process.platform,
+			// Registered once and recorded, so a user who removes the schedule is not fought by every later start.
+			// Opt-in: only an answer the user gave registers anything, so a machine nobody asked is left alone
+			const applied = await applyRecordedDecision({
 				stateRoot,
+				platform: process.platform,
 				home: os.homedir(),
 				electron: process.execPath,
-				run: execRunner,
 			});
-			if (!scheduled.installed) return console.error(`[Luna] Could not schedule the update check: ${scheduled.reason}`);
-			await writeLunaState(stateRoot, { ...state, schedule: { mechanism: scheduled.mechanism, installedAt: new Date().toISOString() } });
-			console.log(`[Luna] TIDAL update check scheduled: ${scheduled.reason}`);
+			if (applied !== undefined) console.log(`[Luna] TIDAL update recovery: ${applied.reason}`);
 		})
 		.catch((err) => console.error("[Luna] Could not record this install:", err));
 
