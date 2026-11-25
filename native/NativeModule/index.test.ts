@@ -49,6 +49,7 @@ const pluginRegistry = async (fileName: string, code: string) => {
 		write: (next) => void (state = JSON.parse(JSON.stringify(next))),
 		fetchPackage: async () => ({ ...pkg }),
 		fetchCode: async () => "plugin code",
+		fetchWorld: async () => "",
 		nativeSources: () => ({ [fileName]: code }),
 		legacyAllows: () => true,
 		forgetAnswers: () => {},
