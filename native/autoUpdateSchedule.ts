@@ -39,8 +39,9 @@ const psQuote = (value: string) => `'${value.replace(/'/g, "''")}'`;
  */
 export const wrapperFor = (platform: NodeJS.Platform, { electron, script }: RunnerPaths): string => {
 	if (platform === "win32") {
-		// electron is `<tidal>\app-<version>\TIDAL.exe`, so the folder holding every version is two levels up
-		const root = path.dirname(path.dirname(electron));
+		// electron is `<tidal>\app-<version>\TIDAL.exe`, so the folder holding every version is two levels up. Windows
+		// semantics, not the host's: this text is for a Windows machine and may be generated on any of them
+		const root = path.win32.dirname(path.win32.dirname(electron));
 		return [
 			"# Runs Luna's TIDAL update check. Generated; see native/autoUpdateSchedule.ts",
 			`$root = ${psQuote(root)}`,
