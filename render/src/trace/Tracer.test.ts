@@ -91,11 +91,15 @@ describe("Tracer", () => {
 		const builder = buildActions["message/MESSAGE_INFO"];
 		delete buildActions["message/MESSAGE_INFO"];
 		try {
-			Tracer("[p]").trace.msg.log("early");
-			// Messager imports the store before it dispatches: give a (wrongly) pending dispatch time to happen
-			await new Promise((resolve) => setTimeout(resolve, 20));
+			const { trace } = Tracer("[p]");
+			trace.msg.log("early");
+			// Messager imports the store before it dispatches. A message sent after the early one is dispatched after it
+			// too, so once that one arrives a dispatch of the early one would already have happened
+			vi.spyOn(console, "warn").mockImplementation(() => {});
+			trace.msg.warn("later");
+			await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
 			// A real redux store rejects dispatch(undefined)
-			expect(dispatch).not.toHaveBeenCalled();
+			expect(dispatch.mock.calls.map(([action]) => (action as { type: string }).type)).toEqual(["message/MESSAGE_WARN"]);
 			expect(console.log).toHaveBeenCalledWith("[p]", "early");
 		} finally {
 			buildActions["message/MESSAGE_INFO"] = builder;
