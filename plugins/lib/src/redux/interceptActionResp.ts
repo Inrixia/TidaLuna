@@ -1,6 +1,6 @@
 import { Semaphore } from "@inrixia/helpers";
 
-import { unloadSet, type LunaUnload, type LunaUnloads } from "@luna/core";
+import { unloadSet, type LunaUnload, type NullishLunaUnloads } from "@luna/core";
 
 import { safeTimeout } from "../helpers";
 import { interceptPromise, type InterceptPayload } from "./intercept";
@@ -28,7 +28,7 @@ const intercepts: Record<ActionType, Semaphore> = {} as Record<ActionType, Semap
  */
 export const interceptActionResp = async <RESAT extends ActionType, REJAT extends ActionType, RES extends InterceptPayload<RESAT>>(
 	trigger: Function,
-	unloads: LunaUnloads,
+	unloads: NullishLunaUnloads,
 	resActionTypes: RESAT[],
 	rejActionTypes?: REJAT[],
 	{ timeoutMs, cancel }: { timeoutMs?: number; cancel?: true } = {},
