@@ -1,9 +1,16 @@
 // Fixes for performance bugs in TIDAL's bundled code, applied to each module's source as it loads (tidalTransform.ts).
 // Patterns are tied to library source shapes, not minified names. A patch that stops matching after a TIDAL update is skipped.
 
-type Patch ={ name: string; marker: string; find: RegExp; replace: string };
+export type Patch = { name: string; marker: string; find: RegExp; replace: string };
 
-const patches: Patch[] = [
+/**
+ * What applying one patch to one module did:
+ * `applied` changed the source, `noop` matched but changed nothing, `stale` had the marker and did not match,
+ * `absent` was not this module at all.
+ */
+export type PatchOutcome = "applied" | "noop" | "stale" | "absent";
+
+export const tidalPatches: Patch[] = [
 	{
 		// react-dnd: a ref callback that changes every render calls the drag source hook with null and then the same node.
 		// The null disconnects (draggable="false") and the node reconnects (draggable="true"), so every re-rendered card invalidates style.
@@ -31,8 +38,28 @@ const patches: Patch[] = [
 	},
 ];
 
-// Per module, no state, so the same source always gives the same output
-export const applyTidalPatches = (code: string) => {
-	for (const patch of patches) if (code.includes(patch.marker)) code = code.replace(patch.find, patch.replace);
+/**
+ * Per module, no state, so the same source always gives the same output.
+ *
+ * @param onPatch told what each patch did to this module, when a caller wants to know (see patchReport.ts). Off by
+ * default: this runs over multi-megabyte bundles, so the cost is kept to one check per patch.
+ */
+export const applyTidalPatches = (code: string, onPatch?: (patch: Patch, outcome: PatchOutcome) => void) => {
+	for (const patch of tidalPatches) {
+		if (!code.includes(patch.marker)) {
+			onPatch?.(patch, "absent");
+			continue;
+		}
+		const patched = code.replace(patch.find, patch.replace);
+		if (patched !== code) {
+			onPatch?.(patch, "applied");
+			code = patched;
+			continue;
+		}
+		// Nothing changed: either the pattern no longer matches this module, or it matches and the replacement is the
+		// same text. Told apart because they mean different things to whoever reads the report
+		const matches = new RegExp(patch.find.source, patch.find.flags.replace("g", "")).test(code);
+		onPatch?.(patch, matches ? "noop" : "stale");
+	}
 	return code;
 };

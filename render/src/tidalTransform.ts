@@ -1,6 +1,7 @@
 // Luna's changes to each TIDAL module's source. Pure and deterministic, it runs in the main process for native module loading
 // (native/tidalModules.ts, where the same output lets V8 reuse its code cache) and in the page for the quartz fallback.
 import { findCreateActionFunction } from "./helpers/findCreateAction";
+import { patchReport } from "./patchReport";
 import { applyTidalPatches } from "./tidalPatches";
 
 // Lookbehind, not a leading ([\w$]+) which retries at every position of a multi MB bundle (~30ms each vs ~1ms)
@@ -9,7 +10,8 @@ const createRootExport = /(?<=[\w$])\.createRoot\s*=(?!=)/;
 export const transformTidalModule = (code: string) => {
 	// Tidal react-dom/client
 	code = code.replace(createRootExport, ".createRoot=globalThis.__lunaCreateRoot=");
-	code = applyTidalPatches(code);
+	// Every module TIDAL loads is a chance to see whether the patches still apply to the TIDAL that is running
+	code = applyTidalPatches(code, patchReport.observe);
 
 	const actionData = findCreateActionFunction(code);
 	if (actionData) {
