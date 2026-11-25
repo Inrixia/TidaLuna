@@ -10,6 +10,8 @@
  * and every string here is testable.
  */
 
+import path from "path";
+
 export type RunnerPaths = {
 	/** The Electron binary to run the script with: TIDAL's own */
 	electron: string;
@@ -24,13 +26,32 @@ const quoted = (value: string) => (/[\s"]/.test(value) ? `"${value.replace(/"/g,
  * The wrapper the schedule entry calls. It exists to set `ELECTRON_RUN_AS_NODE`, which is environment and cannot be
  * passed as an argument, and to give the schedule one stable path to call.
  */
+/** A PowerShell single-quoted literal: the only escaping it needs is doubling its own quote */
+const psQuote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
+/**
+ * The wrapper the schedule entry calls. It exists to set `ELECTRON_RUN_AS_NODE`, which is environment and cannot be
+ * passed as an argument, and to give the schedule one stable path to call.
+ *
+ * On Windows it resolves the install at run time rather than baking in a path: TIDAL keeps one `app-<version>` folder per
+ * release and the launcher runs the newest, so a wrapper holding this month's path points at a folder that an update
+ * replaces. The TIDAL folder is derived from the Electron binary it was given.
+ */
 export const wrapperFor = (platform: NodeJS.Platform, { electron, script }: RunnerPaths): string => {
 	if (platform === "win32") {
+		// electron is `<tidal>\app-<version>\TIDAL.exe`, so the folder holding every version is two levels up
+		const root = path.dirname(path.dirname(electron));
 		return [
-			"@echo off",
-			"rem Runs Luna's TIDAL update check. Generated; see native/autoUpdateSchedule.ts",
-			"set ELECTRON_RUN_AS_NODE=1",
-			`${quoted(electron)} ${quoted(script)}`,
+			"# Runs Luna's TIDAL update check. Generated; see native/autoUpdateSchedule.ts",
+			`$root = ${psQuote(root)}`,
+			// Newest first by numeric segment, so the version it picks is the one TIDAL itself would launch
+			"$app = Get-ChildItem $root -Directory -Filter 'app-*' |",
+			"	Where-Object { $_.Name -match '^app-\\d' } |",
+			"	Sort-Object { [version]($_.Name.Replace('app-','') -replace '-.*$','') } -Descending |",
+			"	Select-Object -First 1",
+			"if (-not $app) { exit 0 }",
+			"$env:ELECTRON_RUN_AS_NODE = 1",
+			`& "$($app.FullName)\\TIDAL.exe" ${psQuote(script)}`,
 			"",
 		].join("\r\n");
 	}
@@ -42,8 +63,8 @@ export const wrapperFor = (platform: NodeJS.Platform, { electron, script }: Runn
 	].join("\n");
 };
 
-/** Whether a wrapper is a `.cmd` (Windows) or a shell script */
-export const wrapperName = (platform: NodeJS.Platform) => (platform === "win32" ? "luna-update-guard.cmd" : "luna-update-guard.sh");
+/** Whether a wrapper is a PowerShell script (Windows) or a shell script */
+export const wrapperName = (platform: NodeJS.Platform) => (platform === "win32" ? "luna-update-guard.ps1" : "luna-update-guard.sh");
 
 /**
  * A Task Scheduler definition that runs the wrapper at logon.

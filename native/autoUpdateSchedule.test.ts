@@ -14,7 +14,7 @@ const paths = { electron: "/opt/tidal-hifi/tidal-hifi", script: "/home/a/.local/
 describe("wrapperFor", () => {
 	test("sets ELECTRON_RUN_AS_NODE, which is what makes TIDAL's Electron a Node", () => {
 		expect(wrapperFor("linux", paths)).toContain("ELECTRON_RUN_AS_NODE=1");
-		expect(wrapperFor("win32", paths)).toContain("set ELECTRON_RUN_AS_NODE=1");
+		expect(wrapperFor("win32", paths)).toContain("$env:ELECTRON_RUN_AS_NODE = 1");
 	});
 
 	test("runs the built entry point with the Electron binary it was given", () => {
@@ -26,14 +26,33 @@ describe("wrapperFor", () => {
 	});
 
 	test("keeps a path with a space in one piece", () => {
-		const spaces = { electron: "C:\\Program Files\\TIDAL\\TIDAL.exe", script: "C:\\Users\\a user\\luna\\autoUpdate.mjs" };
+		const spaces = { electron: "C:\\Program Files\\TIDAL\\app-2.48.0\\TIDAL.exe", script: "C:\\Users\\a user\\luna\\autoUpdate.mjs" };
 		const wrapper = wrapperFor("win32", spaces);
 
-		expect(wrapper).toContain(`"${spaces.electron}" "${spaces.script}"`);
+		// PowerShell single-quoted literals, which is the only quoting that survives a space and a backslash
+		expect(wrapper).toContain(`$root = 'C:\\Program Files\\TIDAL'`);
+		expect(wrapper).toContain(`'C:\\Users\\a user\\luna\\autoUpdate.mjs'`);
+	});
+
+	test("finds the TIDAL that is installed when it runs, not the one that was installed when it was written", () => {
+		// The whole point: TIDAL keeps one app-<version> folder per release, so a baked-in path points at a folder the next
+		// update replaces. The wrapper has to resolve it again on every run
+		const wrapper = wrapperFor("win32", {
+			electron: "C:\\Users\\a\\AppData\\Local\\TIDAL\\app-2.48.0\\TIDAL.exe",
+			script: "C:\\luna\\autoUpdate.mjs",
+		});
+
+		expect(wrapper).toContain("Get-ChildItem $root -Directory -Filter 'app-*'");
+		expect(wrapper).toContain("-Descending");
+		expect(wrapper).not.toContain("app-2.48.0\\TIDAL.exe");
+	});
+
+	test("does nothing when it cannot find an install, rather than failing the schedule", () => {
+		expect(wrapperFor("win32", { electron: "C:\\TIDAL\\app-1.0.0\\TIDAL.exe", script: "C:\\luna\\a.mjs" })).toContain("if (-not $app) { exit 0 }");
 	});
 
 	test("names the artifact per platform", () => {
-		expect(wrapperName("win32")).toMatch(/\.cmd$/);
+		expect(wrapperName("win32")).toMatch(/\.ps1$/);
 		expect(wrapperName("linux")).toMatch(/\.sh$/);
 	});
 });

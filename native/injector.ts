@@ -15,6 +15,7 @@ import Module, { createRequire } from "module";
 import { rewritePlayerMessage } from "./audioCache";
 import { stateRootFor } from "./autoUpdate";
 import { updateGuardStatus } from "./autoUpdateStatus";
+import { publishRunner } from "./publishRunner";
 import { recordLunaInstalled } from "./registerSelf";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { pkg } from "./update";
@@ -264,13 +265,18 @@ electron.app.whenReady().then(async () => {
 	// is the only thing that can tell "an update removed Luna" from "this machine never had Luna", and only a booting
 	// install can write it. Not awaited: a machine that cannot write its own record should still start TIDAL
 	void pkg()
-		.then(({ version }) =>
-			recordLunaInstalled({
-				stateRoot: stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() }),
+		.then(({ version }) => {
+			const stateRoot = stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() });
+			void recordLunaInstalled({
+				stateRoot,
 				resourcesDir: process.resourcesPath,
 				lunaVersion: typeof version === "string" ? version : "unknown",
-			}),
-		)
+			}).catch((err) => console.error("[Luna] Could not record this install:", err));
+			// The schedule needs one path that a TIDAL update cannot replace, and it must match the Luna that is running
+			void publishRunner({ stateRoot, resourcesDir: process.resourcesPath }).catch((err) =>
+				console.error("[Luna] Could not publish the update check:", err),
+			);
+		})
 		.catch((err) => console.error("[Luna] Could not record this install:", err));
 
 	// Register the HTTPS handler
