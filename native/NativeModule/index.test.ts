@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => {
 	};
 });
 vi.mock("../core/registryMain", () => ({ registry: () => mocks.registry.current }));
+// The old native format list is fetched from the network: the test registry grants the plugin itself (legacyAllows below)
+vi.mock("../core/legacyListMain", () => ({ legacyListReady: async () => {} }));
 vi.mock("../core/confirmWindow", () => ({ askerFor: mocks.askerFor }));
 vi.mock("./secureLoad", () => ({ secureLoad: mocks.secureLoad }));
 vi.mock("./coreNatives", () => ({ isCoreNative: mocks.isCoreNative }));
@@ -48,6 +50,7 @@ const pluginRegistry = async (fileName: string, code: string) => {
 		fetchPackage: async () => ({ ...pkg }),
 		fetchCode: async () => "plugin code",
 		nativeSources: () => ({ [fileName]: code }),
+		legacyAllows: () => true,
 		forgetAnswers: () => {},
 		allVersionsAnswers: () => [],
 		revokeAllVersions: () => {},
