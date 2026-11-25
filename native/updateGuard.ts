@@ -32,6 +32,12 @@ export type GuardDeps = {
 	fetchZip: (url: string) => Promise<Uint8Array>;
 	/** TIDAL writing while it runs would corrupt a live install, so a run refuses rather than racing */
 	isTidalRunning?: () => Promise<boolean>;
+	/**
+	 * Whether the Luna that is running found TIDAL's code no longer matches its patches (see render/src/patchReport.ts).
+	 * A stale patch is the difference between "an update removed Luna" and "Luna is here but written for another TIDAL":
+	 * the first is repaired by the same version, the second needs a newer one.
+	 */
+	patchesStale?: () => Promise<boolean>;
 	/** Whether the user opted into prereleases */
 	allowPrerelease?: boolean;
 	now?: () => string;
@@ -99,6 +105,15 @@ export const runUpdateGuard = async (deps: GuardDeps): Promise<GuardOutcome> => 
 	if (!resolution.ok) return outcome("refused", resolution.reason, notes);
 	const { candidate } = resolution;
 	notes.push(`picked ${candidate.version} (${resolution.verdict})`);
+
+	// The same version that is already installed is not a repair when its patches stopped matching: TIDAL moved and this
+	// Luna cannot be made to fit it by reinstalling. Saying so is better than a run that appears to fix nothing
+	const installedVersion = observation.injection.kind === "injected" ? observation.injection.install.lunaVersion : undefined;
+	if (state.pinnedVersion === undefined && installedVersion !== undefined && candidate.version === installedVersion) {
+		if ((await deps.patchesStale?.()) === true) {
+			return outcome("refused", `${candidate.version} is installed but no longer matches this TIDAL, and no newer release is available`, notes);
+		}
+	}
 
 	// Download and verify before anything in TIDAL's tree is touched
 	let zip: Uint8Array;

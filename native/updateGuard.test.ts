@@ -25,9 +25,9 @@ let stateRoot: string;
 let tidalRoot: string;
 let resourcesDir: string;
 
-const makeZip = async () => {
+const makeZip = async (version = VERSION) => {
 	const zip = new JSZip();
-	zip.file("package.json", JSON.stringify({ name: "luna", version: VERSION }));
+	zip.file("package.json", JSON.stringify({ name: "luna", version }));
 	zip.file("injector.mjs", "boot");
 	zip.file("luna.mjs", "core");
 	return (await zip.generateAsync({ type: "nodebuffer" })) as Buffer;
@@ -36,17 +36,17 @@ const makeZip = async () => {
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 /** A release that passes the gate, plus the compat file that describes it */
-const releaseFixture = (zipBytes: Uint8Array, compat: unknown = undefined) => {
+const releaseFixture = (zipBytes: Uint8Array, compat: unknown = undefined, version = VERSION) => {
 	const release: ReleaseInfo = {
-		tag_name: VERSION,
+		tag_name: version,
 		draft: false,
 		prerelease: false,
 		assets: [
-			{ name: LUNA_ASSET, browser_download_url: releaseAssetUrl(VERSION), size: zipBytes.length, digest: `sha256:${sha(zipBytes)}` },
-			{ name: COMPAT_ASSET, browser_download_url: releaseAssetUrl(VERSION, COMPAT_ASSET), size: 100 },
+			{ name: LUNA_ASSET, browser_download_url: releaseAssetUrl(version), size: zipBytes.length, digest: `sha256:${sha(zipBytes)}` },
+			{ name: COMPAT_ASSET, browser_download_url: releaseAssetUrl(version, COMPAT_ASSET), size: 100 },
 		],
 	};
-	const compatFile = compat ?? { luna: VERSION, tidal: { tested: [TIDAL] }, zip: { sha256: sha(zipBytes), bytes: zipBytes.length } };
+	const compatFile = compat ?? { luna: version, tidal: { tested: [TIDAL] }, zip: { sha256: sha(zipBytes), bytes: zipBytes.length } };
 	return { release, compatFile };
 };
 
@@ -73,7 +73,7 @@ const withState = async (overrides: { pinnedVersion?: string } = {}) => {
 	return state;
 };
 
-const deps = (zipBytes: Buffer, compat: unknown = undefined, overrides: Partial<GuardDeps> = {}): GuardDeps => {
+const deps = (zipBytes: Buffer | Uint8Array, compat: unknown = undefined, overrides: Partial<GuardDeps> = {}): GuardDeps => {
 	const { release, compatFile } = releaseFixture(zipBytes, compat);
 	return {
 		roots: [{ dir: tidalRoot, versioned: true }],
@@ -269,5 +269,83 @@ describe("runUpdateGuard refuses rather than half installing", () => {
 		});
 
 		expect(await runUpdateGuard(d)).toMatchObject({ action: "failed", reason: expect.stringMatching(/could not read the releases: offline/) });
+	});
+});
+
+/**
+ * The difference a patch report makes.
+ *
+ * An update that removed Luna is repaired by the same version. A Luna whose patches no longer match the TIDAL it runs on
+ * cannot be: TIDAL moved, and reinstalling that same version changes nothing. That second case has to say so.
+ */
+describe("runUpdateGuard when the installed Luna no longer fits TIDAL", () => {
+	/** Luna VERSION installed for TIDAL, then TIDAL's asar replaced as an update would */
+	const installedThenTidalChanged = async () => {
+		await tidalInstall({ injected: true });
+		const dist = path.join(dir, "installed-dist");
+		await mkdir(dist, { recursive: true });
+		await writeFile(path.join(dist, "package.json"), JSON.stringify({ name: "luna", version: VERSION }));
+		await writeFile(path.join(dist, "injector.mjs"), "boot");
+		await writeFile(path.join(dist, "luna.mjs"), "core");
+		const marker = await injectLuna(resourcesDir, dist, { lunaVersion: VERSION, tidalVersion: TIDAL });
+		await writeLunaState(stateRoot, recordInstall(newLunaState(VERSION), resourcesDir, { tidalVersion: TIDAL, ...marker }));
+		// TIDAL's asar now differs from what the marker recorded, which is how an update shows up
+		await writeFile(path.join(resourcesDir, "original.asar"), "a different tidal asar");
+	};
+
+	test("refuses to reinstall the version that is already there when its patches went stale", async () => {
+		await installedThenTidalChanged();
+		const zipBytes = await makeZip();
+
+		const result = await runUpdateGuard(deps(zipBytes, undefined, { patchesStale: async () => true }));
+
+		expect(result).toMatchObject({ action: "refused", reason: expect.stringMatching(/no longer matches this TIDAL/) });
+	});
+
+	test("still repairs when the patches apply, since the same version is the right one", async () => {
+		await installedThenTidalChanged();
+		const zipBytes = await makeZip();
+
+		expect(await runUpdateGuard(deps(zipBytes, undefined, { patchesStale: async () => false }))).toMatchObject({ action: "installed" });
+	});
+
+	test("installs a newer release even when the installed one went stale", async () => {
+		await installedThenTidalChanged();
+		const newer = "1.28.0";
+		const newerZip = await makeZip(newer);
+		// A release whose own archive and digests all agree, under a newer tag
+		const fixture = releaseFixture(newerZip, undefined, newer);
+		const newerRelease = {
+			...fixture.release,
+			tag_name: newer,
+			assets: [
+				{ ...fixture.release.assets![0], browser_download_url: releaseAssetUrl(newer) },
+				{ ...fixture.release.assets![1], browser_download_url: releaseAssetUrl(newer, COMPAT_ASSET) },
+			],
+		};
+		const d = deps(newerZip, fixture.compatFile, {
+			patchesStale: async () => true,
+			fetchReleases: async () => [newerRelease],
+			fetchZip: async () => newerZip,
+		});
+
+		expect(await runUpdateGuard(d)).toMatchObject({ action: "installed", installed: { version: newer } });
+	});
+
+	test("a pin still installs, because that is what pinning means", async () => {
+		await installedThenTidalChanged();
+		await withState({ pinnedVersion: VERSION });
+		const zipBytes = await makeZip();
+
+		expect(await runUpdateGuard(deps(zipBytes, undefined, { patchesStale: async () => true }))).toMatchObject({ action: "installed" });
+	});
+
+	test("the patch report is not consulted when there is nothing to do", async () => {
+		await tidalInstall();
+		const patchesStale = vi.fn(async () => true);
+		// No state: never installed here, so nothing is asked
+		await runUpdateGuard(deps(await makeZip(), undefined, { patchesStale }));
+
+		expect(patchesStale).not.toHaveBeenCalled();
 	});
 });
