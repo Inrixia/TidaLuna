@@ -16,7 +16,6 @@ vi.mock("../NativeConfirm/NativeConfirm", () => ({
 	},
 }));
 
-
 type InputHandler = (event: { sender: unknown }, active: unknown) => unknown;
 let BrowserWindow: typeof import("electron").BrowserWindow;
 let askerFor: typeof import("./confirmWindow").askerFor;
@@ -127,6 +126,28 @@ describe("askerFor", () => {
 		vi.useFakeTimers();
 		userInput({ sender }, true);
 		vi.advanceTimersByTime(10_001);
+		await expect(askerFor(sender as never)(request)).rejects.toThrow("TIDAL is not in use");
+	});
+
+	it("forgets a renderer's input when it is destroyed, and listens for that once however often it sends input", async () => {
+		const { sender } = renderer({ focused: false });
+		userInput({ sender }, true);
+		userInput({ sender }, true);
+		expect(sender.once).toHaveBeenCalledTimes(1);
+		const [event, onDestroyed] = sender.once.mock.calls[0];
+		expect(event).toBe("destroyed");
+
+		onDestroyed();
+
+		await expect(askerFor(sender as never)(request)).rejects.toThrow("TIDAL is not in use");
+	});
+
+	it("does not count input of another renderer", async () => {
+		const { sender } = renderer({ focused: false });
+		const other = renderer({ focused: false });
+		userInput({ sender: other.sender }, true);
+		vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null);
+
 		await expect(askerFor(sender as never)(request)).rejects.toThrow("TIDAL is not in use");
 	});
 
