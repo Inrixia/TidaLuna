@@ -58,7 +58,7 @@ describe("applyRecordedDecision on boot", () => {
 		const { run, calls } = fakeRun();
 
 		expect(await applyRecordedDecision(deps(run))).toBeUndefined();
-		// The whole point of opt-in: silence is not a yes
+		// Opt-in means silence is not a yes
 		expect(calls).toEqual([]);
 	});
 

@@ -35,8 +35,8 @@ describe("wrapperFor", () => {
 	});
 
 	test("finds the TIDAL that is installed when it runs, not the one that was installed when it was written", () => {
-		// The whole point: TIDAL keeps one app-<version> folder per release, so a baked-in path points at a folder the next
-		// update replaces. The wrapper has to resolve it again on every run
+		// TIDAL keeps one app-<version> folder per release, so a baked-in path points at a folder the next update replaces.
+		// The wrapper has to resolve it again on every run
 		const wrapper = wrapperFor("win32", {
 			electron: "C:\\Users\\a\\AppData\\Local\\TIDAL\\app-2.48.0\\TIDAL.exe",
 			script: "C:\\luna\\autoUpdate.mjs",

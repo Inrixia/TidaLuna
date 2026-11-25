@@ -110,8 +110,7 @@ const logOutcome = async (stateRoot: string, outcome: GuardOutcome, now: Date) =
  * Runs the guard against the real file system, GitHub and process list.
  *
  * Nothing here is reachable from the page: it takes no arguments from a renderer and is called by the main process on its
- * own schedule, so a page cannot ask for an install — which is the whole point of #292 putting the page's `update` behind
- * a confirmation.
+ * own schedule, so a page cannot ask for an install. That is why #292 puts the page's `update` behind a confirmation.
  */
 export const runAutoUpdate = async (deps: AutoUpdateDeps): Promise<GuardOutcome> => {
 	const { platform, httpFetch, run } = deps;
