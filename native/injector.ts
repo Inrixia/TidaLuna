@@ -1,6 +1,7 @@
 import electron from "electron";
 
 import { readFileSync } from "fs";
+import os from "os";
 import { readFile } from "fs/promises";
 import mime from "mime";
 
@@ -12,6 +13,8 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
+import { stateRootFor } from "./autoUpdate";
+import { updateGuardStatus } from "./autoUpdateStatus";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
@@ -136,6 +139,13 @@ ipcHandle("__Luna.renderJs", () => {
 const lunaPages = new Set<string>();
 ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
 
+// Read-only, and deliberately so: the settings page can see what the unattended run did and why, but cannot start one.
+// An install asked for by page code is what #292 puts behind a confirmation window, so a channel here would be a way
+// around it. When that window lands, a repair action goes behind it rather than here.
+ipcHandle("__Luna.getUpdateGuardStatus", async () =>
+	updateGuardStatus(stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() })),
+);
+
 const httpsHandler = async (req: Request): Promise<Response> => {
 	if (req.url.startsWith("https://luna/")) {
 		try {
@@ -213,7 +223,9 @@ const tidalModuleHandler = async (req: Request): Promise<Response> => {
 	const url = new URL(req.url);
 	if (!tidalMainHosts.has(url.host)) return new Response(null, { status: 403 });
 	const origin = `https://${url.host}`;
-	const res = await staleIfError(origin + url.pathname + url.search, () => electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }));
+	const res = await staleIfError(origin + url.pathname + url.search, () =>
+		electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }),
+	);
 	// shortcut: every .js is taken for a module, TIDAL's workers are inline blobs, check if a classic script ever loads from here
 	if (!res.ok || !url.pathname.endsWith(".js")) {
 		const headers = new Headers(res.headers);
@@ -260,7 +272,12 @@ electron.app.whenReady().then(async () => {
 // TIDAL's player message handler (native/app/main/playback/player/PlayerController.js) gets audio urls that point at the cache, see audioCache.ts
 const ipcOn = electron.ipcMain.on.bind(electron.ipcMain);
 electron.ipcMain.on = ((channel, listener) =>
-	ipcOn(channel, channel !== "player.message" ? listener : (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message))) as typeof electron.ipcMain.on;
+	ipcOn(
+		channel,
+		channel !== "player.message"
+			? listener
+			: (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message),
+	)) as typeof electron.ipcMain.on;
 // #endregion
 
 // #region Proxied BrowserWindow
