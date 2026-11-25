@@ -146,6 +146,16 @@ describe("askerFor", () => {
 		const { sender } = renderer({ focused: false });
 		const other = renderer({ focused: false });
 		userInput({ sender: other.sender }, true);
+
+		// TIDAL's window is visible, so it is the missing input of this renderer that refuses
+		await expect(askerFor(sender as never)(request)).rejects.toThrow("TIDAL is not in use");
+		answerWith("yes");
+		await expect(askerFor(other.sender as never)(request)).resolves.toBe(true);
+	});
+
+	it("is refused without a TIDAL window to open over", async () => {
+		const { sender } = renderer();
+		userInput({ sender }, true);
 		vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null);
 
 		await expect(askerFor(sender as never)(request)).rejects.toThrow("TIDAL is not in use");
