@@ -74,19 +74,27 @@ describe("preload", () => {
 		it("refuses the channel only the preload may send, for invoke and send", async () => {
 			await loadPreload("https://listen.tidal.com/");
 			const bridge = page.__ipcRenderer!;
-			expect(() => bridge.invoke("__Luna.userInput", true)).toThrow("Channel __Luna.userInput is not available to the page");
+			await expect(bridge.invoke("__Luna.userInput", true)).rejects.toThrow("Channel __Luna.userInput is not available to the page");
 			expect(() => bridge.send("__Luna.userInput", true)).toThrow("Channel __Luna.userInput is not available to the page");
 			expect(electron.ipcRenderer.invoke).not.toHaveBeenCalledWith("__Luna.userInput", expect.anything());
 			expect(userInputSent()).toEqual([]);
 		});
 
-		it("passes every other channel through", async () => {
+		it("passes the channels the page needs and refuses every other", async () => {
 			await loadPreload("https://listen.tidal.com/");
 			const bridge = page.__ipcRenderer!;
-			await bridge.invoke("__Luna.renderJs", 1);
-			bridge.send("__Luna.something", 2);
-			expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("__Luna.renderJs", 1);
-			expect(electron.ipcRenderer.send).toHaveBeenCalledWith("__Luna.something", 2);
+			await bridge.invoke("__Luna.getSeedSettings", 1);
+			await bridge.invoke("__LunaNative.some.native.ts", 2);
+			bridge.send("update-info", 3);
+			expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("__Luna.getSeedSettings", 1);
+			expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("__LunaNative.some.native.ts", 2);
+			expect(electron.ipcRenderer.send).toHaveBeenCalledWith("update-info", 3);
+
+			vi.clearAllMocks();
+			await expect(bridge.invoke("__Luna.renderJs")).rejects.toThrow("is not available to the page");
+			expect(() => bridge.send("__Luna.something", 4)).toThrow("is not available to the page");
+			expect(electron.ipcRenderer.invoke).not.toHaveBeenCalled();
+			expect(electron.ipcRenderer.send).not.toHaveBeenCalled();
 		});
 
 		it("is exposed through contextBridge when the page is isolated, and on the window when it is not", async () => {
