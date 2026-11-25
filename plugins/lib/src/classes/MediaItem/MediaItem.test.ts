@@ -483,3 +483,61 @@ describe("fromId", () => {
 		expect(mediaItem?.tidalItem.title).toBe("Loaded");
 	});
 });
+
+describe("fromIsrc", () => {
+	let isrcSeq = 0;
+	/** A fresh isrc each time: fromIsrc remembers its answers */
+	const nextIsrc = () => `TESTISRC${++isrcSeq}`;
+	type Found = { tags?: string[]; loaded?: Quality | null };
+	/** TIDAL's isrc lookup finds these tracks in this order; `loaded` is the best quality of the item MediaItem.fromId gives for it, null for none */
+	const lookup = (...found: Found[]) => {
+		const ids = found.map(() => String(nextId()));
+		vi.spyOn(TidalApi, "isrc").mockImplementation(async function* () {
+			for (const [i, { tags }] of found.entries()) yield { id: ids[i], attributes: { mediaTags: tags } } as never;
+		});
+		const loads: string[] = [];
+		vi.spyOn(MediaItem, "fromId").mockImplementation((async (id: redux.ItemId) => {
+			loads.push(String(id));
+			const { loaded } = found[ids.indexOf(String(id))];
+			return loaded === null || loaded === undefined ? undefined : ({ id, bestQuality: loaded } as unknown as MediaItem);
+		}) as never);
+		return { ids, loads };
+	};
+	afterEach(() => vi.restoreAllMocks());
+
+	test("picks the only track even when it has no tags or none Luna knows", async () => {
+		const { ids } = lookup({ tags: [], loaded: Quality.High });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: ids[0] });
+
+		const unknown = lookup({ tags: ["SOMETHING_NEW"], loaded: Quality.Lowest });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: unknown.ids[0] });
+	});
+
+	test("takes a later track only when its tags say it is better", async () => {
+		const better = lookup({ tags: ["LOSSLESS"], loaded: Quality.High }, { tags: ["MQA"], loaded: Quality.MQA });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: better.ids[1] });
+
+		const worse = lookup(
+			{ tags: ["MQA"], loaded: Quality.MQA },
+			{ tags: ["LOSSLESS"], loaded: Quality.High },
+			{ tags: [], loaded: Quality.Lowest },
+		);
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: worse.ids[0] });
+		// The worse tracks are not even loaded
+		expect(worse.loads).toEqual([worse.ids[0]]);
+	});
+
+	test("stops loading once a track has the highest quality", async () => {
+		const { ids, loads } = lookup({ tags: ["HIRES_LOSSLESS"], loaded: Quality.Max }, { tags: ["HIRES_LOSSLESS"], loaded: Quality.Max });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: ids[0] });
+		expect(loads).toEqual([ids[0]]);
+	});
+
+	test("goes on to the next track when one can't be loaded, and is undefined when none can", async () => {
+		const some = lookup({ tags: ["MQA"], loaded: null }, { tags: [], loaded: Quality.High });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: some.ids[1] });
+
+		lookup({ tags: ["MQA"], loaded: null });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toBeUndefined();
+	});
+});
