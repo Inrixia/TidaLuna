@@ -33,8 +33,16 @@ describe("actions", () => {
 		}
 	});
 
-	test("there is an action for each builder TIDAL had made when actions.ts was imported", () => {
-		expect(Object.keys(actions).sort()).toEqual(Object.keys(buildActions).sort());
+	test("every builder TIDAL had made when actions.ts was imported has an action that dispatches that builder's action", () => {
+		const dispatch = vi.spyOn(reduxStore, "dispatch").mockReturnValue(undefined as never);
+		const names = Object.keys(buildActions);
+		expect(names.length).toBeGreaterThan(0);
+		for (const name of names) {
+			expect(actions).toHaveProperty([name]);
+			(actions as unknown as Record<string, (payload: unknown) => unknown>)[name](1);
+			expect(dispatch).toHaveBeenLastCalledWith(buildActions[name](1));
+		}
+		expect(dispatch).toHaveBeenCalledTimes(names.length);
 	});
 
 	test("a builder TIDAL makes later doesn't become an action", () => {

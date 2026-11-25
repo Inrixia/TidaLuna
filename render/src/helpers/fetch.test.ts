@@ -20,8 +20,8 @@ describe("ftch", () => {
 			vi.fn(async () => new Response(`{"error":"x"}`, { status: 500, statusText: "Server Error" })),
 		);
 		// The body parses fine: only the status makes it a failure
-		await expect(ftch.json("https://x/bad")).rejects.toThrow();
-		await expect(ftch.text("https://x/bad")).rejects.toThrow();
+		await expect(ftch.json("https://x/bad")).rejects.toThrow("500 Server Error");
+		await expect(ftch.text("https://x/bad")).rejects.toThrow("500 Server Error");
 	});
 
 	test("passes its arguments to fetch unchanged", async () => {

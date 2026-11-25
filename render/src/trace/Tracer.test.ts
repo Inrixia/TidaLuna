@@ -24,7 +24,10 @@ describe("Tracer", () => {
 		trace.err("failed", new Error("boom"), { a: 1 }, 2);
 
 		expect(errSignal?._).toBe("failed boom  2");
-		expect(consoleError.mock.calls[0].slice(0, 2)).toEqual(["[plugin]", "failed"]);
+		// Every argument is forwarded to the console, objects included
+		const error = new Error("boom");
+		trace.err("again", error, { a: 1 }, 2);
+		expect(consoleError).toHaveBeenLastCalledWith("[plugin]", "again", error, { a: 1 }, 2);
 	});
 
 	test("withSource extends the source and keeps the same errSignal", () => {
@@ -71,10 +74,9 @@ describe("Tracer", () => {
 		// Messager imports the store before it dispatches
 		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(3));
 		// test/setup-dom.ts seeds the message builders as (payload) => ({ type, payload })
-		// The warn severity "MESSAGE_WARN" (not "WARN", unlike "INFO"/"ERROR") looks like a mistake in Messager.Warn; pinned as it is today
 		expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
 			{ type: "message/MESSAGE_INFO", payload: { message: "[p] info 1", category: "OTHER", severity: "INFO" } },
-			{ type: "message/MESSAGE_WARN", payload: { message: "[p] warn", category: "OTHER", severity: "MESSAGE_WARN" } },
+			{ type: "message/MESSAGE_WARN", payload: { message: "[p] warn", category: "OTHER", severity: "WARN" } },
 			{ type: "message/MESSAGE_ERROR", payload: { message: "[p] bad", category: "OTHER", severity: "ERROR" } },
 		]);
 		expect(console.log).toHaveBeenCalledWith("[p]", "info", 1);
@@ -84,16 +86,16 @@ describe("Tracer", () => {
 		expect(errSignal?._).toBe("bad");
 	});
 
-	test("msg before TIDAL has built its message actions still dispatches, with undefined", async () => {
-		// Surprising: Messager doesn't skip the dispatch when the builder is missing, and a real redux store throws on
-		// `dispatch(undefined)` ("Actions must be plain objects"). Pinned here as it is today.
+	test("msg before TIDAL has built its message actions only logs", async () => {
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		const builder = buildActions["message/MESSAGE_INFO"];
 		delete buildActions["message/MESSAGE_INFO"];
 		try {
 			Tracer("[p]").trace.msg.log("early");
-			await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
-			expect(dispatch).toHaveBeenCalledWith(undefined);
+			// Messager imports the store before it dispatches: give a (wrongly) pending dispatch time to happen
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			// A real redux store rejects dispatch(undefined)
+			expect(dispatch).not.toHaveBeenCalled();
 			expect(console.log).toHaveBeenCalledWith("[p]", "early");
 		} finally {
 			buildActions["message/MESSAGE_INFO"] = builder;
