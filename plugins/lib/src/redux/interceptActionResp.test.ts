@@ -153,4 +153,22 @@ describe("interceptActionResp", () => {
 		expect(interceptors["playbackControls/PAUSE"]).toBeUndefined();
 		expect(Object.keys(interceptors)).toEqual([]);
 	});
+
+	test("takes null for unloads (the doc says it may be): it settles and still leaves nothing behind", async () => {
+		const ok = interceptActionResp(vi.fn(), null, ["playbackControls/PLAY"], ["playbackControls/SEEK"]);
+		await flush();
+		tidalAction("playbackControls/PLAY")(7);
+		await expect(ok).resolves.toBe(7);
+
+		const failed = interceptActionResp(vi.fn(), null, ["playbackControls/PLAY"], ["playbackControls/SEEK"]);
+		const settled = failed.then(
+			() => undefined,
+			(error) => error,
+		);
+		await flush();
+		tidalAction("playbackControls/SEEK")(8);
+		expect(await settled).toBeInstanceOf(InterceptActionRespFail);
+
+		expect(Object.keys(interceptors)).toEqual([]);
+	});
 });

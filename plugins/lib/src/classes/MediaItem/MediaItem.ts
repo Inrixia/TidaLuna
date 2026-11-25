@@ -68,6 +68,10 @@ export class MediaItem extends ContentBase {
 	// Calls for the same item share one lookup. Items that are not in the redux store are loaded through
 	// interceptActionResp, which runs one LOAD_SINGLE_MEDIA_ITEM at a time, so repeated calls (e.g. a tracklist row
 	// that is reported again while scrolling) queued up thousands of loads and kept their callers waiting for minutes.
+	/**
+	 * Resolves undefined when there is no such item: TIDAL answered a failed load (e.g. the content is no longer available),
+	 * or the id is undefined. Rejects when TIDAL did not answer in time, since then it is not known whether the item exists.
+	 */
 	public static fromId: (itemId?: redux.ItemId, contentType?: redux.ContentType) => Promise<MediaItem | undefined> = asyncDebounce(
 		async (itemId?: redux.ItemId, contentType: redux.ContentType = "track") => {
 			if (itemId === undefined) return;
