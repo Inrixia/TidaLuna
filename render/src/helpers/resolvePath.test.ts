@@ -80,4 +80,23 @@ describe("resolveAbsolutePath", () => {
 		expect(resolveAbsolutePath("/dir/a.js", "../b.js")).toBe("/b.js");
 		expect(resolveAbsolutePath("/dir/sub/a.js", "../b.js")).toBe("/dir/b.js");
 	});
+
+	/**
+	 * A base that is not a '/' path (a Windows path, say) makes `new URL` throw: the fallback joins the two by hand.
+	 * The callers pass TIDAL's module paths, so this is the safety net, pinned so a change to it is deliberate.
+	 */
+	test("falls back to joining by hand, and reports it, when the URL constructor throws", () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+
+		expect(resolveAbsolutePath("C:\dir\page.js", "a.js")).toBe("C:\dir\page.js/a.js");
+		expect(resolveAbsolutePath("C:\dir\page.js", "./a.js")).toBe("C:\dir\page.js/a.js");
+		expect(console.error).toHaveBeenCalledTimes(2);
+		expect(console.error).toHaveBeenCalledWith(
+			"[Luna.resolveAbsolutePath] Failed to resolve path:",
+			expect.objectContaining({ basePath: "C:\dir\page.js", relativePath: "a.js", error: expect.any(String) }),
+		);
+
+		// An absolute path needs no base
+		expect(resolveAbsolutePath("C:\dir\page.js", "/x.js")).toBe("/x.js");
+	});
 });
