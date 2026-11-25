@@ -81,7 +81,7 @@ const ZIP_BASE = path.resolve(path.sep, "luna-install");
  *
  * @param sha256 the digest published for this release, when one was
  */
-export const verifyLunaZip = async (zipBuffer: Buffer, { version, sha256 }: { version: string; sha256?: string }): Promise<void> => {
+export const verifyLunaZip = async (zipBuffer: Buffer | Uint8Array, { version, sha256 }: { version: string; sha256?: string }): Promise<void> => {
 	if (sha256 !== undefined && sha256Hex(zipBuffer) !== sha256)
 		throw new Error(`[UPDATER] ${version}: the download does not match its published sha256`);
 	// Zip Slip first: an entry that escapes the install folder is not unpacked at all

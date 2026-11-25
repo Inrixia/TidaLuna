@@ -7,7 +7,7 @@ import path from "path";
 
 import { app } from "electron";
 
-import { validateZipEntries } from "./zipEntries";
+import { extractZip, validateZipEntries } from "./zipEntries";
 
 import type { PackageJson } from "type-fest";
 
@@ -112,16 +112,7 @@ export const update = async (version: string): Promise<string> => {
 	await rm(oldFolder, { recursive: true, force: true });
 	try {
 		await mkdir(newFolder, { recursive: true });
-		for (const [filename, file] of Object.entries(zip.files)) {
-			const destPath = path.join(newFolder, filename);
-			if (file.dir) {
-				await mkdir(destPath, { recursive: true });
-			} else {
-				// Ensure parent directory exists (zip entries aren't always sorted)
-				await mkdir(path.dirname(destPath), { recursive: true });
-				await writeFile(destPath, await file.async("nodebuffer"));
-			}
-		}
+		await extractZip(zip, newFolder);
 	} catch (err) {
 		await rm(newFolder, { recursive: true, force: true }).catch(() => {});
 		throw err;
