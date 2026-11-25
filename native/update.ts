@@ -3,12 +3,11 @@ import { constants } from "fs";
 import { execFile } from "child_process";
 import { randomBytes } from "crypto";
 import { tmpdir } from "os";
-import JSZip from "jszip";
 import path from "path";
 
 import { app } from "electron";
 
-import { isInside } from "./isInside";
+import { validateZipEntries } from "./zipEntries";
 
 import type { PackageJson } from "type-fest";
 
@@ -30,7 +29,6 @@ export const needsElevation = async (): Promise<boolean> => {
 		return true;
 	}
 };
-
 
 const validateAppFolder = (folder: string) => {
 	const resolved = path.resolve(folder);
@@ -57,17 +55,6 @@ const runElevated = (tool: string, args: string[]) =>
 	});
 
 const elevationTools = ["pkexec", "kdesudo"] as const;
-
-const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
-	const zip = await JSZip.loadAsync(zipBuffer);
-	for (const filename of Object.keys(zip.files)) {
-		const destPath = path.join(destFolder, filename);
-		if (!isInside(destFolder, destPath)) {
-			throw new Error(`[UPDATER] Zip Slip blocked: unsafe entry "${filename}"`);
-		}
-	}
-	return zip;
-};
 
 const elevatedUpdate = async (zipBuffer: Buffer) => {
 	validateAppFolder(appFolder);
@@ -161,4 +148,3 @@ export const runElevatedInstall = async (): Promise<void> => {
 		pendingZipBuffer = null;
 	}
 };
-
