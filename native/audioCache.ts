@@ -256,7 +256,14 @@ const ready = electron.app
 				} catch {}
 			}),
 		);
-		await Promise.all([...names].filter((name) => !kept.has(name)).map((name) => rm(fileOf(name), { force: true })));
+		// Nothing else is kept. A folder is removed with its contents: a name that held a path separator used to make
+		// one (an artist like AC/DC), and it must not abort the scan below, which would leave every track in the folder
+		// unplayable until it was deleted by hand. `fileOf` only ever builds a path inside `dir`, from a `readdir` name
+		await Promise.all(
+			[...names]
+				.filter((name) => !kept.has(name))
+				.map((name) => rm(fileOf(name), { recursive: true, force: true }).catch((err) => console.error(`[Luna.native] [AudioCache] Failed to remove ${name}`, err))),
+		);
 		await prune();
 	})
 	.catch((err) => console.error("[Luna.native] [AudioCache] Failed to read the cache folder", err));
