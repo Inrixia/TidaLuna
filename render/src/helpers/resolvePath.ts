@@ -18,7 +18,7 @@ export const resolveAbsolutePath = (basePath: string, relativePath: string): str
 		const baseDirectory = basePath.replace(/\/[^/]*$/, "/");
 		
 		// Validate that baseDirectory is a valid path-like string
-		if (!baseDirectory || baseDirectory === "/") {
+		if (!baseDirectory) {
 			console.warn("[Luna.resolveAbsolutePath] Invalid baseDirectory:", baseDirectory);
 			return relativePath;
 		}

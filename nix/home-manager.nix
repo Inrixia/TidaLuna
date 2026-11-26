@@ -9,6 +9,7 @@ let
   cfg = config.programs.tidaluna;
   pkgs = config._module.args.pkgs;
   isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
+  signApp = import ./darwin-sign.nix;
 
   # Normalize store URLs: strip trailing /store.json since TidaLuna adds it back
   normalizeStoreUrl =
@@ -55,6 +56,8 @@ let
         cp -r ${cfg.package} $out
         chmod -R u+w $out
         cp ${seedSettingsFile} $out/Applications/TIDAL.app/Contents/Resources/app/luna-settings.json
+        # Writing luna-settings.json breaks the signature, sign the bundle again
+        ${signApp "$out/Applications/TIDAL.app"}
       ''
     else
       pkgs.runCommand "tidaluna-linux-patched" { } ''
