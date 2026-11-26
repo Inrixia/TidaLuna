@@ -9,7 +9,7 @@ import path from "path";
 import { app } from "electron";
 
 import { DIGEST_MISMATCH_EXIT, SYMLINK_EXIT, elevatedInstallScript } from "./core/elevatedInstallScript";
-import { symlinkEntries } from "./core/zipSymlinks";
+import { setidEntries, symlinkEntries } from "./core/zipSymlinks";
 import { isInside } from "./isInside";
 
 import type { PackageJson } from "type-fest";
@@ -72,6 +72,8 @@ const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
 	}
 	const links = symlinkEntries(zip);
 	if (links.length > 0) throw new Error(`[UPDATER] Symlink blocked: "${links[0]}"`);
+	const setid = setidEntries(zip);
+	if (setid.length > 0) throw new Error(`[UPDATER] setuid/setgid blocked: "${setid[0]}"`);
 	return zip;
 };
 
