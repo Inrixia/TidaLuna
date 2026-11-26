@@ -6,7 +6,7 @@ import { join } from "path";
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DIGEST_MISMATCH_EXIT, elevatedInstallScript } from "./elevatedInstallScript";
+import { DIGEST_MISMATCH_EXIT, SYMLINK_EXIT, elevatedInstallScript } from "./elevatedInstallScript";
 
 const hasTools = ["sh", "unzip", "sha256sum", "mktemp"].every((t) => spawnSync(t, ["--version"]).error === undefined || t === "sh");
 
@@ -40,6 +40,18 @@ describe.skipIf(!hasTools)("elevatedInstallScript", () => {
 		const res = run(join(dir, "u.zip"), sha256(good));
 		expect(res.status).toBe(DIGEST_MISMATCH_EXIT);
 		expect(res.stderr).toMatch(/does not match the confirmed download/);
+		expect(await readdir(app)).toEqual(["old.txt"]);
+		expect(await readdir(dir)).not.toContain("app.new");
+	});
+
+	// Info-ZIP unzip on Windows (Git for Windows) does not create links, so this only means something on Linux
+	it.skipIf(process.platform === "win32")("refuses a zip with a symlink, a real release or not, and leaves the install as it was", async () => {
+		const zip = new JSZip().file("a.txt", "new").file("link", "/etc", { unixPermissions: 0o120777 });
+		const bytes = Buffer.from(await zip.generateAsync({ type: "uint8array", platform: "UNIX" }));
+		await writeFile(join(dir, "u.zip"), bytes);
+		const res = run(join(dir, "u.zip"), sha256(bytes));
+		expect(res.status).toBe(SYMLINK_EXIT);
+		expect(res.stderr).toMatch(/contains a symlink/);
 		expect(await readdir(app)).toEqual(["old.txt"]);
 		expect(await readdir(dir)).not.toContain("app.new");
 	});

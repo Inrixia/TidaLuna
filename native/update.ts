@@ -8,7 +8,8 @@ import path from "path";
 
 import { app } from "electron";
 
-import { DIGEST_MISMATCH_EXIT, elevatedInstallScript } from "./core/elevatedInstallScript";
+import { DIGEST_MISMATCH_EXIT, SYMLINK_EXIT, elevatedInstallScript } from "./core/elevatedInstallScript";
+import { symlinkEntries } from "./core/zipSymlinks";
 import { isInside } from "./isInside";
 
 import type { PackageJson } from "type-fest";
@@ -53,6 +54,7 @@ const runElevated = (tool: string, args: string[]) =>
 			if (code === 0) return resolve();
 			if (code === 126) return reject(new Error("ELEVATION_CANCELLED"));
 			if (code === DIGEST_MISMATCH_EXIT) return reject(new Error("UPDATE_DIGEST_MISMATCH"));
+			if (code === SYMLINK_EXIT) return reject(new Error("UPDATE_CONTAINS_SYMLINK"));
 			reject(new Error(`${tool} exited with code ${code}`));
 		});
 		child.on("error", reject);
@@ -68,6 +70,8 @@ const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
 			throw new Error(`[UPDATER] Zip Slip blocked: unsafe entry "${filename}"`);
 		}
 	}
+	const links = symlinkEntries(zip);
+	if (links.length > 0) throw new Error(`[UPDATER] Symlink blocked: "${links[0]}"`);
 	return zip;
 };
 
@@ -106,6 +110,8 @@ let pendingZipBuffer: Buffer | null = null;
 export const update = async (version: string): Promise<string> => {
 	// Callable from the renderer: a version with "/" or ".." would point the download at another repo
 	if (!/^[\w.-]+$/.test(version) || version.includes("..")) throw new Error(`[UPDATER] Invalid version "${version}"`);
+	// Runs only once the user confirmed this version. It replaces what an earlier confirmed update left for runElevatedInstall
+	pendingZipBuffer = null;
 	const zipUrl = `https://github.com/Inrixia/TidaLuna/releases/download/${version}/luna.zip`;
 	const res = await fetch(zipUrl);
 	if (!res.ok) throw new Error(`Failed to download ${zipUrl}\n${res.statusText}`);
