@@ -59,7 +59,7 @@ export const coreNativeQuestion = (
 			return [
 				"Start native debugging?",
 				[
-					"Opens a Node inspector on TIDAL's main process, on this computer only (127.0.0.1, usually port 9229).",
+					"Opens a Node inspector on TIDAL's main process, usually on this computer only (127.0.0.1:9229).",
 					"It stays open until TIDAL is restarted. Any program on this computer can use it to run code in TIDAL.",
 				],
 				"Start",

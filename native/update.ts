@@ -8,6 +8,7 @@ import path from "path";
 
 import { app } from "electron";
 
+import { DIGEST_MISMATCH_EXIT, elevatedInstallScript } from "./core/elevatedInstallScript";
 import { isInside } from "./isInside";
 
 import type { PackageJson } from "type-fest";
@@ -51,6 +52,7 @@ const runElevated = (tool: string, args: string[]) =>
 		child.on("close", (code) => {
 			if (code === 0) return resolve();
 			if (code === 126) return reject(new Error("ELEVATION_CANCELLED"));
+			if (code === DIGEST_MISMATCH_EXIT) return reject(new Error("UPDATE_DIGEST_MISMATCH"));
 			reject(new Error(`${tool} exited with code ${code}`));
 		});
 		child.on("error", reject);
@@ -75,14 +77,8 @@ const elevatedUpdate = async (zipBuffer: Buffer) => {
 	const tmpZip = path.join(tmpdir(), `luna-update-${randomBytes(16).toString("hex")}.zip`);
 	try {
 		await writeFile(tmpZip, zipBuffer);
-		// Use positional parameters to avoid shell injection — $1 and $2 are never interpreted as shell code
-		// Unzip next to the app folder first, so a failed unzip leaves the current install untouched
-		// The zip in tmpdir belongs to the user, so any program of theirs could swap it before the elevated shell reads it. The
-		// shell copies it to a root-owned directory first, checks the copy against the digest of the confirmed download ($3)
-		// and unzips only that copy
-		const shScript =
-			'd=$(mktemp -d) && trap \'rm -rf -- "$d"\' EXIT && cp -- "$2" "$d/u.zip" && echo "$3  $d/u.zip" | sha256sum -c - >/dev/null' +
-			' && rm -rf -- "$1.new" && mkdir -p -- "$1.new" && unzip -o "$d/u.zip" -d "$1.new" && rm -rf -- "$1" && mv -- "$1.new" "$1"';
+		// Use positional parameters to avoid shell injection — $1, $2 and $3 are never interpreted as shell code
+		const shScript = elevatedInstallScript;
 		const digest = createHash("sha256").update(zipBuffer).digest("hex");
 		const shellEscape = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
