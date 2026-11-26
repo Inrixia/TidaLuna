@@ -23,7 +23,11 @@ describe("core native rules", () => {
 		const [title, lines, confirmText] = coreNativeQuestion("startNativeDebugging", []);
 		expect(title).toBe("Start native debugging?");
 		expect(lines.join(" ")).toMatch(/Node inspector on TIDAL's main process/);
-		expect(lines.join(" ")).toMatch(/Any program on this computer can then run code in TIDAL/);
+		// The consequence has its own line, and says it does not close again
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toMatch(/127\.0\.0\.1/);
+		expect(lines[1]).toMatch(/stays open until TIDAL is restarted/);
+		expect(lines[1]).toMatch(/Any program on this computer can use it to run code in TIDAL/);
 		expect(confirmText).toBe("Start");
 	});
 
