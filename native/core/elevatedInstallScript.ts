@@ -15,5 +15,6 @@ export const elevatedInstallScript =
 	'd=$(mktemp -d) && trap \'rm -rf -- "$d"\' EXIT && cp -- "$2" "$d/u.zip" && ' +
 	`{ echo "$3  $d/u.zip" | sha256sum -c - >/dev/null 2>&1 || { echo "Update zip does not match the confirmed download" >&2; exit ${DIGEST_MISMATCH_EXIT}; }; } && ` +
 	'rm -rf -- "$1.new" && mkdir -p -- "$1.new" && unzip -o "$d/u.zip" -d "$1.new" && ' +
-	`{ [ -z "$(find "$1.new" -type l)" ] || { rm -rf -- "$1.new"; echo "Update zip contains a symlink" >&2; exit ${SYMLINK_EXIT}; }; } && ` +
+	// A find that fails counts as a link found: an empty answer from a broken find must not pass
+	`{ { l=$(find "$1.new" -type l) && [ -z "$l" ]; } || { rm -rf -- "$1.new"; echo "Update zip contains a symlink" >&2; exit ${SYMLINK_EXIT}; }; } && ` +
 	'rm -rf -- "$1" && mv -- "$1.new" "$1"';
