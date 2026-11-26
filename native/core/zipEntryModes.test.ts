@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import { setidEntries, symlinkEntries } from "./zipSymlinks";
+import { setidEntries, symlinkEntries } from "./zipEntryModes";
 
 /** A zip as `zip` on Linux stores it: UNIX entries with their mode, a symlink holding its target as the content */
 const zipWith = async (entries: Record<string, { data: string; mode: number }>) => {
@@ -42,5 +42,17 @@ describe("setidEntries", () => {
 		expect(setidEntries(plain)).toEqual([]);
 		const dos = await JSZip.loadAsync(Buffer.from(await new JSZip().file("a.txt", "a").generateAsync({ type: "uint8array", platform: "DOS" })));
 		expect(setidEntries(dos)).toEqual([]);
+	});
+});
+
+describe("setidEntries and folders", () => {
+	it("ignores a folder stored with the setgid bit", async () => {
+		const zip = new JSZip();
+		zip.file("plugins/a.txt", "a", { unixPermissions: 0o100644 });
+		zip.folder("plugins")!.file("b.txt", "b", { unixPermissions: 0o100644 });
+		zip.file("plugins/", "", { dir: true, unixPermissions: 0o042775 });
+		const loaded = await JSZip.loadAsync(Buffer.from(await zip.generateAsync({ type: "uint8array", platform: "UNIX" })));
+		expect(loaded.files["plugins/"].dir).toBe(true);
+		expect(setidEntries(loaded)).toEqual([]);
 	});
 });
