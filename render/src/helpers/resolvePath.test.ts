@@ -82,22 +82,41 @@ describe("resolveAbsolutePath", () => {
 	});
 
 	/**
-	 * A base that is not a '/' path (a Windows path, say) makes `new URL` throw, and the fallback joins by hand. The callers
-	 * pass TIDAL's module paths, so it is a safety net: what is pinned is that it answers instead of throwing, and says so.
-	 * The joined text itself (it keeps the base's file name) is not pinned.
+	 * A base that is not a '/' path (a Windows path, say) makes `new URL` throw, since `C:` parses as a URL scheme and the
+	 * base is then opaque. The fallback joins by hand. The callers pass TIDAL module paths, so it is a safety net: what is
+	 * pinned is that it answers and says so, not the joined text.
 	 */
 	test("answers through the fallback, and reports it, when the URL constructor throws", () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
+		// String.raw: in a plain string literal `\d` and `\p` are not escapes and the backslashes would be gone
+		const windowsBase = String.raw`C:\dir\page.js`;
+		expect(windowsBase).toContain("\\");
 
-		expect(resolveAbsolutePath("C:\dir\page.js", "a.js")).toContain("a.js");
-		expect(resolveAbsolutePath("C:\dir\page.js", "./a.js")).not.toContain("./");
+		expect(typeof resolveAbsolutePath(windowsBase, "a.js")).toBe("string");
+		expect(typeof resolveAbsolutePath(windowsBase, "./a.js")).toBe("string");
 		expect(console.error).toHaveBeenCalledTimes(2);
 		expect(console.error).toHaveBeenCalledWith(
 			"[Luna.resolveAbsolutePath] Failed to resolve path:",
-			expect.objectContaining({ basePath: "C:\dir\page.js", relativePath: "a.js", error: expect.any(String) }),
+			expect.objectContaining({ basePath: windowsBase, relativePath: "a.js", error: expect.any(String) }),
 		);
+	});
 
-		// An absolute path needs no base
-		expect(resolveAbsolutePath("C:\dir\page.js", "/x.js")).toBe("/x.js");
+	// `new URL` throws on the base first, then the fallback's `startsWith("/")` arm returns the path: it doesn't skip the base
+	test("an absolute path with a base that throws is returned by the fallback", () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+
+		expect(resolveAbsolutePath(String.raw`C:\dir\page.js`, "/x.js")).toBe("/x.js");
+		expect(console.error).toHaveBeenCalledTimes(1);
+	});
+
+	/**
+	 * The result is a URL path, not a file system path. These are pinned as they behave today so a change is deliberate:
+	 * a full URL or a `//host` path loses its host, and percent-encoding follows the URL rules.
+	 */
+	test("a full url or a path with a host loses the host, and the result is url-encoded", () => {
+		expect(resolveAbsolutePath("/dir/page.js", "https://other.example/x.js")).toBe("/x.js");
+		expect(resolveAbsolutePath("/dir/page.js", "//host/x.js")).toBe("/x.js");
+		expect(resolveAbsolutePath("/dir/page.js", "a b.js")).toBe("/dir/a%20b.js");
+		expect(resolveAbsolutePath("/dir/page.js", "a%2Fb.js")).toBe("/dir/a%2Fb.js");
 	});
 });
