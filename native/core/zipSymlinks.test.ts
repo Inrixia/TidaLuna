@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import { symlinkEntries } from "./zipSymlinks";
+import { setidEntries, symlinkEntries } from "./zipSymlinks";
 
 /** A zip as `zip` on Linux stores it: UNIX entries with their mode, a symlink holding its target as the content */
 const zipWith = async (entries: Record<string, { data: string; mode: number }>) => {
@@ -26,5 +26,21 @@ describe("symlinkEntries", () => {
 	it("finds none when the zip carries no modes (made on Windows)", async () => {
 		const zip = await JSZip.loadAsync(Buffer.from(await new JSZip().file("a.txt", "a").generateAsync({ type: "uint8array", platform: "DOS" })));
 		expect(symlinkEntries(zip)).toEqual([]);
+	});
+});
+
+describe("setidEntries", () => {
+	it("names the entries with a setuid or setgid bit", async () => {
+		const zip = await JSZip.loadAsync(
+			await zipWith({ "a.txt": { data: "a", mode: 0o100644 }, "suid": { data: "x", mode: 0o104755 }, "sgid": { data: "x", mode: 0o102755 } }),
+		);
+		expect(setidEntries(zip)).toEqual(["suid", "sgid"]);
+	});
+
+	it("finds none in plain files, executables included, or in a zip with no modes", async () => {
+		const plain = await JSZip.loadAsync(await zipWith({ "a.txt": { data: "a", mode: 0o100644 }, "bin/run": { data: "x", mode: 0o100755 } }));
+		expect(setidEntries(plain)).toEqual([]);
+		const dos = await JSZip.loadAsync(Buffer.from(await new JSZip().file("a.txt", "a").generateAsync({ type: "uint8array", platform: "DOS" })));
+		expect(setidEntries(dos)).toEqual([]);
 	});
 });
