@@ -3,14 +3,12 @@ import { constants } from "fs";
 import { execFile } from "child_process";
 import { createHash, randomBytes } from "crypto";
 import { tmpdir } from "os";
-import JSZip from "jszip";
 import path from "path";
 
 import { app } from "electron";
 
 import { DIGEST_MISMATCH_EXIT, SYMLINK_EXIT, elevatedInstallScript } from "./core/elevatedInstallScript";
-import { setidEntries, symlinkEntries } from "./core/zipSymlinks";
-import { isInside } from "./isInside";
+import { validateZipEntries } from "./core/validateZipEntries";
 
 import type { PackageJson } from "type-fest";
 
@@ -61,21 +59,6 @@ const runElevated = (tool: string, args: string[]) =>
 	});
 
 const elevationTools = ["pkexec", "kdesudo"] as const;
-
-const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
-	const zip = await JSZip.loadAsync(zipBuffer);
-	for (const filename of Object.keys(zip.files)) {
-		const destPath = path.join(destFolder, filename);
-		if (!isInside(destFolder, destPath)) {
-			throw new Error(`[UPDATER] Zip Slip blocked: unsafe entry "${filename}"`);
-		}
-	}
-	const links = symlinkEntries(zip);
-	if (links.length > 0) throw new Error(`[UPDATER] Symlink blocked: "${links[0]}"`);
-	const setid = setidEntries(zip);
-	if (setid.length > 0) throw new Error(`[UPDATER] setuid/setgid blocked: "${setid[0]}"`);
-	return zip;
-};
 
 const elevatedUpdate = async (zipBuffer: Buffer) => {
 	validateAppFolder(appFolder);
