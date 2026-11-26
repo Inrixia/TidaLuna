@@ -118,7 +118,10 @@ export const coreNativeQuestion = (
 		case "startNativeDebugging":
 			return [
 				"Start native debugging?",
-				["Opens a Node inspector on TIDAL's main process. Any program on this computer can then run code in TIDAL."],
+				[
+					"Opens a Node inspector on TIDAL's main process, usually on this computer only (127.0.0.1:9229).",
+					"It stays open until TIDAL is restarted. Any program on this computer can use it to run code in TIDAL.",
+				],
 				"Start",
 			];
 		default:
