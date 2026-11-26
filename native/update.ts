@@ -1,7 +1,7 @@
 import { access, mkdir, rename, rm, unlink, writeFile } from "fs/promises";
 import { constants } from "fs";
 import { execFile } from "child_process";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { tmpdir } from "os";
 import JSZip from "jszip";
 import path from "path";
@@ -77,15 +77,21 @@ const elevatedUpdate = async (zipBuffer: Buffer) => {
 		await writeFile(tmpZip, zipBuffer);
 		// Use positional parameters to avoid shell injection — $1 and $2 are never interpreted as shell code
 		// Unzip next to the app folder first, so a failed unzip leaves the current install untouched
-		const shScript = 'rm -rf -- "$1.new" && mkdir -p -- "$1.new" && unzip -o "$2" -d "$1.new" && rm -rf -- "$1" && mv -- "$1.new" "$1"';
+		// The zip in tmpdir belongs to the user, so any program of theirs could swap it before the elevated shell reads it. The
+		// shell copies it to a root-owned directory first, checks the copy against the digest of the confirmed download ($3)
+		// and unzips only that copy
+		const shScript =
+			'd=$(mktemp -d) && trap \'rm -rf -- "$d"\' EXIT && cp -- "$2" "$d/u.zip" && echo "$3  $d/u.zip" | sha256sum -c - >/dev/null' +
+			' && rm -rf -- "$1.new" && mkdir -p -- "$1.new" && unzip -o "$d/u.zip" -d "$1.new" && rm -rf -- "$1" && mv -- "$1.new" "$1"';
+		const digest = createHash("sha256").update(zipBuffer).digest("hex");
 		const shellEscape = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 		for (const tool of elevationTools) {
 			try {
 				const args =
 					tool === "kdesudo"
-						? ["-c", `sh -c ${shellEscape(shScript)} _ ${shellEscape(appFolder)} ${shellEscape(tmpZip)}`]
-						: ["sh", "-c", shScript, "_", appFolder, tmpZip];
+						? ["-c", `sh -c ${shellEscape(shScript)} _ ${shellEscape(appFolder)} ${shellEscape(tmpZip)} ${shellEscape(digest)}`]
+						: ["sh", "-c", shScript, "_", appFolder, tmpZip, digest];
 				await runElevated(tool, args);
 				return;
 			} catch (err: any) {
