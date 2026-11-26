@@ -1,61 +1,33 @@
-import { ftch } from "@luna/core";
+import { Tracer } from "@luna/core";
 import React from "react";
-import { LunaSettings } from "../../components";
-import { UserList } from "./UserList";
+import { LunaLink, LunaSettings } from "../../components";
+import { loadStarCount, STARGAZERS_PAGE } from "./stargazers";
 
-type Stargazer = {
-	login: string;
-	avatar_url: string;
-	html_url: string;
-};
+const { trace } = Tracer("[@luna/ui]", null);
 
 export const GitHubStars = React.memo(() => {
-	const [stars, setStars] = React.useState<Stargazer[]>([]);
+	const [count, setCount] = React.useState<number>();
 	const [loading, setLoading] = React.useState(true);
-	const [page, setPage] = React.useState(1);
-	const [hasMore, setHasMore] = React.useState(true);
-	const loaderRef = React.useRef<HTMLDivElement | null>(null);
 
 	React.useEffect(() => {
-		const fetchStars = async () => {
-			setLoading(true);
-			const data = await ftch.json<{ user: Stargazer }[]>(`https://api.github.com/repos/Inrixia/TidaLuna/stargazers?per_page=100&page=${page}`, {
-				headers: {
-					Accept: "application/vnd.github.v3.star+json",
-				},
-			});
-			setStars((prev) => [...prev, ...data.map(({ user }) => user)]);
-			setHasMore(data.length === 100);
+		// loadStarCount never rejects, so a failed request can't leave this stuck on "Loading" the way an uncaught
+		// rejection did when the stargazer list endpoint started answering 401
+		loadStarCount().then((stars) => {
+			if (stars === undefined) trace.warn("Could not load the TidaLuna star count");
+			setCount(stars);
 			setLoading(false);
-		};
-		if (hasMore) fetchStars();
-	}, [page]);
-
-	React.useEffect(() => {
-		if (!hasMore || loading) return;
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0].isIntersecting) {
-					setPage((p) => p + 1);
-				}
-			},
-			{ threshold: 1 },
-		);
-		if (loaderRef.current) observer.observe(loaderRef.current);
-		return () => observer.disconnect();
-	}, [hasMore, loading]);
+		});
+	}, []);
 
 	return (
-		<LunaSettings title="Stargazers ⭐">
-			<UserList
-				users={stars.map(({ login, avatar_url, html_url }) => ({
-					login,
-					avatarUrl: avatar_url,
-					url: html_url,
-				}))}
-			/>
-			<div ref={loaderRef} />
-			{loading && <div>Loading stargazers…</div>}
+		<LunaSettings title={(<LunaLink href={STARGAZERS_PAGE} children="Stargazers ⭐" />) as any}>
+			{loading ? (
+				<div>Loading stargazers…</div>
+			) : count === undefined ? (
+				<div>Could not load the star count.</div>
+			) : (
+				<div>{count.toLocaleString()} people starred TidaLuna on GitHub.</div>
+			)}
 		</LunaSettings>
 	);
 });
