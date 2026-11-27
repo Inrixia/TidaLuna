@@ -152,8 +152,12 @@ describe("LunaTheme.loadFromStore", () => {
 });
 
 describe("LunaTheme.install", () => {
+	/** Install the way the install box does it: the caller keeps the record, and only when install returned */
 	const install = (url: string, themes: Record<string, ThemeData> = {}, askConsent?: () => Promise<boolean>) =>
-		LunaTheme.install(url, themes, unloads, askConsent === undefined ? undefined : async () => askConsent());
+		LunaTheme.install(url, unloads, askConsent === undefined ? undefined : async () => askConsent()).then((theme) => {
+			themes[theme.url] = theme.data;
+			return theme;
+		});
 
 	test("stores, applies and registers the theme", async () => {
 		stubFetch(() => reply("body{color:red}"));

@@ -53,7 +53,9 @@ export const InstallFromUrl = React.memo(() => {
 				if (addToStores(url) === false) return setErr("Store already added");
 				successMessage = `Added store ${url}!`;
 			} else if (url.endsWith(".css")) {
-				const theme = await LunaTheme.install(url, themes, unloads, confirmThemeConsent);
+				const theme = await LunaTheme.install(url, unloads, confirmThemeConsent);
+				// Stored only once the theme exists, so a refused install leaves nothing behind
+				themes[theme.url] = theme.data;
 				successMessage = `Added theme ${theme.manifest.name}!`;
 			} else {
 				const plugin = await LunaPlugin.fromStorage({ url });

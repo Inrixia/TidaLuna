@@ -204,7 +204,7 @@ export class LunaTheme extends StyleTag {
 	 * loaded twice, and the tab showed two rows for one file. Comparing content catches that whatever the url, including a
 	 * fork serving the same file.
 	 */
-	static async install(rawUrl: string, store: Record<string, ThemeData>, unloads: LunaUnloads, askConsent?: ThemeConsentFn): Promise<LunaTheme> {
+	static async install(rawUrl: string, unloads: LunaUnloads, askConsent?: ThemeConsentFn): Promise<LunaTheme> {
 		const trimmed = rawUrl.trim();
 		if (trimmed === "") throw new Error("That theme url is empty");
 		const url = validateUrl(themeUrlOf(trimmed));
@@ -229,10 +229,9 @@ export class LunaTheme extends StyleTag {
 			if (!(await askConsent(consent))) throw new Error("Theme was not installed");
 		}
 
-		// Accepted: the record is written only once the theme exists, so a refusal cannot leave a stored entry behind
-		const data: ThemeData = { enabled: true, css };
-		const theme = LunaTheme.from(url, data, unloads);
-		store[url] = data;
+		// Accepted. The caller stores `theme.data` once this returns, so a refusal never leaves an entry behind and this class
+		// never has to know where themes are kept
+		const theme = LunaTheme.from(url, { enabled: true, css }, unloads);
 
 		// What the theme loads and whether it is what it claims: one bad file is not a reason to throw away a theme that
 		// otherwise works, so it is reported on the row rather than refused

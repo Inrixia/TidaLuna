@@ -138,8 +138,11 @@ export class ThemeManifest {
 		const css = this.css;
 		if (css === undefined) return (this.kindOfCss = "Theme");
 		if (/@font-face/i.test(css)) return (this.kindOfCss = "Fonts");
-		// A colorway is a palette: variables dominate and there are barely any rules
-		return (this.kindOfCss = (css.match(/\{/g) ?? []).length <= 40 ? "Colorway" : "Base");
+		// A colorway is a palette: variables dominate and there are barely any rules. Counted rather than matched into an
+		// array, since a layout rework is a few hundred KB of css and the count is all this needs
+		let blocks = 0;
+		for (let at = css.indexOf("{"); at !== -1; at = css.indexOf("{", at + 1)) blocks++;
+		return (this.kindOfCss = blocks <= 40 ? "Colorway" : "Base");
 	}
 
 	/**

@@ -38,14 +38,16 @@ export const themeConsent = (resources: ThemeResources, name: string): ThemeCons
 	const remote = resources.remote;
 	if (remote.length === 0) return { required: false, title: "", description: "", hosts: [], confirmationText: "" };
 
-	const fonts = remote.filter((resource) => resource.kind === "font").length;
-	const images = remote.filter((resource) => resource.kind === "image").length;
-	const imported = remote.filter((resource) => resource.imported).length;
-
-	// Group by host: where a file comes from is the thing being agreed to, and the files are what it is. Kept in the order
-	// the css names them, so the prompt reads in the order the theme was written
+	// Group by host, counting what each file is on the way: where a file comes from is the thing being agreed to, and the
+	// files are what it is. Kept in the order the css names them, so the prompt reads in the order the theme was written
 	const byHost = new Map<string, string[]>();
+	let fonts = 0;
+	let images = 0;
+	let imported = 0;
 	for (const resource of remote) {
+		if (resource.kind === "font") fonts++;
+		else if (resource.kind === "image") images++;
+		if (resource.imported) imported++;
 		const url = resource.absolute!;
 		const host = new URL(url).hostname;
 		const urls = byHost.get(host);
