@@ -402,6 +402,15 @@ describe("install / uninstall", () => {
 		expect(persisted?.package?.hash).toBe("hash-1");
 	});
 
+	test("a package with nested objects persists", async () => {
+		const author = { name: "Someone", url: "https://example.com" };
+		const { plugin } = await createPlugin("nestedP", { installed: false, enabled: false, package: { author, dependencies: { a: "1" } } });
+		await plugin.install();
+		await settle();
+		const persisted = await LunaPlugin.pluginStorage.get<LunaPluginStorage>("nestedP");
+		expect(persisted?.package?.author).toStrictEqual(author);
+	});
+
 	test("installing another version of a plugin uninstalls the one that was installed", async () => {
 		const switchedFrom = await createPlugin("switch");
 		const switchedTo = await createPlugin("switch", { installed: false, enabled: false });

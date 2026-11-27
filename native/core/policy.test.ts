@@ -65,6 +65,22 @@ describe("core native rules", () => {
 		expect(confirmText).toBe("Update");
 	});
 
+	it("says what the native debugger opens, in plain words", () => {
+		const [title, lines, confirmText] = coreNativeQuestion("startNativeDebugging", []);
+		expect(title).toBe("Start native debugging?");
+		expect(lines.join(" ")).toMatch(/Node inspector on TIDAL's main process/);
+		// The consequence has its own line, and says it does not close again
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toMatch(/127\.0\.0\.1/);
+		expect(lines[1]).toMatch(/stays open until TIDAL is restarted/);
+		expect(lines[1]).toMatch(/Any program on this computer can use it to run code in TIDAL/);
+		expect(confirmText).toBe("Start");
+	});
+
+	it("asks about a name it has no text for by that name, never with the page's words", () => {
+		expect(coreNativeQuestion("somethingElse", ["x"])).toEqual(["Run somethingElse?", [], "Run"]);
+	});
+
 	it("shows the installed version and warns about a downgrade", () => {
 		const [, newer] = coreNativeQuestion("update", ["1.26.0"], "1.25.0-beta");
 		expect(newer.join(" ")).toMatch(/1\.25\.0-beta -> 1\.26\.0/);

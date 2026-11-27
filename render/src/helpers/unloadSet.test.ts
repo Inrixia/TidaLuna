@@ -27,7 +27,7 @@ const withSource = (unload: () => unknown, source: string): LunaUnload => Object
 
 describe("unloadSet", () => {
 	beforeEach(() => {
-		// Every unload races a 5s timeout; fake timers keep the test fast and drop the leftover timers
+		// Every unload races a 5s timeout; fake timers keep the test fast and let the tests count live timers
 		vi.useFakeTimers();
 		reported.length = 0;
 	});
@@ -155,5 +155,49 @@ describe("unloadSet", () => {
 		expect(order).toEqual(["sync", "async"]);
 		expect(unloads.size).toBe(0);
 		expect(reported).toEqual([]);
+	});
+
+	test("leaves no timer running once the unloads are done, whether they succeed, throw or reject", async () => {
+		const unloads = new Set<LunaUnload>([
+			() => {},
+			async () => {},
+			() => {
+				throw new Error("sync boom");
+			},
+			async () => {
+				throw new Error("async boom");
+			},
+		]);
+
+		await unloadSet(unloads);
+
+		expect(reported).toHaveLength(2);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	test("clears the timer of a quick unload while a slow one is still running", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const unloads = new Set<LunaUnload>([() => {}, () => gate]);
+
+		const done = unloadSet(unloads);
+		await vi.advanceTimersByTimeAsync(0);
+		// only the slow unload's timeout is left
+		expect(vi.getTimerCount()).toBe(1);
+
+		release();
+		await done;
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	test("leaves no timer running after an unload times out", async () => {
+		const unloads = new Set<LunaUnload>([() => new Promise<void>(() => {})]);
+		const done = unloadSet(unloads);
+
+		await vi.advanceTimersByTimeAsync(5000);
+		await done;
+
+		expect(reported).toHaveLength(1);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 });
