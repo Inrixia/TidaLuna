@@ -4,7 +4,7 @@ import Box from "@mui/material/Box";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
-import { debounce } from "@inrixia/helpers";
+import { debounce, Signal } from "@inrixia/helpers";
 import { ftch, LunaPlugin, ReactiveStore } from "@luna/core";
 import { StyleTag } from "@luna/lib";
 
@@ -25,6 +25,15 @@ import { describeResources, parseThemeResources, resourceProblem, stylesheetProb
 import type { ThemeConsent } from "./ThemesTab/themeResources";
 import { addToStores } from "./PluginStoreTab";
 import { confirm } from "../helpers/confirm";
+
+/**
+ * What the last startup changed, kept after the toast is gone.
+ *
+ * TIDAL's toasts last about four seconds and there is no duration in the payload to lengthen, so a toast alone loses the
+ * information: by the time the app has finished loading and you look at it, it is already dismissing. The tab shows this
+ * instead, until it is dismissed.
+ */
+export const startupNotice = new Signal<string | undefined>(undefined);
 
 const lunaStorage = ReactiveStore.getStore("@luna/storage");
 
@@ -176,7 +185,12 @@ revalidateThemes(themes, themeStyles, {
 		// screen to explain why. The names come from the url, since the css has not been parsed into a manifest yet.
 		// The name the row would show: the manifest's, when the css has one, since that is what the user sees in the tab
 		const message = startupUpdateMessage(summary, (url) => themeDisplay(url, parseThemeManifest(themes[url]?.css)).name);
-		if (message !== undefined) Messager.Info(message);
+		if (message !== undefined) {
+			startupNotice._ = message;
+			// Wait for TIDAL's own shell: shown during startup the toast is gone in four seconds, before the app is even
+			// usable, so nobody sees it. Once the shell is up it lands on the page the user is actually looking at.
+			void whenAppReady().then(() => Messager.Info(message));
+		}
 		if (summary.failed.length > 0) console.error(`[Themes] ${summary.failed.length} theme(s) could not be checked at startup`);
 	})
 	.catch((e) => console.error("[Themes] Startup theme refresh failed", e));
@@ -315,3 +329,26 @@ export const InstallFromUrl = React.memo(() => {
 		/>
 	);
 });
+
+/**
+ * Resolve once TIDAL has painted its own interface, or after a cap.
+ *
+ * The cap matters: if the shell never appears (a failed load, an update) the toast should still be shown rather than
+ * being swallowed by a promise that never settles.
+ */
+export const whenAppReady = (maxMs = 8000): Promise<void> =>
+	new Promise((resolve) => {
+		const started = Date.now();
+		const check = () => {
+			// TIDAL's shell is the sidebar plus real page content. The sidebar alone appears while the page is still a
+			// blank outline, and a toast shown then lands on an empty window and is gone before the content paints.
+			const hasShell = document.querySelector('nav, [class*="sidebar"]') !== null;
+			const hasContent = (document.querySelector("main")?.innerText ?? "").trim().length > 200;
+			if ((hasShell && hasContent) || Date.now() - started >= maxMs) {
+				resolve();
+				return;
+			}
+			setTimeout(check, 200);
+		};
+		check();
+	});
