@@ -22,6 +22,24 @@ describe("GitUrl.from validation and memoization", () => {
 	});
 });
 
+describe("GitUrl constructor", () => {
+	test("builds links from known parts", () => {
+		const git = new GitUrl({
+			forge: "gitlab",
+			origin: "https://gitlab.com",
+			owner: "group/sub",
+			repo: "r",
+			kind: "blob",
+			ref: "main",
+			path: "a b/c.css",
+		});
+		expect(git.repoUrl).toBe("https://gitlab.com/group/sub/r");
+		expect(git.fileName).toBe("c.css");
+		expect(git.browseUrl).toBe("https://gitlab.com/group/sub/r/-/blob/main/a%20b/c.css");
+		expect(git.rawUrl).toBe("https://gitlab.com/group/sub/r/-/raw/main/a%20b/c.css");
+	});
+});
+
 describe("GitUrl.fromRepository", () => {
 	test("parses string, object, git+, shorthands and rejects invalid inputs", () => {
 		expect(GitUrl.fromRepository({ url: "git+https://git.cafe/me/plugins.git" })?.repoUrl).toBe("https://git.cafe/me/plugins");
@@ -266,9 +284,9 @@ describe("GitCafe", () => {
 			owner: "meowarex",
 			repo: "TidaLuna-Plugins",
 			kind: "release",
-			tag: undefined,
-			fileName: undefined,
 		});
+		expect(apiAsset.tag).toBeUndefined();
+		expect(apiAsset.fileName).toBeUndefined();
 
 		expect(GitUrl.from("https://git.cafe/meowarex/TidaLuna-Plugins/releases/tag/latest")).toMatchObject({
 			forge: "gitcafe",
