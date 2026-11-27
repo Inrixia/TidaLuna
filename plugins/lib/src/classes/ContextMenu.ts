@@ -38,9 +38,10 @@ class ContextMenuButton {
 
 	public async show(contextMenu: Element | null) {
 		if (!!contextMenu) {
-			const templateButton = contextMenu.querySelector(`div[data-type="contextmenu-item"]`) as Element | undefined;
+			const templateButton = contextMenu.querySelector(`div[data-type="contextmenu-item"]`);
 			const makeButton = () => {
-				if (templateButton === undefined) throw new Error("No buttons to clone off contextMenu found!");
+				// querySelector answers null, not undefined, so this is the check that catches a menu without a template item
+				if (templateButton === null) throw new Error("No buttons to clone off contextMenu found!");
 				const newButton = templateButton.cloneNode(true) as Element;
 				newButton.querySelector<HTMLButtonElement>("button")!.removeAttribute("data-test");
 				return newButton.querySelector<HTMLSpanElement>("span")!;

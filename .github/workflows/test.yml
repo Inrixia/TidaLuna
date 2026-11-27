@@ -14,6 +14,8 @@ jobs:
  Test:
   runs-on: ubuntu-latest
   permissions:
+   # To find the base branch's run and download its coverage summary
+   actions: read
    contents: write
    pull-requests: write
   steps:
@@ -36,11 +38,40 @@ jobs:
    - name: Test
      run: pnpm run coverage:ci
 
+   # The comment compares against the base branch, never against an earlier run of this PR, so a later commit that wins
+   # back a little can't hide an earlier drop. The base is the newest successful push run on the base branch whose commit
+   # is the PR's base commit or one before it (CI's badge/floor commits sit on top and don't change coverage). A run
+   # newer than the PR's base would count changes the PR doesn't have, so those are skipped. After the test step,
+   # because vitest clears coverage/ when it starts.
+   - name: Find base coverage
+     if: always() && github.event_name == 'pull_request'
+     continue-on-error: true
+     env:
+      GH_TOKEN: ${{ github.token }}
+      BASE_REF: ${{ github.base_ref }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+     run: |
+      runs=$(gh run list -R "$GITHUB_REPOSITORY" --workflow test.yml --branch "$BASE_REF" --event push --status success --limit 20 --json databaseId,headSha -q '.[] | "\(.databaseId) \(.headSha)"')
+      while read -r id sha; do
+       [ -z "$id" ] && continue
+       # "ahead": BASE_SHA is ahead of the run's commit, so the run's commit is an ancestor
+       status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...$BASE_SHA" -q .status) || continue
+       if [ "$status" = identical ] || [ "$status" = ahead ]; then
+        gh run download "$id" -R "$GITHUB_REPOSITORY" -n coverage-summary -D coverage/base || break
+        echo "COVERAGE_BASE_SHA=$sha" >> "$GITHUB_ENV"
+        echo "Comparing with run $id on $BASE_REF @ $sha"
+        exit 0
+       fi
+      done <<< "$runs"
+      echo "::warning::No coverage from $BASE_REF to compare against"
+
    # Always, so a failing run still reports the coverage it managed. Writes coverage/comment.md and the run page summary.
    - name: Coverage comment
      if: always()
      run: pnpm run coverage:comment
      continue-on-error: true
+     env:
+      COVERAGE_BASE_REF: ${{ github.base_ref }}
 
    # Posted by .github/workflows/coverage-comment.yml: a PR from a fork gets a read-only token here, so the comment has
    # to come from a workflow_run, which runs in this repo with a write token and never touches the PR's code.
@@ -52,6 +83,15 @@ jobs:
       path: coverage/comment.md
       if-no-files-found: ignore
       retention-days: 7
+
+   # What pull requests against this branch compare their coverage with (Find base coverage, above)
+   - name: Upload the coverage summary
+     if: github.event_name == 'push'
+     uses: actions/upload-artifact@v7
+     with:
+      name: coverage-summary
+      path: coverage/coverage-summary.json
+      retention-days: 90
 
    # Another workflow (nix-hashes) also commits to master, so a run can check out a head that moves before it finishes
    # and then have nothing to fast-forward onto. Rebase before generating the files so they are built on the latest

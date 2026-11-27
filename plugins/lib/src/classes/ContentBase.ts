@@ -77,7 +77,9 @@ export class ContentBase {
 		let type = opts?.type ?? "image";
 		if (type === "video" && !album.videoCover && !(opts?.fallback === false)) type = "image";
 		const uuid = type === "image" ? album.cover : album.videoCover;
-		if (uuid) return ContentBase.formatCoverUrl(uuid, opts);
+		// Pass the resolved type through: a video request that fell back to the image cover has to build an image url, and
+		// formatCoverUrl can't tell that from opts alone (it would build a video url for the image's uuid)
+		if (uuid) return ContentBase.formatCoverUrl(uuid, { ...opts, type });
 	}
 
 	public static formatCoverUrl(uuid?: string, opts?: TCoverOpts) {

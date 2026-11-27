@@ -17,19 +17,14 @@ export const resolveAbsolutePath = (basePath: string, relativePath: string): str
 		// Ensure the base path ends with '/' if it represents a directory context.
 		const baseDirectory = basePath.replace(/\/[^/]*$/, "/");
 		
-		// Validate that baseDirectory is a valid path-like string
-		if (!baseDirectory) {
-			console.warn("[Luna.resolveAbsolutePath] Invalid baseDirectory:", baseDirectory);
-			return relativePath;
-		}
-
 		const baseUrl = new URL(baseDirectory, "file://");
 
 		// Create a new URL by resolving the relative path against the base URL.
 		const resolvedUrl = new URL(relativePath, baseUrl);
 
-		// Return the pathname part of the resolved URL.
-		return resolvedUrl.pathname;
+		// Return the path, keeping its query string and fragment: they can name the resource (a plugin url with a
+		// version, a module with a hash), so dropping them resolves to a different one
+		return `${resolvedUrl.pathname}${resolvedUrl.search}${resolvedUrl.hash}`;
 	} catch (error) {
 		console.error("[Luna.resolveAbsolutePath] Failed to resolve path:", { 
 			basePath, 

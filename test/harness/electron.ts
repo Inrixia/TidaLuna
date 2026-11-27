@@ -56,6 +56,7 @@ export const safeStorage = {
 export class BrowserWindow {
 	public static getFocusedWindow = vi.fn((): BrowserWindow | null => null);
 	public static getAllWindows = vi.fn((): BrowserWindow[] => []);
+	public static fromWebContents = vi.fn((): BrowserWindow | null => null);
 	public isDestroyed = vi.fn(() => false);
 	public isVisible = vi.fn(() => true);
 	public isMinimized = vi.fn(() => false);

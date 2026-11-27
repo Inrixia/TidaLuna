@@ -178,6 +178,22 @@ describe("qualityTags", () => {
 	});
 });
 
+describe("qualityTags with a tag that has no known quality", () => {
+	const unknown = "NOT_A_TAG" as unknown as redux.MediaMetadataTag;
+
+	test("leaves the unknown tag out", () => {
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: [unknown, "MQA"] }, audioQuality: "HI_RES" });
+
+		expect(mediaItem.qualityTags).toEqual([Quality.MQA]);
+	});
+
+	test("still adds the High placeholder to a lossy track", () => {
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: [unknown] }, audioQuality: "HIGH" });
+
+		expect(mediaItem.qualityTags).toEqual([Quality.High]);
+	});
+});
+
 describe("bestQuality", () => {
 	test("is the highest of the metadata tags and TIDAL's audioQuality", () => {
 		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: ["LOSSLESS"] }, audioQuality: "HI_RES_LOSSLESS" });
@@ -187,6 +203,20 @@ describe("bestQuality", () => {
 
 	test("is the audioQuality when the tags don't have a quality", () => {
 		expect(makeMediaItem(nextId(), { mediaMetadata: { tags: [] }, audioQuality: "LOW" }).bestQuality).toBe(Quality.Lowest);
+	});
+
+	test("ignores a tag with no known quality instead of reporting Lowest", () => {
+		const unknown = "NOT_A_TAG" as unknown as redux.MediaMetadataTag;
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: [unknown, "LOSSLESS"] }, audioQuality: "LOW" });
+
+		expect(mediaItem.bestQuality).toBe(Quality.High);
+	});
+
+	test("defaults a spatial-only track with an unknown tag to HiRes", () => {
+		const unknown = "NOT_A_TAG" as unknown as redux.MediaMetadataTag;
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: ["DOLBY_ATMOS", unknown] }, audioQuality: "LOSSLESS" });
+
+		expect(mediaItem.bestQuality).toBe(Quality.HiRes);
 	});
 
 	test("ignores the spatial tags, which say nothing about the quality of the stream", () => {
@@ -483,5 +513,63 @@ describe("fromId", () => {
 
 		expect(first).toBeUndefined();
 		expect(second?.tidalItem.title).toBe("Second");
+	});
+});
+
+describe("fromIsrc", () => {
+	let isrcSeq = 0;
+	/** A fresh isrc each time: fromIsrc remembers its answers */
+	const nextIsrc = () => `TESTISRC${++isrcSeq}`;
+	type Found = { tags?: string[]; loaded?: Quality | null };
+	/** TIDAL's isrc lookup finds these tracks in this order; `loaded` is the best quality of the item MediaItem.fromId gives for it, null for none */
+	const lookup = (...found: Found[]) => {
+		const ids = found.map(() => String(nextId()));
+		vi.spyOn(TidalApi, "isrc").mockImplementation(async function* () {
+			for (const [i, { tags }] of found.entries()) yield { id: ids[i], attributes: { mediaTags: tags } } as never;
+		});
+		const loads: string[] = [];
+		vi.spyOn(MediaItem, "fromId").mockImplementation((async (id: redux.ItemId) => {
+			loads.push(String(id));
+			const { loaded } = found[ids.indexOf(String(id))];
+			return loaded === null || loaded === undefined ? undefined : ({ id, bestQuality: loaded } as unknown as MediaItem);
+		}) as never);
+		return { ids, loads };
+	};
+	afterEach(() => vi.restoreAllMocks());
+
+	test("picks the only track even when it has no tags or none Luna knows", async () => {
+		const { ids } = lookup({ tags: [], loaded: Quality.High });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: ids[0] });
+
+		const unknown = lookup({ tags: ["SOMETHING_NEW"], loaded: Quality.Lowest });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: unknown.ids[0] });
+	});
+
+	test("takes a later track only when its tags say it is better", async () => {
+		const better = lookup({ tags: ["LOSSLESS"], loaded: Quality.High }, { tags: ["MQA"], loaded: Quality.MQA });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: better.ids[1] });
+
+		const worse = lookup(
+			{ tags: ["MQA"], loaded: Quality.MQA },
+			{ tags: ["LOSSLESS"], loaded: Quality.High },
+			{ tags: [], loaded: Quality.Lowest },
+		);
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: worse.ids[0] });
+		// The worse tracks are not even loaded
+		expect(worse.loads).toEqual([worse.ids[0]]);
+	});
+
+	test("stops loading once a track has the highest quality", async () => {
+		const { ids, loads } = lookup({ tags: ["HIRES_LOSSLESS"], loaded: Quality.Max }, { tags: ["HIRES_LOSSLESS"], loaded: Quality.Max });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: ids[0] });
+		expect(loads).toEqual([ids[0]]);
+	});
+
+	test("goes on to the next track when one can't be loaded, and is undefined when none can", async () => {
+		const some = lookup({ tags: ["MQA"], loaded: null }, { tags: [], loaded: Quality.High });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toMatchObject({ id: some.ids[1] });
+
+		lookup({ tags: ["MQA"], loaded: null });
+		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toBeUndefined();
 	});
 });

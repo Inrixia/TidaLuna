@@ -54,10 +54,10 @@ export class MediaItem extends ContentBase {
 				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
 			);
 			return mediaItem;
-		} catch (err) {
-			// TIDAL answered with a failed load (e.g. the content is no longer available): there is no item, as before
-			if (err instanceof redux.ReduxActionError) return undefined;
-			throw err;
+		} catch {
+			// TIDAL's FAIL action and the timeout reject now: an item that failed to load is what callers already handle
+			// as missing, not an error to throw at them
+			return undefined;
 		} finally {
 			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
 			clearWarnCatch();
@@ -68,10 +68,6 @@ export class MediaItem extends ContentBase {
 	// Calls for the same item share one lookup. Items that are not in the redux store are loaded through
 	// interceptActionResp, which runs one LOAD_SINGLE_MEDIA_ITEM at a time, so repeated calls (e.g. a tracklist row
 	// that is reported again while scrolling) queued up thousands of loads and kept their callers waiting for minutes.
-	/**
-	 * Resolves undefined when there is no such item: TIDAL answered a failed load (e.g. the content is no longer available),
-	 * or the id is undefined. Rejects when TIDAL did not answer in time, since then it is not known whether the item exists.
-	 */
 	public static fromId: (itemId?: redux.ItemId, contentType?: redux.ContentType) => Promise<MediaItem | undefined> = asyncDebounce(
 		async (itemId?: redux.ItemId, contentType: redux.ContentType = "track") => {
 			if (itemId === undefined) return;
@@ -94,7 +90,9 @@ export class MediaItem extends ContentBase {
 		for await (const track of TidalApi.isrc(isrc)) {
 			// If quality is higher than current best, set as best
 			const maxTrackQuality = Quality.max(...Quality.fromMetaTags((track.attributes?.mediaTags ?? []) as redux.MediaMetadataTag[]));
-			if (maxTrackQuality > (bestMediaItem?.bestQuality ?? Quality.Lowest)) {
+			// The first track that loads is the best so far, whatever its tags say: a track with none Luna knows is Lowest, and
+			// Lowest is not above "no item yet", so it would never be picked even when it is the only result
+			if (bestMediaItem === undefined || maxTrackQuality > bestMediaItem.bestQuality) {
 				bestMediaItem = (await MediaItem.fromId(track.id)) ?? bestMediaItem;
 				if ((bestMediaItem?.bestQuality ?? Quality.Lowest) >= Quality.Max) return bestMediaItem;
 			}
