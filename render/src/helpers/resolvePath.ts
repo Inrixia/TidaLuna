@@ -17,12 +17,6 @@ export const resolveAbsolutePath = (basePath: string, relativePath: string): str
 		// Ensure the base path ends with '/' if it represents a directory context.
 		const baseDirectory = basePath.replace(/\/[^/]*$/, "/");
 		
-		// Validate that baseDirectory is a valid path-like string
-		if (!baseDirectory) {
-			console.warn("[Luna.resolveAbsolutePath] Invalid baseDirectory:", baseDirectory);
-			return relativePath;
-		}
-
 		const baseUrl = new URL(baseDirectory, "file://");
 
 		// Create a new URL by resolving the relative path against the base URL.

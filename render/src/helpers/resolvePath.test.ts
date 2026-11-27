@@ -80,4 +80,43 @@ describe("resolveAbsolutePath", () => {
 		expect(resolveAbsolutePath("/dir/a.js", "../b.js")).toBe("/b.js");
 		expect(resolveAbsolutePath("/dir/sub/a.js", "../b.js")).toBe("/dir/b.js");
 	});
+
+	/**
+	 * A base that is not a '/' path (a Windows path, say) makes `new URL` throw, since `C:` parses as a URL scheme and the
+	 * base is then opaque. The fallback joins by hand. The callers pass TIDAL module paths, so it is a safety net: what is
+	 * pinned is that it answers and says so, not the joined text.
+	 */
+	test("answers through the fallback, and reports it, when the URL constructor throws", () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		// String.raw: in a plain string literal `\d` and `\p` are not escapes and the backslashes would be gone
+		const windowsBase = String.raw`C:\dir\page.js`;
+		expect(windowsBase).toContain("\\");
+
+		expect(typeof resolveAbsolutePath(windowsBase, "a.js")).toBe("string");
+		expect(typeof resolveAbsolutePath(windowsBase, "./a.js")).toBe("string");
+		expect(console.error).toHaveBeenCalledTimes(2);
+		expect(console.error).toHaveBeenCalledWith(
+			"[Luna.resolveAbsolutePath] Failed to resolve path:",
+			expect.objectContaining({ basePath: windowsBase, relativePath: "a.js", error: expect.any(String) }),
+		);
+	});
+
+	// `new URL` throws on the base first, then the fallback's `startsWith("/")` arm returns the path: it doesn't skip the base
+	test("an absolute path with a base that throws is returned by the fallback", () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+
+		expect(resolveAbsolutePath(String.raw`C:\dir\page.js`, "/x.js")).toBe("/x.js");
+		expect(console.error).toHaveBeenCalledTimes(1);
+	});
+
+	/**
+	 * The result is a URL path, not a file system path. These are pinned as they behave today so a change is deliberate:
+	 * a full URL or a `//host` path loses its host, and percent-encoding follows the URL rules.
+	 */
+	test("a full url or a path with a host loses the host, and the result is url-encoded", () => {
+		expect(resolveAbsolutePath("/dir/page.js", "https://other.example/x.js")).toBe("/x.js");
+		expect(resolveAbsolutePath("/dir/page.js", "//host/x.js")).toBe("/x.js");
+		expect(resolveAbsolutePath("/dir/page.js", "a b.js")).toBe("/dir/a%20b.js");
+		expect(resolveAbsolutePath("/dir/page.js", "a%2Fb.js")).toBe("/dir/a%2Fb.js");
+	});
 });
