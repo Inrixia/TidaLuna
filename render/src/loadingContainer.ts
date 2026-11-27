@@ -97,6 +97,15 @@ const createSplash = (splashUrl: string) => {
 	return splash;
 };
 
+/** The container native/preload.ts writes boot progress and failures into */
+const createMessageContainer = (parent: HTMLElement): HTMLDivElement => {
+	const message = document.createElement("div");
+	message.id = "tidaluna-loading-text";
+	Object.assign(message.style, messageStyles);
+	parent.appendChild(message);
+	return message;
+};
+
 /**
  * The splash shows `splashUrl` filling the window for as long as Luna is booting TIDAL, and keeps a message container
  * for progress and for the failure message native/preload.ts writes into it.
@@ -112,27 +121,27 @@ export const getOrCreateLoadingContainer = (splashUrl?: string) => {
 
 		if (splashUrl !== undefined) loadingContainer.appendChild(createSplash(splashUrl));
 
-		messageContainer = document.createElement("div");
-		messageContainer.id = "tidaluna-loading-text";
-		Object.assign(messageContainer.style, messageStyles);
-		loadingContainer.appendChild(messageContainer);
+		messageContainer = createMessageContainer(loadingContainer);
 
 		// Prefer body, fallback to documentElement for early loading (tidal-hifi)
 		if (document.body) {
 			document.body.appendChild(loadingContainer);
 		} else {
-			document.documentElement.appendChild(loadingContainer);
+			// Held in a const so the observer below narrows it: the let is reassigned above, and a closure cannot trust it
+			const container = loadingContainer;
+			document.documentElement.appendChild(container);
 			// Move to body once available
 			const observer = new MutationObserver(() => {
 				if (document.body) {
 					observer.disconnect();
-					document.body.appendChild(<Node>loadingContainer);
+					document.body.appendChild(container);
 				}
 			});
 			observer.observe(document.documentElement, { childList: true });
 		}
 	} else {
-		messageContainer = loadingContainer.querySelector<HTMLDivElement>("#tidaluna-loading-text")!;
+		// A container that outlived its message node still needs one: native writes boot failures into it
+		messageContainer = loadingContainer.querySelector<HTMLDivElement>("#tidaluna-loading-text") ?? createMessageContainer(loadingContainer);
 	}
 
 	return { loadingContainer, messageContainer };
@@ -144,18 +153,32 @@ export const getOrCreateLoadingContainer = (splashUrl?: string) => {
  */
 /** Runs `cb` on a quiet frame, where removing a full-window layer does not land on top of a paint the client is doing. */
 const requestIdle = (cb: () => void) => {
-	const idle = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback;
-	if (idle !== undefined) idle(cb, { timeout: splashFadeMs });
+	if (window.requestIdleCallback !== undefined) window.requestIdleCallback(cb, { timeout: splashFadeMs });
 	else setTimeout(cb, 0);
 };
 
 /**
- * TIDAL's own loader sits behind the splash. Tearing the splash down while that loader is still painted is what flashes
- * for a split second once the fade ends, so wait for it to be gone, giving up after a couple of seconds.
+ * TIDAL's own loader sits behind the splash. Tearing the splash down while that loader is still painted is what flashes for
+ * a split second once the fade ends, so wait for the node to leave the page, giving up after a couple of seconds.
  */
-const whenTidalLoaderGone = (cb: () => void, tries = 20) => {
-	if (document.getElementById("app-loader") === null || tries <= 0) return cb();
-	setTimeout(() => whenTidalLoaderGone(cb, tries - 1), 100);
+const whenTidalLoaderGone = (cb: () => void, timeoutMs = 2000) => {
+	const loader = document.getElementById("app-loader");
+	if (loader === null) return cb();
+	// Watching for the removal rather than asking on a timer: the loader leaving is the event being waited for
+	const observer = new MutationObserver(() => {
+		if (loader.isConnected) return;
+		stop();
+		cb();
+	});
+	const cap = setTimeout(() => {
+		stop();
+		cb();
+	}, timeoutMs);
+	const stop = () => {
+		observer.disconnect();
+		clearTimeout(cap);
+	};
+	observer.observe(loader.parentElement ?? document.documentElement, { childList: true });
 };
 
 export const fadeOutLoadingContainer = (loadingContainer: HTMLElement) => {

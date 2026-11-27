@@ -1,8 +1,14 @@
 /** `file://` imports are inlined as base64 by the build's fileUrl plugin; this turns one back into a usable URL. */
 export const svgDataUrl = (base64: string) => `data:image/svg+xml;base64,${base64}`;
 
-/** Corner colour of the splash artwork. */
-const splashBackdrop = "#040a11";
+/** Corner colour of the splash artwork, which is also what the window paints before the page has painted anything. */
+export const splashBackdrop = "#040a11";
+
+/** A hex colour as an `r, g, b` triple, which is what the gradients need to write the same colour with alpha. */
+const rgbTripleOf = (hex: string): string => [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(", ");
+
+/** The backdrop as an `r, g, b` triple, so the vignette cannot drift from the colour behind it. */
+const splashBackdropRgb = rgbTripleOf(splashBackdrop);
 
 /** How long the splash takes to give way to the client once TIDAL has mounted. */
 export const splashFadeMs = 1400;
@@ -43,7 +49,7 @@ export const splashArtFadeStyles = (): Partial<CSSStyleDeclaration> => ({
  * own edge colour, so no boundary can show as a line.
  */
 export const splashVignetteStyles = (): Partial<CSSStyleDeclaration> => ({
-	backgroundImage: `radial-gradient(ellipse 78% 68% at 50% 46%, rgba(4, 10, 17, 0) 40%, rgba(4, 10, 17, 0.92) 82%, ${splashBackdrop} 100%)`,
+	backgroundImage: `radial-gradient(ellipse 78% 68% at 50% 46%, rgba(${splashBackdropRgb}, 0) 40%, rgba(${splashBackdropRgb}, 0.92) 82%, ${splashBackdrop} 100%)`,
 });
 
 /**

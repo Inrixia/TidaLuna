@@ -60,13 +60,12 @@ describe("getOrCreateLoadingContainer", () => {
 
 	test("adds the drifting colour layers, positioned and animated by the stylesheet", () => {
 		const { loadingContainer } = getOrCreateLoadingContainer(splashUrl);
-		const auroras = [...loadingContainer.querySelectorAll("[class^='luna-splash-aurora']")];
+		const auroras = [...loadingContainer.querySelectorAll<HTMLElement>("[class^='luna-splash-aurora']")];
 		expect(auroras).toHaveLength(3);
 		expect(auroras.map((n) => n.id)).toEqual(["luna-splash-aurora-0", "luna-splash-aurora-1", "luna-splash-aurora-2"]);
 		// Nothing inline: sizing and animation live in the stylesheet, which is what keeps them compositor-only
 		for (const aurora of auroras) expect(aurora.style.width).toBe("");
 	});
-
 
 	test("has no splash when no artwork is given", () => {
 		const { loadingContainer } = getOrCreateLoadingContainer();
@@ -131,7 +130,7 @@ describe("fadeOutLoadingContainer", () => {
 		expect(document.getElementById("tidaluna-loading")).toBeNull();
 	});
 
-	test("waits for TIDAL's loader before tearing the splash down", () => {
+	test("waits for TIDAL's loader before tearing the splash down", async () => {
 		vi.useFakeTimers();
 		const loader = document.createElement("div");
 		loader.id = "app-loader";
@@ -139,11 +138,12 @@ describe("fadeOutLoadingContainer", () => {
 		const { loadingContainer } = getOrCreateLoadingContainer(splashUrl);
 
 		fadeOutLoadingContainer(loadingContainer);
-		vi.advanceTimersByTime(splashFadeMs + 300);
+		await vi.advanceTimersByTimeAsync(splashFadeMs + 300);
 		expect(document.getElementById("tidaluna-loading")).not.toBeNull();
 
 		loader.remove();
-		vi.advanceTimersByTime(500);
+		// The loader leaving is observed, so the callback lands on a microtask rather than on a tick
+		await vi.advanceTimersByTimeAsync(500);
 		expect(document.getElementById("tidaluna-loading")).toBeNull();
 	});
 
