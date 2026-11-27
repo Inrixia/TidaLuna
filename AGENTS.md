@@ -79,6 +79,14 @@ How code here is reviewed. Apply to new code, and to the code you are already to
 - Pass a value once. If the callee already holds it, read it from the instance instead of taking a second parameter.
 - Files stay under 400 lines.
 
+### Practice
+
+- Await what you start. A promise dropped in an event handler cannot be caught by the caller, so a rejection becomes a no-op nobody sees: handle it where it lands, or let a later read show the failure instead.
+- A plugin imports `index.safe.ts`, never `index.ts`. A cycle here is a runtime `undefined`, not a compile error.
+- Untrusted input decides how much work you do: bound the entries, bytes, retries and recursion before you act on them, not after.
+- State has one owner. A value read from two layers belongs to one of them and the other asks, rather than both keeping a copy that can disagree.
+- Platform APIs are optional or missing. `window.requestIdleCallback?.()`, `if (electron.app.dock !== undefined)`: feature-detect, don't assume the runtime.
+
 ### Smells to fix rather than add
 
 - A third copy of the same logic. Extract it into the owning layer before the third exists, then call it from every site.
