@@ -11,7 +11,7 @@ import type { VoidFn } from "@inrixia/helpers";
 import { ftch } from "@luna/core";
 import { StyleTag } from "@luna/lib";
 import { unloads } from "../../index.safe";
-import { themes, themeStyles } from "../Storage";
+import { resourceProgress, themes, themeStyles } from "../Storage";
 import { parseThemeManifest, themeCodeUrl, themeDisplay, themeKind } from "./themeManifest";
 import { describeResources, parseThemeResources } from "./themeResources";
 
@@ -35,6 +35,14 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 	const kind = themeKind(css);
 	// What it pulls in, so a theme loading 13 files from github.com says so on its row
 	const loads = React.useMemo(() => describeResources(parseThemeResources(css ?? "", url)), [css, url]);
+	// Checking every file takes a moment on a font pack, so the row says so rather than looking finished
+	const [progress, setProgress] = React.useState(() => resourceProgress._[url]);
+	React.useEffect(() => {
+		const stop = resourceProgress.onValue((all) => setProgress(all[url]));
+		return () => {
+			void stop();
+		};
+	}, [url]);
 	// The readable page for the file on github: the raw url only ever shows the css as plain text
 	const codeUrl = React.useMemo(() => themeCodeUrl(url), [url]);
 
@@ -121,9 +129,9 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 				>
 					{codeUrl !== undefined ? <LunaLink href={codeUrl}>{display.source}</LunaLink> : display.source}
 				</Typography>
-				{loads !== undefined && (
+				{(loads !== undefined || progress !== undefined) && (
 					<Typography variant="body2" sx={{ color: "inherit", lineHeight: 1.5, fontWeight: "400 !important", opacity: 0.9 }}>
-						{loads}
+						{progress !== undefined ? `checking ${progress.done} of ${progress.total} files` : loads}
 					</Typography>
 				)}
 			</Box>

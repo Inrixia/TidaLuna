@@ -231,3 +231,65 @@ export const themeConsent = (name: string, resources: ThemeResource[]): ThemeCon
 		confirmationText: "Install theme",
 	};
 };
+
+/** What a check needs from the network, so the checking can be tested without one */
+export type ResourceCheckDeps = {
+	fetch: (url: string) => Promise<{ status: number; contentType: string | null }>;
+	/** How many requests are in flight at once */
+	concurrency?: number;
+	/** Called after each file finishes, so the caller can show progress */
+	onProgress?: (done: number, total: number) => void;
+};
+
+export type ResourceCheckResult = {
+	problems: ResourceCheck[];
+	/** Unique files checked */
+	checked: number;
+};
+
+/**
+ * Check every file a theme loads, several at a time.
+ *
+ * There is deliberately no ceiling on how many files are checked. A limit is exploitable: a theme that names twenty
+ * harmless files and then its hostile one would never have the hostile one looked at, and the cap silently turns the
+ * check into a decoration. Instead the work is bounded by running a few requests at once and the caller reports progress,
+ * so a theme naming a hundred files still finishes and still gets every file looked at.
+ *
+ * Repeated urls are checked once. A font pack can point four @font-face rules at one file, and those are one download.
+ */
+export const checkResources = async (resources: ThemeResource[], deps: ResourceCheckDeps): Promise<ResourceCheckResult> => {
+	const seen = new Set<string>();
+	const unique = resources.filter((resource) => {
+		const url = resource.absolute;
+		if (url === undefined || seen.has(url)) return false;
+		seen.add(url);
+		return true;
+	});
+
+	const total = unique.length;
+	const problems: ResourceCheck[] = [];
+	let done = 0;
+	let next = 0;
+
+	const worker = async (): Promise<void> => {
+		while (true) {
+			const index = next++;
+			if (index >= total) return;
+			const resource = unique[index];
+			try {
+				const response = await deps.fetch(resource.absolute!);
+				const problem = resourceProblem(resource, response.status, response.contentType);
+				if (problem !== undefined) problems.push({ resource, problem });
+			} catch {
+				problems.push({ resource, problem: "could not be checked" });
+			}
+			done++;
+			deps.onProgress?.(done, total);
+		}
+	};
+
+	// At least one worker, never more than there is work for
+	const workers = Math.max(1, Math.min(deps.concurrency ?? 6, total));
+	await Promise.all(Array.from({ length: workers }, worker));
+	return { problems, checked: done };
+};

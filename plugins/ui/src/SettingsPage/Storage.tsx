@@ -21,7 +21,7 @@ import {
 	storedThemeError,
 	themeUrlError,
 } from "./themesRefresh";
-import { describeResources, parseThemeResources, resourceProblem, stylesheetProblem, themeConsent } from "./ThemesTab/themeResources";
+import { checkResources, describeResources, parseThemeResources, stylesheetProblem, themeConsent } from "./ThemesTab/themeResources";
 import type { ThemeConsent } from "./ThemesTab/themeResources";
 import { addToStores } from "./PluginStoreTab";
 import { confirm } from "../helpers/confirm";
@@ -34,6 +34,14 @@ import { confirm } from "../helpers/confirm";
  * instead, until it is dismissed.
  */
 export const startupNotice = new Signal<string | undefined>(undefined);
+
+/**
+ * How far the check of a theme's files has got, so the row can show it instead of going silent.
+ *
+ * Checking used to stop after twenty files, which meant a theme could put harmless files first and never have the rest
+ * looked at. Now every file is checked, which is why the work needs to be visible while it runs.
+ */
+export const resourceProgress = new Signal<Record<string, { done: number; total: number }>>({});
 
 const lunaStorage = ReactiveStore.getStore("@luna/storage");
 
@@ -112,20 +120,33 @@ export const addToThemes = async (rawUrl: string, askConsent?: ThemeConsentFn) =
 };
 
 /**
- * HEAD every file a theme loads and log the ones that are not what the css says they are. Bounded: a theme that names
- * hundreds of files is not worth hundreds of requests at install time.
+ * Check every file a theme loads and log the ones that are not what the css says they are.
+ *
+ * Every file, not the first twenty: a cutoff let a theme put harmless files first and keep the rest unchecked. The cost
+ * is bounded by running a few requests at a time and showing progress on the row while they run.
  */
 export const checkThemeResources = async (url: string, css: string): Promise<void> => {
 	const resources = parseThemeResources(css, url).filter((resource) => resource.absolute?.startsWith("http") ?? false);
 	console.log(`[Themes] ${url} ${describeResources(resources) ?? "loads nothing"}`);
-	for (const resource of resources.slice(0, 20)) {
-		try {
-			const res = await fetch(resource.absolute!, { method: "HEAD" });
-			const problem = resourceProblem(resource, res.status, res.headers.get("content-type"));
-			if (problem !== undefined) console.warn(`[Themes] ${resource.absolute} ${problem}`);
-		} catch (e) {
-			console.warn(`[Themes] Could not check ${resource.absolute}`, e);
-		}
+	if (resources.length === 0) return;
+
+	const report = (done: number, total: number) => (resourceProgress._ = { ...resourceProgress._, [url]: { done, total } });
+	try {
+		const { problems, checked } = await checkResources(resources, {
+			concurrency: 6,
+			onProgress: report,
+			fetch: async (resourceUrl) => {
+				const res = await fetch(resourceUrl, { method: "HEAD" });
+				return { status: res.status, contentType: res.headers.get("content-type") };
+			},
+		});
+		for (const { resource, problem } of problems) console.warn(`[Themes] ${resource.absolute} ${problem}`);
+		console.log(`[Themes] Checked ${checked} file(s) for ${url}, ${problems.length} problem(s)`);
+	} finally {
+		// The row goes back to its normal line once the check is done, pass or fail
+		const next = { ...resourceProgress._ };
+		delete next[url];
+		resourceProgress._ = next;
 	}
 };
 

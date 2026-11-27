@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+	checkResources,
 	describeResources,
 	isFontContentType,
 	isImageContentType,
@@ -223,5 +224,93 @@ describe("themeConsent", () => {
 		expect(themeConsent("One", parseThemeResources(css)).description).toBe(
 			"One downloads 1 file from fonts.example.com (1 font). Anything it downloads can change later without asking again.",
 		);
+	});
+});
+
+describe("checkResources", () => {
+	const font = (n: number) => parseThemeResources(`@font-face { src: url(https://github.com/o/r/raw/main/f/f${n}.woff2); }`);
+
+	const respond = (map: Record<string, { status: number; contentType: string | null }>) => async (url: string) =>
+		map[url] ?? { status: 200, contentType: "font/woff2" };
+
+	test("checks every file, with no cutoff", async () => {
+		// A cap is exploitable: twenty harmless files and then the hostile one never gets looked at
+		const resources = Array.from({ length: 60 }, (_, i) => font(i)).flat();
+		const seen: string[] = [];
+		const result = await checkResources(resources, {
+			fetch: async (url) => {
+				seen.push(url);
+				return { status: 200, contentType: "font/woff2" };
+			},
+		});
+		expect(result.checked).toBe(60);
+		expect(seen).toHaveLength(60);
+	});
+
+	test("flags a bad file that sits past the old cutoff", async () => {
+		const resources = Array.from({ length: 40 }, (_, i) => font(i)).flat();
+		const bad = resources[39].absolute!;
+		const result = await checkResources(resources, {
+			fetch: respond({ [bad]: { status: 200, contentType: "text/html" } }),
+		});
+		expect(result.problems).toHaveLength(1);
+		expect(result.problems[0].resource.absolute).toBe(bad);
+		expect(result.problems[0].problem).toBe("is not a font (text/html)");
+	});
+
+	test("checks a repeated url once, since it is one download", async () => {
+		const css = Array.from({ length: 4 }, () => "@font-face { src: url(https://github.com/o/r/raw/main/f/Bold.ttf); }").join("\n");
+		let calls = 0;
+		const result = await checkResources(parseThemeResources(css), {
+			fetch: async () => {
+				calls++;
+				return { status: 200, contentType: "font/ttf" };
+			},
+		});
+		expect(calls).toBe(1);
+		expect(result.checked).toBe(1);
+	});
+
+	test("reports progress as each file finishes", async () => {
+		const resources = Array.from({ length: 5 }, (_, i) => font(i)).flat();
+		const progress: number[] = [];
+		let inFlight = 0;
+		let peak = 0;
+		await checkResources(resources, {
+			concurrency: 2,
+			onProgress: (done, total) => {
+				expect(total).toBe(5);
+				progress.push(done);
+			},
+			fetch: async () => {
+				inFlight++;
+				peak = Math.max(peak, inFlight);
+				await new Promise((r) => setTimeout(r, 5));
+				inFlight--;
+				return { status: 200, contentType: "font/woff2" };
+			},
+		});
+		// Every file reported exactly once, in order
+		expect(progress).toEqual([1, 2, 3, 4, 5]);
+		// And never more than the requested number at a time
+		expect(peak).toBeLessThanOrEqual(2);
+	});
+
+	test("counts a failed request as a problem rather than stopping", async () => {
+		const resources = Array.from({ length: 3 }, (_, i) => font(i)).flat();
+		const result = await checkResources(resources, {
+			fetch: async (url) => {
+				if (url.includes("f1")) throw new Error("network down");
+				return { status: 200, contentType: "font/woff2" };
+			},
+		});
+		expect(result.checked).toBe(3);
+		expect(result.problems).toHaveLength(1);
+		expect(result.problems[0].problem).toBe("could not be checked");
+	});
+
+	test("does nothing, cleanly, for a theme that loads no files", async () => {
+		const result = await checkResources([], { fetch: async () => ({ status: 200, contentType: "font/woff2" }) });
+		expect(result).toEqual({ problems: [], checked: 0 });
 	});
 });
