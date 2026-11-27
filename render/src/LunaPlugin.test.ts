@@ -360,11 +360,10 @@ describe("install / uninstall", () => {
 		expect(forgetNativePermissions).toHaveBeenCalledWith(plugin.url);
 
 		await settle();
-		// `uninstall` deletes the entry, but ReactiveStore writes changes on a later microtask, so the write that
-		// follows its delete puts a copy of the plugin back with installed:false. Reported as a bug; what must hold is
-		// that it is no longer installed.
-		const lingering = await LunaPlugin.pluginStorage.get<LunaPluginStorage>("unA");
-		expect(lingering?.installed ?? false).toBe(false);
+		// The write that follows setting installed = false must not land after the delete: the entry is gone, not a
+		// lingering copy of the plugin that would come back on the next start
+		expect(await LunaPlugin.pluginStorage.get<LunaPluginStorage>("unA")).toBeUndefined();
+		expect(await LunaPlugin.pluginStorage.keys()).not.toContain("unA");
 	});
 });
 
