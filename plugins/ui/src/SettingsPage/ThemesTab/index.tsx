@@ -5,9 +5,9 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { InstallFromUrl } from "../InstallFromUrl";
-import { Theme } from "./Theme";
 import { startupNotice, themes } from "./themes";
 import { LunaTheme } from "./LunaTheme";
+import { ThemeRow } from "./ThemeRow";
 
 import { store as obyStore } from "oby";
 
@@ -60,13 +60,13 @@ export const ThemesTab = React.memo(() => {
 				</Stack>
 			)}
 			{entries.map(([url, theme]) => (
-				<LunaTheme
+				<ThemeRow
 					theme={theme}
 					key={url}
 					url={url}
 					uninstall={() => {
 						// Remove the stylesheet and forget the theme
-						Theme.get(url)?.remove();
+						LunaTheme.themes.get(url)?.remove();
 						delete themes[url];
 					}}
 				/>

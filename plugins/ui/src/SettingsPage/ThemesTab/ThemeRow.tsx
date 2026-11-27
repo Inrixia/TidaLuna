@@ -9,18 +9,19 @@ import { LunaLink, LunaSwitch, LunaTrashButton, SpinningButton } from "../../com
 
 import type { VoidFn } from "@inrixia/helpers";
 import { unloads } from "../../index.safe";
-import { resourceProgress, Theme, type ThemeData } from "./Theme";
+import { LunaTheme, resourceProgress, type ThemeData } from "./LunaTheme";
 import { ThemeManifest } from "./ThemeManifest";
 import { ThemeResources } from "./ThemeResources";
 
-export const LunaTheme = React.memo(({ theme: data, url, uninstall }: { theme: ThemeData; url: string; uninstall: VoidFn }) => {
+/** One installed theme, as a row in the themes tab */
+export const ThemeRow = React.memo(({ theme: data, url, uninstall }: { theme: ThemeData; url: string; uninstall: VoidFn }) => {
 	// The theme itself: the startup applied every stored one, and one that arrived since (an imported backup) is taken over
 	// here so its row can be switched. A record that should never have been written has no theme, and its row still shows.
 	const theme = React.useMemo(() => {
-		const known = Theme.get(url);
+		const known = LunaTheme.themes.get(url);
 		if (known !== undefined) return known;
 		try {
-			return Theme.resume(url, data, unloads);
+			return LunaTheme.from(url, data, unloads);
 		} catch {
 			return undefined;
 		}
@@ -31,18 +32,16 @@ export const LunaTheme = React.memo(({ theme: data, url, uninstall }: { theme: T
 	React.useEffect(() => setEnabled(data.enabled), [data.enabled]);
 	const [css, setCSS] = React.useState(data.css);
 	const [loading, setLoading] = React.useState(false);
-	// Manifest support: most themes have none, so the row falls back to a name from the file and the host it came from
-	const manifest = theme?.manifest ?? ThemeManifest.of(url, css);
-	// What the file is, from what it contains: a base reworks layout, a colorway is a palette, a font pack has faces
-	const kind = ThemeManifest.kindOf(css);
-	// What it pulls in, so a theme loading 13 files from github.com says so on its row
-	const loads = React.useMemo(() => ThemeResources.of(css ?? "", url).describe(), [css, url]);
+	// Manifest support: most themes have none, so the row falls back to a name from the file and the host it came from.
+	// What the file is and what it pulls in are read from the one manifest the theme already holds
+	const manifest = theme?.manifest ?? ThemeManifest.from(url, css);
+	const loads = React.useMemo(() => ThemeResources.from(css ?? "", url).describe(), [css, url]);
 	// Checking every file takes a moment on a font pack, so the row says so rather than looking finished
 	const [progress, setProgress] = React.useState(() => resourceProgress._[url]);
 	React.useEffect(() => {
 		const stop = resourceProgress.onValue((all) => setProgress(all[url]));
 		return () => {
-			void stop();
+			stop();
 		};
 	}, [url]);
 
@@ -50,7 +49,9 @@ export const LunaTheme = React.memo(({ theme: data, url, uninstall }: { theme: T
 		(_: unknown, checked: boolean) => {
 			setEnabled(checked);
 			if (theme === undefined) return;
-			void (checked ? theme.enable() : Promise.resolve(theme.disable()));
+			// enable() fetches and re-applies when the theme has no css yet, and never rejects: a failed fetch turns it off
+			if (checked) theme.enable();
+			else theme.disable();
 		},
 		[theme],
 	);
@@ -100,7 +101,7 @@ export const LunaTheme = React.memo(({ theme: data, url, uninstall }: { theme: T
 							opacity: 0.75,
 							whiteSpace: "nowrap",
 						}}
-						children={kind}
+						children={manifest.kind}
 					/>
 				</Stack>
 				{/* Weight pinned with !important: a theme can set `[class*="body"] { font-weight: 800 !important }`, which matched

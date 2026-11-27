@@ -1,5 +1,3 @@
-import { GitUrl } from "@luna/lib";
-
 /**
  * What a theme's row says about the theme: its name, who made it, what it does, where it came from and the page its
  * source can be read on.
@@ -20,13 +18,37 @@ import { GitUrl } from "@luna/lib";
  * The braces are decorated with `*` and a comma is missing. Neither is something JSON.parse accepts, and rejecting the
  * whole manifest meant the theme showed its url instead of its name.
  *
- * Everything here is pure, so the rules can be tested directly.
+ * Everything a theme says about itself is read once, when the manifest is created: a row, a toast and a refresh all ask
+ * the same questions, and answering them again per caller is how the answers drift apart.
  */
+
+import { GitUrl, humanizeFileName, stringNotEmpty, urlFileName, urlHost } from "@luna/lib";
 
 /** What a theme file is, as shown on its row */
 export type ThemeKind = "Base" | "Colorway" | "Fonts" | "Theme";
 
+/** What a css manifest declares, when it has one */
+type Declared = { name?: string; author?: string; description?: string };
+
+/**
+ * The owner of a repository, decoded.
+ *
+ * GitUrl keeps a path segment exactly as the url wrote it, and an owner is shown to a person, who reads `some user` rather
+ * than `some%20user`.
+ */
+const decodedOwner = (owner: string | undefined): string | undefined => {
+	if (owner === undefined) return undefined;
+	try {
+		return decodeURIComponent(owner);
+	} catch {
+		return owner;
+	}
+};
+
 export class ThemeManifest {
+	/** Read once per url and css pair, since a row, a refresh and a toast all ask for the same one */
+	private static readonly created = new Map<string, ThemeManifest>();
+
 	/** What the row's title says: the manifest's name, or the file name made readable */
 	public readonly name: string;
 	/** Who made it: the manifest's author, otherwise the owner of the repository it is served from */
@@ -35,8 +57,14 @@ export class ThemeManifest {
 	public readonly description?: string;
 	/** `tidaluna.dev/nightwave.css`: enough to recognise the theme without the ref and folder noise */
 	public readonly source: string;
-	/** The readable page for the file on github, when there is one */
+	/** The readable page for the file, when there is one */
 	public readonly codeUrl?: string;
+	/** The url as a file in a git repository, when that is what it is */
+	public readonly git?: GitUrl;
+
+	/** The css it was read from, which decides {@link kind} */
+	private readonly css?: string;
+	private kindOfCss?: ThemeKind;
 
 	/**
 	 * Everything a row shows for a theme, parsed once.
@@ -44,38 +72,68 @@ export class ThemeManifest {
 	 * @param url The url the theme is fetched from, which is what the name and source fall back to
 	 * @param css The theme's css, when it has been loaded
 	 */
-	static of(url: string, css?: string): ThemeManifest {
+	static from(url: string, css?: string): ThemeManifest {
+		const key = JSON.stringify([url, css ?? null]);
+		const known = ThemeManifest.created.get(key);
+		if (known !== undefined) return known;
+		const manifest = new ThemeManifest(url, css);
+		ThemeManifest.created.set(key, manifest);
+		return manifest;
+	}
+
+	private constructor(url: string, css?: string) {
+		this.css = css;
+
+		// A theme is a file in a repository, so its file name, host and source page are GitUrl's to read. Only a file url
+		// counts: a repository or folder url names no file, and a plain host is not a forge
+		const git = GitUrl.from(url);
+		this.git = git !== undefined && (git.kind === "blob" || git.kind === "raw") ? git : undefined;
+
 		const declared = ThemeManifest.parse(css);
-		return new ThemeManifest(
-			ThemeManifest.present(declared?.name) ?? ThemeManifest.nameOf(url),
-			ThemeManifest.sourceOf(url),
-			ThemeManifest.codeUrlOf(url),
-			ThemeManifest.present(declared?.author) ?? ThemeManifest.repoOwnerOf(url),
-			ThemeManifest.present(declared?.description),
-		);
+		const file = this.git?.fileName ?? urlFileName(url);
+		// The host the theme is fetched from, which is where a row says it came from: GitUrl reports the repository's host,
+		// and `raw.githubusercontent.com` is the repository's host only in the sense that the file lives on github
+		const host = urlHost(url);
+
+		this.name = stringNotEmpty(declared?.name) ? declared.name : (file !== undefined && humanizeFileName(file)) || host || url;
+		this.author = stringNotEmpty(declared?.author) ? declared.author : decodedOwner(this.git?.owner);
+		this.description = stringNotEmpty(declared?.description) ? declared.description : undefined;
+		this.source = host === undefined ? url : file === undefined ? host : `${host}/${file}`;
+		this.codeUrl = this.git?.browseUrl;
 	}
 
-	/** A manifest is only ever read for display, so it is a plain value the caller cannot get half of */
-	private constructor(name: string, source: string, codeUrl?: string, author?: string, description?: string) {
-		this.name = name;
-		this.source = source;
-		this.codeUrl = codeUrl;
-		this.author = author;
-		this.description = description;
-	}
-
-	/** A blank string is a manifest that was written but says nothing, which is the same as missing */
-	private static present(value?: string): string | undefined {
-		return typeof value === "string" && value.trim() !== "" ? value : undefined;
+	/**
+	 * What a theme file is, judged from what it contains.
+	 *
+	 * A theme is usually several files: one base that reworks the layout, one colorway per palette, and sometimes a font
+	 * pack. The tab listed them all the same, and the base showed the manifest's name - "cotton candy" - which is the name
+	 * of the whole theme, shared by every colorway, so the base read as if it were the colour file.
+	 *
+	 * The files separate cleanly by content:
+	 *
+	 *   techroundpack.css       13 @font-face, 102 blocks      -> Fonts
+	 *   base-windows.css         0 @font-face, 937 blocks      -> Base     (reworks layout: many rules)
+	 *   cottoncandy.css          0 @font-face,  14 blocks      -> Colorway (mostly :root variables)
+	 *   sourrainbowstrips.css    0 @font-face,  10 blocks      -> Colorway
+	 */
+	public get kind(): ThemeKind {
+		if (this.kindOfCss !== undefined) return this.kindOfCss;
+		const css = this.css;
+		if (css === undefined) return (this.kindOfCss = "Theme");
+		if (/@font-face/i.test(css)) return (this.kindOfCss = "Fonts");
+		// A colorway is a palette: variables dominate and there are barely any rules
+		return (this.kindOfCss = (css.match(/\{/g) ?? []).length <= 40 ? "Colorway" : "Base");
 	}
 
 	/**
 	 * The manifest in the css's first comment, or undefined when there is none.
 	 *
+	 * Only ever read while one is being created, which is why this is private.
+	 *
 	 * A manifest that still will not parse is treated as missing rather than thrown: a theme with a broken comment still
 	 * styles the page, and refusing to name it would hide the fact that it installed.
 	 */
-	static parse(css?: string): { name?: string; author?: string; description?: string } | undefined {
+	private static parse(css?: string): Declared | undefined {
 		if (css === undefined) return undefined;
 		const start = css.indexOf("/*");
 		const end = css.indexOf("*/");
@@ -100,129 +158,5 @@ export class ThemeManifest {
 		} catch {
 			return undefined;
 		}
-	}
-
-	/** Words that make a filename readable: "base-windows.css" -> "Base Windows" */
-	static readable(text: string): string {
-		return text
-			.replace(/\.[a-z0-9]+$/i, "")
-			.replace(/[-_+]+/g, " ")
-			.replace(/\s+/g, " ")
-			.trim()
-			.replace(/\b[a-z]/g, (char) => char.toUpperCase());
-	}
-
-	/**
-	 * A name for a theme with no manifest: its file name, made readable.
-	 *
-	 * Falls back to the host when the url has no file name (`https://themes.example.com/`), and to the url itself only when
-	 * it cannot be parsed at all.
-	 */
-	static nameOf(url: string): string {
-		try {
-			const parsed = new URL(url);
-			const file = parsed.pathname.split("/").filter(Boolean).pop();
-			if (file !== undefined && file !== "") {
-				// Decode %20 and friends: pride%20collection/sourrainbowstrips.css is a real theme url
-				const name = ThemeManifest.readable(decodeURIComponent(file));
-				if (name !== "") return name;
-			}
-			return parsed.hostname;
-		} catch {
-			return url;
-		}
-	}
-
-	/**
-	 * Where a theme comes from, in the form a row shows: `tidaluna.dev/nightwave.css`.
-	 *
-	 * A row used to print the whole url, which is long enough to read as the inside of a page rather than as something you
-	 * installed. Host plus file name identifies the theme without the ref and folder noise.
-	 */
-	static sourceOf(url: string): string {
-		try {
-			const parsed = new URL(url);
-			const file = parsed.pathname.split("/").filter(Boolean).pop();
-			const name = file === undefined ? "" : decodeURIComponent(file);
-			return name === "" ? parsed.hostname : `${parsed.hostname}/${name}`;
-		} catch {
-			return url;
-		}
-	}
-
-	/** The host a theme came from, which is the provenance worth showing when it has no manifest */
-	static hostOf(url: string): string | undefined {
-		try {
-			return new URL(url).hostname;
-		} catch {
-			return undefined;
-		}
-	}
-
-	/**
-	 * The owner of the repository a theme is hosted in, which is the author when the theme does not name one.
-	 *
-	 * Read from the url rather than inferred from a path segment, so a host that is not a forge gives no author instead of
-	 * a wrong one.
-	 */
-	static repoOwnerOf(url: string): string | undefined {
-		const owner = ThemeManifest.gitFileOf(url)?.owner;
-		if (owner === undefined) return undefined;
-		// GitUrl keeps the path segment as the url wrote it, and a name is shown decoded
-		try {
-			return decodeURIComponent(owner);
-		} catch {
-			return owner;
-		}
-	}
-
-	/**
-	 * The page someone can read a theme's source on, or undefined when that cannot be worked out.
-	 *
-	 * A theme is stored by its raw url, because that is what fetch needs. The raw url is not somewhere to send a person: it
-	 * serves the file as plain text with no syntax highlighting and no history. GitUrl gives the page for the file, which is
-	 * `/<owner>/<repo>/blob/<ref>/<path>` on github and the same idea on the other forges.
-	 */
-	static codeUrlOf(url: string): string | undefined {
-		return ThemeManifest.gitFileOf(url)?.browseUrl;
-	}
-
-	/**
-	 * What a theme file is, judged from what it contains.
-	 *
-	 * A theme is usually several files: one base that reworks the layout, one colorway per palette, and sometimes a font
-	 * pack. The tab listed them all the same, and the base showed the manifest's name - "cotton candy" - which is the name
-	 * of the whole theme, shared by every colorway, so the base read as if it were the colour file.
-	 *
-	 * The files separate cleanly by content:
-	 *
-	 *   techroundpack.css       13 @font-face, 102 blocks      -> Fonts
-	 *   base-windows.css         0 @font-face, 937 blocks      -> Base     (reworks layout: many rules)
-	 *   cottoncandy.css          0 @font-face,  14 blocks      -> Colorway (mostly :root variables)
-	 *   sourrainbowstrips.css    0 @font-face,  10 blocks      -> Colorway
-	 */
-	static kindOf(css?: string): ThemeKind {
-		if (css === undefined) return "Theme";
-		if (/@font-face/i.test(css)) return "Fonts";
-		const blocks = (css.match(/\{/g) ?? []).length;
-		// A colorway is a palette: variables dominate and there are barely any rules
-		if (blocks <= 40) return "Colorway";
-		return "Base";
-	}
-
-	/**
-	 * The url as a file in a git repository, or undefined when it is not one.
-	 *
-	 * Themes are shared as files in a repo, and every forge writes the same file several ways: a page url, a raw url, and
-	 * `raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>` on github. GitUrl reads all of them, memoized per url, so this
-	 * is the one place a theme url is taken apart and the conversions and the author lookup cannot disagree.
-	 *
-	 * Only a file url counts. `themes.example.com/cotton-candy.css` reads like a repository one folder deep on a host that is
-	 * not a forge, and an author guessed from that is worse than none.
-	 */
-	static gitFileOf(url: string): GitUrl | undefined {
-		const git = GitUrl.from(url);
-		if (git === undefined) return undefined;
-		return git.kind === "blob" || git.kind === "raw" ? git : undefined;
 	}
 }
