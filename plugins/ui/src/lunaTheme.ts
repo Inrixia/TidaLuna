@@ -65,6 +65,10 @@ export const lunaMuiTheme = createTheme({
 		},
 	},
 	typography: {
+		// Inherit the page's own font instead of MUI's default. Luna renders into TIDAL, which sets its typeface on the
+		// document, so anything Luna draws in its own root (the confirm dialog is one) came out in Roboto rather than the
+		// font the rest of the app uses. `inherit` takes whatever TIDAL set, and still falls back cleanly in a test page.
+		fontFamily: "inherit",
 		h7: {
 			...defaultTheme.typography.h6,
 			fontSize: "1.2rem",
