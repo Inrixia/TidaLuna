@@ -317,6 +317,16 @@ describe("install / uninstall", () => {
 		expect(persisted?.package?.hash).toBe("hash-1");
 	});
 
+	test("a package with nested objects persists with the sha256 of its code", async () => {
+		const author = { name: "Someone", url: "https://example.com" };
+		const { plugin } = await createPlugin("nestedP", { installed: false, enabled: false, package: { author, dependencies: { a: "1" } } });
+		await plugin.install();
+		await settle();
+		const persisted = await LunaPlugin.pluginStorage.get<LunaPluginStorage>("nestedP");
+		expect(persisted?.package?.codeSha256).toMatch(/^[0-9a-f]{64}$/);
+		expect(persisted?.package?.author).toStrictEqual(author);
+	});
+
 	test("installing another version of a plugin uninstalls the one that was installed", async () => {
 		const switchedFrom = await createPlugin("switch");
 		const switchedTo = await createPlugin("switch", { installed: false, enabled: false });
@@ -437,9 +447,17 @@ describe("enable / disable / reload", () => {
 		serve(url, "reload", { hash: "hash-2", code: pluginCode("reload", `globalThis.__lunaTest.log.push("v2");`) });
 		await plugin.reload();
 
+		// New code for an installed plugin waits for the user, the stored version keeps running (see acceptUpdate)
+		expect(plugin.package?.hash).toBe("hash-1");
+		expect(plugin.pendingUpdate._?.hash).toBe("hash-2");
+		// The reload ran the stored code again (the same module, so it logs no second load), nothing of v2
+		expect(log).toEqual(["load:reload", "unload:reload", "onUnload:reload"]);
+		log.length = 0;
+		await plugin.acceptUpdate();
+
 		expect(plugin.package?.hash).toBe("hash-2");
 		expect(plugin.code).toContain("v2");
-		expect(log).toEqual(["load:reload", "unload:reload", "onUnload:reload", "load:reload", "v2"]);
+		expect(log).toEqual(["onUnload:reload", "load:reload", "v2"]);
 		expect(server.codeRequests(url)).toBe(2);
 		expect(plugin.exports).toBeDefined();
 	});
@@ -673,7 +691,8 @@ describe("core plugins", () => {
 	});
 
 	test("reloadAll reports a plugin that failed and the dependants it took down", async () => {
-		const failing = await createPlugin("failA");
+		// A dev url, the only kind whose new code loads without waiting for the user
+		const failing = await createPlugin("failA", { url: `http://127.0.0.1:1/${++seq}/failA` });
 		const dependant = await createPlugin("failB");
 		failing.plugin.addDependant(dependant.plugin);
 
