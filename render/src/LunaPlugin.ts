@@ -6,7 +6,7 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
-import { allowedForAllVersions, codeToImport, isCoreUrl, isDevUrl, sha256Hex, updateLinks, updateWaitsForUser } from "./helpers/pluginUpdates";
+import { codeToImport, isCoreUrl, isDevUrl, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
 import {
 	asSentence,
 	changedDependency,
@@ -326,11 +326,9 @@ export class LunaPlugin {
 	/**
 	 * Dump all plugin storage entries
 	 */
-	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>>
-	{
+	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>> {
 		const data = await this.pluginStorage.dump();
-		if (!stripCode) 
-			return data;
+		if (!stripCode) return data;
 
 		const stripped = structuredClone(data);
 		for (const value of Object.values(stripped))
@@ -529,7 +527,7 @@ export class LunaPlugin {
 	public get url(): string {
 		return this.store.url;
 	}
-	public get package(): PluginPackage | undefined {
+	public get package(): Readonly<PluginPackage> | undefined {
 		return this.store.package;
 	}
 	public get code(): string | undefined {
@@ -683,7 +681,7 @@ export class LunaPlugin {
 	 * @returns The package it replaced, to put back if the update fails to load
 	 */
 	private applyUpdate(update: PluginPackage): PluginPackage | undefined {
-		const previous = this.package;
+		const previous = this.store.package;
 		this.package = update;
 		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
 		// Kept so a revocation of this update, whenever it arrives this session, puts the version the user had back (see restoreReplaced)
@@ -695,10 +693,6 @@ export class LunaPlugin {
 		const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: update.rawSha256 });
 		return decision.load ? undefined : decision.revoked;
 	}
-	/** Links to the source of an update and what it changes, for display (see helpers/pluginUpdates) */
-	public static readonly updateLinks = updateLinks;
-	/** The plugin's native permission answers that hold for all versions (see helpers/pluginUpdates) */
-	public static readonly allowedForAllVersions = allowedForAllVersions;
 
 	private static readonly announcedUpdates: Set<string> = new Set();
 	private static announceTimeout?: ReturnType<typeof setTimeout>;
@@ -807,8 +801,9 @@ export class LunaPlugin {
 		// A version replaced before an uninstall is not put back after a reinstall
 		this.replacedByUpdate = undefined;
 		// Uninstall can leave the old package, code included, in storage: install what the url serves now instead of offering it as an update
-		if (!this.installed && this.store.package?.code !== undefined)
-			this.store.package = { ...this.store.package, code: undefined, codeSha256: undefined, rawSha256: undefined, bomRawSha256: undefined };
+		const pkg = this.store.package;
+		// In place: a spread copy would carry the store's nested proxies, which IndexedDB can't clone
+		if (!this.installed && pkg?.code !== undefined) pkg.code = pkg.codeSha256 = pkg.rawSha256 = pkg.bomRawSha256 = undefined;
 
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
 		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);
@@ -841,7 +836,9 @@ export class LunaPlugin {
 		delete LunaPlugin.plugins[this.url];
 		await LunaPlugin.pluginStorage.del(this.name);
 		// A reinstall asks for native permissions again
-		await __ipcRenderer.invoke("__Luna.nativePermissions.forget", this.url).catch(this.trace.err.withContext("Failed to forget native permissions"));
+		await __ipcRenderer
+			.invoke("__Luna.nativePermissions.forget", this.url)
+			.catch(this.trace.err.withContext("Failed to forget native permissions"));
 		this.loading._ = false;
 		coreTrace.msg.log(`Uninstalled plugin ${this.name}${this.isDev ? " [DEV]" : ""}`);
 	}
@@ -1044,10 +1041,12 @@ export class LunaPlugin {
 				rawSha256(this.code),
 				this.package!.exactCode ? undefined : legacyBomSha256(this.code),
 			]);
-			const pkg = this.package!;
-			if (pkg.codeSha256 !== sha256 || pkg.rawSha256 !== raw || pkg.bomRawSha256 !== bomRaw)
-				this.package = { ...pkg, codeSha256: sha256, rawSha256: raw, bomRawSha256: bomRaw };
-			const keys = packageSha256s(this.package);
+			// In place: a spread copy would carry the store's nested proxies (author, dependencies), which IndexedDB can't clone
+			const pkg = this.store.package!;
+			if (pkg.codeSha256 !== sha256) pkg.codeSha256 = sha256;
+			if (pkg.rawSha256 !== raw) pkg.rawSha256 = raw;
+			if (pkg.bomRawSha256 !== bomRaw) pkg.bomRawSha256 = bomRaw;
+			const keys = packageSha256s(pkg);
 
 			// Code the registry revoked doesn't run (the list in use, see LunaRegistry for startup order)
 			const decision = LunaRegistry.loadDecision({ url: this.url, rawSha256: keys });

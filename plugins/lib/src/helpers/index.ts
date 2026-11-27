@@ -8,4 +8,5 @@ export * from "./parseDashManifest";
 export * from "./parseDate";
 export * from "./router";
 export * from "./safeTimeout";
+export * from "./shortHash";
 export * from "./trackTable";

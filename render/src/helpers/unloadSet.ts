@@ -12,11 +12,16 @@ export const unloadSet = async (unloads?: NullishLunaUnloads): Promise<void> => 
 
 	await Promise.all(
 		toUnload.map(async (unload) => {
+			let timeout: ReturnType<typeof setTimeout> | undefined;
 			try {
 				// Give each unload 5s to run before timing out so we dont deadlock
-				await Promise.race([unload(), new Promise((_, rej) => setTimeout(() => rej(new Error("Unload took longer than 5s to run...")), 5000))]);
+				const timedOut = new Promise((_, rej) => (timeout = setTimeout(() => rej(new Error("Unload took longer than 5s to run...")), 5000)));
+				await Promise.race([unload(), timedOut]);
 			} catch (err) {
 				coreTrace.msg.err.withContext(`Error unloading ${unload.source ?? ""}.${unload.name}`)(err);
+			} finally {
+				// Dont leave the timer running once the unload has finished
+				clearTimeout(timeout);
 			}
 		}),
 	);

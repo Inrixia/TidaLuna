@@ -151,8 +151,8 @@ describe("upc", () => {
 	});
 
 	test("has no MusicBrainz barcode to fall back on", async () => {
-		// brainzAlbum skips albums without a upc, so upc's `?? brainzAlbum()?.barcode` fallback is unreachable: an album
-		// whose TIDAL upc is missing never gets a MusicBrainz release to take a barcode from either
+		// brainzAlbum skips albums without a upc, so an album whose TIDAL upc is missing never gets a MusicBrainz release
+		// to take a barcode from either: this is TIDAL's upc or nothing
 		const album = makeAlbum("album-upc-brainz", { numberOfTracks: 10 });
 		vi.mocked(brainzJson).mockResolvedValue({ releases: [release({ barcode: "999" })] });
 

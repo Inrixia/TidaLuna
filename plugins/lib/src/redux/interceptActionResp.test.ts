@@ -41,15 +41,15 @@ describe("interceptActionResp", () => {
 		expect(interceptors["playbackControls/SEEK"]).toBeUndefined();
 	});
 
-	// rejActionTypes are waited on with interceptPromise too, which only resolves, so a rejection action settles the
-	// race with its payload instead of rejecting. Only the timeout rejects. See notes in the task report.
-	test("a rejection action ends the wait with its payload, not a rejection", async () => {
+	test("a rejection action rejects with its payload", async () => {
 		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/PLAY"], ["playbackControls/SEEK"]);
 
 		await flush();
+		// Attach first: this promise is meant to reject, and nothing else would handle it
+		const rejected = expect(response).rejects.toBe(999);
 		tidalAction("playbackControls/SEEK")(999);
 
-		await expect(response).resolves.toBe(999);
+		await rejected;
 		expect(interceptors["playbackControls/PLAY"]).toBeUndefined();
 		expect(interceptors["playbackControls/SEEK"]).toBeUndefined();
 	});
@@ -111,5 +111,28 @@ describe("interceptActionResp", () => {
 		expect(interceptors["playbackControls/PLAY"]).toBeUndefined();
 		expect(interceptors["playbackControls/PAUSE"]).toBeUndefined();
 		expect(Object.keys(interceptors)).toEqual([]);
+	});
+
+	test("leaves no timers running after it resolves", async () => {
+		vi.useFakeTimers();
+		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/SEEK"]);
+		await vi.advanceTimersByTimeAsync(0);
+
+		tidalAction("playbackControls/SEEK")(1);
+		await expect(response).resolves.toBe(1);
+
+		// neither the 5s response timeout nor the timers unloadSet races its unloads against are left
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	test("leaves no timers running after it rejects on timeout", async () => {
+		vi.useFakeTimers();
+		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/SEEK"]);
+		const rejected = expect(response).rejects.toThrow("[interceptActionResp.TIMEOUT]");
+
+		await vi.advanceTimersByTimeAsync(5_000);
+		await rejected;
+
+		expect(vi.getTimerCount()).toBe(0);
 	});
 });

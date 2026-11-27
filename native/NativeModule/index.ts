@@ -7,6 +7,8 @@ import { BrowserWindow } from "electron";
 import { ipcHandle } from "../ipc";
 
 import { createHash } from "crypto";
+import { askerFor } from "../core/confirmWindow";
+import { coreNativeArgsError, coreNativeQuestion, coreNativeRule } from "../core/policy";
 import * as expose from "../expose";
 import { isCoreNative } from "./coreNatives";
 import { secureLoad } from "./secureLoad";
@@ -33,6 +35,11 @@ export type NativeModuleInfo = {
 	isCore: boolean;
 };
 
+const installedVersion = async (pkg: () => Promise<{ version?: unknown }>): Promise<string | undefined> => {
+	const version = await pkg().then(({ version }) => version, () => undefined);
+	return typeof version === "string" ? version : undefined;
+};
+
 const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: string, code: string, url?: string) => {
 	const hash = createHash("sha256").update(code, "utf8").digest("hex");
 
@@ -57,7 +64,24 @@ const registerNative = async (event: Electron.IpcMainInvokeEvent, fileName: stri
 	globalThis.luna.modules[fileName] = exports;
 	const channel = `__LunaNative.${fileName}`;
 
-	ipcHandle(channel, async (_, exportName, ...args) => {
+	ipcHandle(channel, async (event, exportName, ...args) => {
+		// Luna's own natives are open to all page code: some may not be called from there, some only after the user confirms
+		if (moduleInfo.isCore) {
+			// One name for the rule, the question and the call: another type could pass the rule as one name and run as another
+			if (typeof exportName !== "string") throw new Error(`[🛑Security🛑] Export names must be strings`);
+			const rule = coreNativeRule(exportName);
+			if (rule === "deny") throw new Error(`[🛑Security🛑] ${exportName} can't be called from the page`);
+			if (rule === "confirm") {
+				// Nothing to confirm for a call that can't run: the window would show the page's text for nothing
+				if (typeof exports[exportName] !== "function") throw new Error(`[Luna.native] (${fileName}) has no export ${exportName}`);
+				const invalid = coreNativeArgsError(exportName, args);
+				if (invalid !== undefined) throw new Error(`[Luna.native] ${invalid}`);
+				// update.ts exports pkg: the installed version shows next to the one asked for
+				const current = exportName === "update" && typeof exports.pkg === "function" ? await installedVersion(exports.pkg) : undefined;
+				const [title, lines, confirmText] = coreNativeQuestion(exportName, args, current);
+				if (!(await askerFor(event.sender)({ title, lines, confirmText }))) throw new Error(`[Luna] ${exportName} cancelled by the user`);
+			}
+		}
 		try {
 			return await exports[exportName](...args);
 		} catch (err: any) {

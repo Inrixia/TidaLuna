@@ -200,8 +200,8 @@ describe("create", () => {
 
 		await Playlist.create("Empty");
 
-		// `chunkArray([])` gives one empty chunk, so one add request with no items is still made
-		expect(add.mock.calls).toEqual([[uuid, []]]);
+		// `chunkArray([])` gives one empty chunk, and TIDAL rejects an add request with no items, so there must be none
+		expect(add).not.toHaveBeenCalled();
 	});
 
 	test("shows the new playlist in TIDAL's lists even when adding its items fails", async () => {
