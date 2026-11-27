@@ -5,8 +5,10 @@ import { ReactiveStore } from "./ReactiveStore";
 import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
+import { notAskedMessage } from "../../native/core/notAsked";
+import { isCoreUrl, isDevUrl } from "../../native/core/policy";
+import type { CorePluginInfo, PendingUpdate } from "../../native/core/registry";
 import * as ftch from "./helpers/fetch";
-import { codeToImport, isDevUrl, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
 
@@ -39,12 +41,15 @@ export type PluginPackage = {
 	devDependencies?: string[];
 	code?: string;
 	/**
-	 * sha256 (hex) of the text Luna imports for `code`, set when it loads or waits as an update.
-	 * Not the hash of the served `<url>.mjs` alone. To reproduce it: take the served .mjs text, append `\n//# sourceURL=<url>.mjs`,
-	 * apply helpers/pluginUpdates codeToImport(text, url), and sha256 the result as UTF-8.
+	 * sha256 (hex) of the code Luna runs, set by Luna core (native/core/registry.ts).
+	 * To reproduce it: take the served `<url>.mjs` text, append `\n//# sourceURL=<url>.mjs`, and sha256 the result as UTF-8.
 	 */
 	codeSha256?: string;
 };
+
+// Trust decisions (install, enable, which code runs, updates, natives) are made by Luna core in the main process, see
+// native/core/coreWorld.ts. This class runs the code the core hands over and keeps the page-side state for the UI.
+export type { CorePluginInfo, PendingUpdate };
 
 // If adding to this make sure that the values are initalized in LunaPlugin.fromStorage
 export type LunaPluginStorage = {
@@ -157,9 +162,16 @@ export class LunaPlugin {
 		const createNonPersistedStore = () => obyStore({ ...storeInit, installed: false, enabled: false }) as LunaPluginStorage;
 
 		let store: LunaPluginStorage;
+		// A plugin only named like one of Luna's own never touches that plugin's stored copy (stored by name)
+		if (LunaPlugin.corePlugins.has(name) && !isCoreUrl(storeInit.url)) {
+			const plugin = (this.plugins[storeInit.url] ??= new this(name, createNonPersistedStore()));
+			return plugin.load();
+		}
 		// Get persisted store to check if this URL matches
 		const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(name);
-		if (persistedStore.url === undefined || persistedStore.url === storeInit.url) {
+		// Luna's own plugin takes back its stored copy from a plugin only named like it (stored before, or imported)
+		const coreReclaims = isCoreUrl(storeInit.url) && (typeof persistedStore.url !== "string" || !isCoreUrl(persistedStore.url));
+		if (persistedStore.url === undefined || persistedStore.url === storeInit.url || coreReclaims) {
 			// First time loading or this is the persisted version - use persisted store
 			store = persistedStore;
 			Object.assign(store, storeInit);
@@ -185,25 +197,61 @@ export class LunaPlugin {
 	// Moves installed plugins to a new store url <3
 	public static async migrateBaseUrl(fromBaseUrl: string, toBaseUrl: string): Promise<void> {
 		const fromPrefix = `${fromBaseUrl}/`.toLowerCase();
-		for (const name of await this.pluginStorage.keys()) {
-			const store = await this.pluginStorage.getReactive<LunaPluginStorage>(name);
-			if (!store.url?.toLowerCase().startsWith(fromPrefix)) continue;
-
-			const newUrl = `${toBaseUrl}/${store.url.slice(fromPrefix.length)}`;
+		await this.migrateToCore();
+		// Luna core holds what is installed: its record moves (other code at the new url waits as an update), the page's copy follows
+		for (const { url, name } of await __LunaCore.list()) {
+			if (!url.toLowerCase().startsWith(fromPrefix)) continue;
+			const newUrl = `${toBaseUrl}/${url.slice(fromPrefix.length)}`;
+			try {
+				await __LunaCore.moveUrl(url, newUrl);
+			} catch (err) {
+				this.trace.msg.err.withContext(`Failed to move plugin ${name} to ${newUrl}`)(err);
+				continue;
+			}
 			// Re-key loaded plugin so it isnt duplicated <3
-			const plugin = this.plugins[store.url];
+			const plugin = this.plugins[url];
 			if (plugin !== undefined) {
-				delete this.plugins[store.url];
+				delete this.plugins[url];
 				this.plugins[newUrl] = plugin;
 			}
-			this.trace.log(`Migrating plugin ${name} from ${store.url} to ${newUrl}`);
-			store.url = newUrl;
+			this.trace.log(`Migrating plugin ${name} from ${url} to ${newUrl}`);
+			const store = await this.pluginStorage.getReactive<LunaPluginStorage>(name);
+			if (store.url === url) store.url = newUrl;
+			if (plugin !== undefined && plugin.store.url === url) plugin.store.url = newUrl;
 		}
 	}
 
+	private static migrated?: Promise<void>;
+	/** The first start with Luna core hands over what the page had stored (native plugins then wait for the user) */
+	public static migrateToCore(): Promise<void> {
+		return (this.migrated ??= (async () => {
+			if (!(await __LunaCore.needsMigration())) return;
+			const stored = await LunaPlugin.pluginStorage.dump();
+			const entries = Object.entries(stored).flatMap(([key, value]: [string, any]) =>
+				value?.installed && typeof value.url === "string"
+					? [{ url: value.url, name: typeof value.package?.name === "string" ? value.package.name : key, enabled: value.enabled === true }]
+					: [],
+			);
+			await __LunaCore.migrate(entries);
+		})().catch((err) => {
+			// Tried again by the next caller
+			this.migrated = undefined;
+			throw err;
+		}));
+	}
+
 	public static async loadStoredPlugins() {
-		const keys = await LunaPlugin.pluginStorage.keys();
-		return Promise.all(keys.map(async (name) => LunaPlugin.fromName(name).catch(this.trace.err.withContext("loadStoredPlugins", name))));
+		await this.migrateToCore();
+		// What is installed comes from Luna core, not from the page's storage (page code can write that)
+		const installed = await __LunaCore.list();
+		return Promise.all(
+			installed.map(async ({ url, name }) => {
+				// The page's copy of the package is kept for display (description, author), its code never runs (see fetchPackage)
+				const stored = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(name);
+				const pkg = stored.url === url && stored.package?.name === name ? stored.package : ({ name } as PluginPackage);
+				return LunaPlugin.fromStorage({ url, package: pkg }).catch(this.trace.err.withContext("loadStoredPlugins", name));
+			}),
+		);
 	}
 
 	/**
@@ -213,7 +261,7 @@ export class LunaPlugin {
 	 */
 	public static async reloadAll(): Promise<LunaPlugin[]> {
 		const plugins = Object.values(LunaPlugin.plugins).filter(
-			(plugin) => plugin.installed && plugin.enabled && !LunaPlugin.corePlugins.has(plugin.name),
+			(plugin) => plugin.installed && plugin.enabled && !plugin.isCore,
 		);
 		const failed: LunaPlugin[] = [];
 		const dependants: LunaPlugin[] = [];
@@ -264,7 +312,7 @@ export class LunaPlugin {
 		public readonly name: string,
 		public readonly store: LunaPluginStorage,
 	) {
-		const devSuffix = this.store.url.startsWith("http://127.0.0.1") ? " [DEV]" : "";
+		const devSuffix = isDevUrl(this.store.url) ? " [DEV]" : "";
 		this.trace = LunaPlugin.trace.withSource(`[${this.name}]${devSuffix}`).trace;
 		// Enabled has to be setup first because liveReload below accesses it
 		this._enabled = new Signal(this.store.enabled, (next) => {
@@ -374,7 +422,7 @@ export class LunaPlugin {
 	 */
 	public static fromStack(stack?: string): LunaPlugin | undefined {
 		if (stack === undefined) return undefined;
-		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !LunaPlugin.corePlugins.has(plugin.name) && plugin.url.length > 0);
+		const plugins = Object.values(LunaPlugin.plugins).filter((plugin) => !plugin.isCore && plugin.url.length > 0);
 		for (const frame of stack.split("\n")) {
 			const plugin = plugins.find((plugin) => frame.includes(`${plugin.url}.mjs`));
 			if (plugin !== undefined) return plugin;
@@ -401,6 +449,14 @@ export class LunaPlugin {
 	}
 	public get installed(): boolean {
 		return this.store.installed;
+	}
+	/** One of Luna's own plugins: served from its bundle (`https://luna/`), not just named like one */
+	public get isCore(): boolean {
+		return isCoreUrl(this.url) && LunaPlugin.corePlugins.has(this.name);
+	}
+	/** Named like one of Luna's own plugins but served from elsewhere: it has no stored copy, that name's belongs to Luna's */
+	private get namedLikeCore(): boolean {
+		return LunaPlugin.corePlugins.has(this.name) && !isCoreUrl(this.url);
 	}
 	public get isDev(): boolean {
 		return isDevUrl(this.url);
@@ -433,16 +489,60 @@ export class LunaPlugin {
 	 * Load the plugin if it is enabled
 	 */
 	public async load(): Promise<LunaPlugin> {
-		if (this.enabled && this.installed !== false) await this.enable();
+		const isCore = isCoreUrl(this.url);
+		const info = isCore ? undefined : await __LunaCore.info(this.url);
+		if (!isCore) {
+			// The page's copy only mirrors Luna core's state, for the UI
+			this.store.installed = info !== undefined;
+			this._enabled._ = info?.enabled === true;
+			this.setPendingUpdate(info?.pending);
+		}
+		if (isCore ? this.enabled : info?.enabled) await this.loadEnabled();
 		return this;
 	}
 	// #endregion
 
+	/**
+	 * Runs a core request that may ask the user. If the core did not ask (TIDAL not in use, too many requests, a cool-down
+	 * after cancels), says why instead of doing nothing: counts as not allowed
+	 */
+	private async askCore(request: () => Promise<boolean>): Promise<boolean> {
+		try {
+			return await request();
+		} catch (err) {
+			const message = notAskedMessage(err);
+			if (message === undefined) throw err;
+			this.trace.msg.warn(message);
+			return false;
+		}
+	}
+
 	// #region enable/disable
+	/** Asks Luna core, which asks the user before enabling native code */
 	public async enable() {
+		if (!(await this.askCore(() => __LunaCore.enable(this.url)))) {
+			// Not installed or not allowed by the user
+			this._enabled._ = false;
+			return;
+		}
+		await this.loadEnabled();
+	}
+	private async loadEnabled() {
 		try {
 			this.loading._ = true;
 			await this.loadExports();
+			if (!isCoreUrl(this.url)) {
+				// The switch shows Luna core's state: it may have refused to run the plugin (a migrated native plugin waits
+				// until the user enables it again, which shows them its native code)
+				const info = await __LunaCore.info(this.url);
+				this.store.installed = info !== undefined;
+				this.setPendingUpdate(info?.pending);
+				if (info?.enabled !== true) {
+					this._enabled._ = false;
+					if (this.coreRefusal !== undefined) this.trace.msg.warn(this.coreRefusal);
+					return;
+				}
+			}
 			this._enabled._ = true;
 			this.store.installed = true;
 			// Ensure live reload is running it it should be
@@ -454,9 +554,15 @@ export class LunaPlugin {
 	public async disable() {
 		// Disable the reload loop
 		this.stopReloadLoop();
-		await this.unload();
-		this._enabled._ = false;
-		this.loadError._ = undefined;
+		// Unload first: its unloads may still call its natives, which the core refuses once it is disabled
+		try {
+			await this.unload();
+		} finally {
+			// Even if its unloads throw: the user disabled it
+			await __LunaCore.disable(this.url);
+			this._enabled._ = false;
+			this.loadError._ = undefined;
+		}
 	}
 	public async reload() {
 		// LoadExports will handle unloading etc and ensure code is live
@@ -466,37 +572,33 @@ export class LunaPlugin {
 
 	// #region updates
 	/**
-	 * New code fetched for this plugin that the user has not accepted yet, as its package with code.
-	 * The stored code keeps running until acceptUpdate. Refetched each time the plugin loads (client start, reload).
+	 * An update the url serves that the user has not accepted yet: its version, code sha256 and native files, and which
+	 * native files it adds or removes. The accepted version keeps running until acceptUpdate. Found each time the plugin
+	 * loads (client start, reload).
 	 */
-	public readonly pendingUpdate: Signal<PluginPackage | undefined> = new Signal(undefined);
-	/**
-	 * Store the update and run it if the plugin is enabled.
-	 * @param update The update the user was shown. If the url has served a newer one since, that one becomes the pending update.
-	 * @param beforeLoad Runs right before the update is applied, holding loadSemaphore (the dialog's "Ask again" revokes
-	 * there). If it throws, the update is not applied
-	 */
-	public async acceptUpdate(update: PluginPackage | undefined = this.pendingUpdate._, beforeLoad?: () => Promise<void>): Promise<void> {
-		if (update?.code === undefined) return;
-		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${update.version ?? ""}`);
-		if (this.enabled) return this.loadExports(true, update, beforeLoad);
-		const release = await this.loadSemaphore.obtain();
-		try {
-			await beforeLoad?.();
-			this.applyUpdate(update);
-		} finally {
-			release();
-		}
+	public readonly pendingUpdate: Signal<PendingUpdate | undefined> = new Signal(undefined);
+	private setPendingUpdate(update: PendingUpdate | undefined) {
+		// The same update found again keeps its object
+		if (update?.hash === this.pendingUpdate._?.hash) return;
+		this.pendingUpdate._ = update;
+		if (update !== undefined) LunaPlugin.announceUpdate(this.name);
 	}
 	/**
-	 * Call while holding loadSemaphore.
-	 * @returns The package it replaced, to put back if the update fails to load
+	 * Luna core shows the update to the user in its own window and runs it once they accept; a call from page code alone
+	 * accepts nothing. The update is the one the core has waiting: if the url served a newer one since, that one is shown.
+	 * @returns Whether the user accepted it
 	 */
-	private applyUpdate(update: PluginPackage): PluginPackage | undefined {
-		const previous = this.store.package;
-		this.package = update;
-		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
-		return previous;
+	public async acceptUpdate(): Promise<boolean> {
+		if (this.pendingUpdate._ === undefined) return false;
+		// Throws when what the user chose in the window failed ("Ask again" couldn't revoke): said here, the card's button stays
+		const accepted = await this.askCore(() => __LunaCore.acceptUpdate(this.url)).catch(
+			this.trace.msg.err.withContext(`Not updating ${this.name}`).throw,
+		);
+		if (!accepted) return false;
+		this.trace.msg.log(`Updating ${this.name} ${this.package?.version ?? ""} -> ${this.pendingUpdate._?.version ?? ""}`);
+		this.pendingUpdate._ = undefined;
+		if (this.enabled) await this.loadExports(true);
+		return true;
 	}
 
 	private static readonly announcedUpdates: Set<string> = new Set();
@@ -515,27 +617,28 @@ export class LunaPlugin {
 
 	// #region install/uninstall
 	public async install() {
+		// Luna core asks the user, in its own window
+		if (!(await this.askCore(() => __LunaCore.install(this.url)))) return;
 		this.loading._ = true;
-		// Uninstall can leave the old package, code included, in storage: install what the url serves now instead of offering it as an update
-		const pkg = this.store.package;
-		if (!this.installed && pkg?.code !== undefined) pkg.code = pkg.codeSha256 = undefined;
 
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
-		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);
+		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed && !p.isCore);
 		for (const other of otherVersions) {
 			coreTrace.msg.log(`Switching plugin ${this.name} from ${other.url} to ${this.url}`);
 			await other.uninstall();
 		}
 
-		// Update persisted store with this plugin's URL so it loads on restart
-		const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(this.name);
-		persistedStore.url = this.url;
-		persistedStore.package = this.store.package;
-		persistedStore.installed = true;
-		persistedStore.enabled = true;
+		// Update persisted store with this plugin's URL so it loads on restart (not a lookalike of Luna's own: see fromStorage)
+		if (!this.namedLikeCore) {
+			const persistedStore = await LunaPlugin.pluginStorage.getReactive<LunaPluginStorage>(this.name);
+			persistedStore.url = this.url;
+			persistedStore.package = this.store.package;
+			persistedStore.installed = true;
+			persistedStore.enabled = true;
+		}
 
 		this.store.installed = true;
-		await this.enable();
+		await this.loadEnabled();
 		coreTrace.msg.log(`Installed plugin ${this.name}${this.isDev ? " [DEV]" : ""}`);
 	}
 	public async uninstall() {
@@ -548,11 +651,9 @@ export class LunaPlugin {
 		this.store.installed = false;
 		this.pendingUpdate._ = undefined;
 		delete LunaPlugin.plugins[this.url];
-		await LunaPlugin.pluginStorage.del(this.name);
-		// A reinstall asks for native permissions again
-		await __ipcRenderer
-			.invoke("__Luna.nativePermissions.forget", this.url)
-			.catch(this.trace.err.withContext("Failed to forget native permissions"));
+		if (!this.namedLikeCore) await LunaPlugin.pluginStorage.forget(this.name);
+		// Luna core also forgets its native permissions, so a reinstall asks again
+		await __LunaCore.uninstall(this.url).catch(this.trace.err.withContext("Failed to uninstall in Luna core"));
 		this.loading._ = false;
 		coreTrace.msg.log(`Uninstalled plugin ${this.name}${this.isDev ? " [DEV]" : ""}`);
 	}
@@ -560,52 +661,24 @@ export class LunaPlugin {
 
 	// #region Fetch
 	/**
+	 * Gets the code to run from Luna core: the version the user accepted (Luna's own plugins: what its bundle serves).
 	 * Returns true if code changed, should never be called outside of loadExports
 	 */
+	private coreRefusal?: string;
 	private async fetchPackage(): Promise<boolean> {
 		try {
 			this.fetching._ = true;
-			const newPackage = await LunaPlugin.fetchPackage(this.url);
-			// Delete this just to be safe
-			delete newPackage.code;
-
-			const codeChanged = this.package?.hash !== newPackage.hash;
-			// If code hasnt changed then just reuse stored code, or the code of the update already waiting.
-			// Its sha256 comes along, never from the url's json (loadExports recomputes it from what it imports)
-			const reused = !codeChanged ? this.package : this.pendingUpdate._?.hash === newPackage.hash ? this.pendingUpdate._ : undefined;
-			newPackage.code = reused?.code;
-			newPackage.codeSha256 = reused?.code !== undefined ? reused.codeSha256 : undefined;
-
-			// Ensure that code is fetched if its changed or undefined
-			newPackage.code ??= `${await LunaPlugin.fetchCode(this.url)}\n//# sourceURL=${this.url}.mjs`;
-
-			// New code for a plugin that already has code waits for the user (see acceptUpdate), the stored code keeps running
-			const waits = updateWaitsForUser({
-				codeChanged,
-				hasCode: this.code !== undefined,
-				isDev: this.isDev,
-				liveReload: this._liveReload._,
-				// By url, not by name: any plugin can name itself like a core plugin, only Luna serves https://luna/
-				isCore: this.url.startsWith("https://luna/"),
-			});
-			if (waits) {
-				// The same update fetched again keeps its object, so an open update dialog still matches it
-				if (this.pendingUpdate._?.hash !== newPackage.hash) {
-					this.trace.log(`Update ${this.package?.version ?? ""} -> ${newPackage.version ?? ""} waits for confirmation`);
-					newPackage.codeSha256 = await sha256Hex(codeToImport(newPackage.code, this.url));
-					this.pendingUpdate._ = newPackage;
-					LunaPlugin.announceUpdate(this.name);
-				}
-				return false;
-			}
-			this.pendingUpdate._ = undefined;
-
-			// Only replace the stored package once its code is fetched, so a failed fetch keeps the cached code
-			this.package = newPackage;
-
+			this.coreRefusal = undefined;
+			const { package: newPackage, code, pending } = await __LunaCore.load(this.url);
+			const codeChanged = this.package?.hash !== newPackage.hash || this.code !== code;
+			this.package = { ...newPackage, code };
+			this.setPendingUpdate(pending);
 			return codeChanged;
-		} catch {
-			// Fail silently if we cant fetch
+		} catch (err) {
+			// The core runs nothing it hasn't got: the page's copy of the code must not run instead
+			this.coreRefusal = `Failed to get code from Luna core: ${(err as Error)?.message ?? err}`;
+			this.trace.warn(this.coreRefusal);
+			if (this.package !== undefined) this.package = { ...this.package, code: undefined };
 		} finally {
 			this.fetching._ = false;
 		}
@@ -615,24 +688,10 @@ export class LunaPlugin {
 
 	// #region Load
 	private readonly loadSemaphore: Semaphore = new Semaphore(1);
-	/**
-	 * @param update A pending update the user accepted, stored before fetching (see acceptUpdate)
-	 */
-	private async loadExports(reload?: true, update?: PluginPackage, beforeLoad?: () => Promise<void>): Promise<void> {
+	private async loadExports(reload?: true): Promise<void> {
 		// Ensure we cant start loading midway through loading
 		const release = await this.loadSemaphore.obtain();
-		// Under the semaphore: no other load of this plugin runs between it and the update (see acceptUpdate). Before the
-		// try below, whose catch would unload the running version
-		if (beforeLoad !== undefined)
-			try {
-				await beforeLoad();
-			} catch (err) {
-				release();
-				throw err;
-			}
-		let replaced: { previous: PluginPackage | undefined } | undefined;
 		try {
-			if (update !== undefined) replaced = { previous: this.applyUpdate(update) };
 			// If code hasnt changed and we have already loaded exports we are done
 			const codeChanged = await this.fetchPackage();
 			if (!reload && !codeChanged && this.exports !== undefined) return;
@@ -644,14 +703,7 @@ export class LunaPlugin {
 			// Ensure we unload if previously loaded
 			await this.unload();
 
-			// Name this plugin's url when its native code registers, so its permissions are kept per plugin (see native/NativeModule/trust.ts)
-			// Only the call build/plugins/lunaNativePlugin.ts emits, not the same text inside a native file's code string
-			const code = codeToImport(this.code, this.url);
-			// Keep the hash of exactly what runs beside the code (the json `hash` only says the code changed)
-			const sha256 = await sha256Hex(code);
-			// In place: a spread copy would carry the store's nested proxies (author, dependencies), which IndexedDB can't clone
-			const pkg = this.store.package!;
-			if (pkg.codeSha256 !== sha256) pkg.codeSha256 = sha256;
+			const code = this.code;
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
 			try {
 				this.exports = await import(blobURL);
@@ -704,12 +756,6 @@ export class LunaPlugin {
 			this.trace.msg.err.withContext(`Failed to load`)(err);
 			// Ensure we arnt partially loaded
 			await this.unload();
-			// An accepted update that fails to load waits again, the version the user had is the one stored (and runs on the next load)
-			if (replaced !== undefined && update !== undefined && this.package?.hash === update.hash) {
-				if (replaced.previous !== undefined) this.package = replaced.previous;
-				// Unless the url served a newer update meanwhile
-				if (this.pendingUpdate._ === undefined) this.pendingUpdate._ = update;
-			}
 			// For sanity throw the error just to be safe
 			throw err;
 		} finally {

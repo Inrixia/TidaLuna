@@ -1,9 +1,20 @@
 // Luna's confirmations (for now the core natives that need the user, see policy.ts), asked by the main process in a
 // NativeConfirm window, like the native permission window: TIDAL's page can't see, cover or click it.
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow, ipcMain, shell } from "electron";
 
 import { NativeConfirm } from "../NativeConfirm/NativeConfirm";
-import { buildConfirmHtml, confirmGate, confirmRequest, USER_INPUT_MS, type ConfirmRequest } from "./confirmPage";
+import {
+	actionToRun,
+	buildConfirmHtml,
+	confirmGate,
+	confirmLinks,
+	confirmRequest,
+	type ConfirmRequest,
+	type ConfirmWarning,
+	httpLink,
+	shownWarning,
+	USER_INPUT_MS,
+} from "./confirmPage";
 import { notAsked } from "./notAsked";
 
 const confirmWindow = new NativeConfirm<"yes" | "no">({
@@ -24,6 +35,7 @@ const watched = new WeakSet<BrowserWindow>();
  * Asks the user. `answer` is true only if they clicked the confirm button; closing the window is a cancel.
  * `refused` says why no window opened: TIDAL is not in use (the request came from page code), too many are waiting, or
  * the last ones were all cancelled (see confirmGate), or TIDAL was hidden before its turn came.
+ * Rejects if the warning's action the user chose failed: what they confirmed was with it done.
  *
  * @param recentUserInput See TidalState
  */
@@ -48,11 +60,42 @@ const askConfirm = async (
 	}
 	let answer: boolean | undefined;
 	try {
-		const asked = await confirmWindow.ask(parent, () => ({ html: buildConfirmHtml(request), answers: ["yes", "no"] }));
+		let warning: ConfirmWarning | undefined;
+		// The user chose the warning's action: it runs if they confirm (closing or cancelling drops it)
+		let warningChosen = false;
+		const asked = await confirmWindow.ask(parent, () => {
+			// Taken when the window's turn comes: prompts before it may have changed what it warns about
+			warning = shownWarning(request);
+			const links = confirmLinks(request);
+			return {
+				html: buildConfirmHtml({ ...request, warning }),
+				answers: ["yes", "no"],
+				onNote: (what, run) => {
+					const link = what.startsWith("link:") ? httpLink(links[Number(what.slice(5))]) : undefined;
+					if (link !== undefined) void shell.openExternal(link).catch(() => {});
+					if (what === "action" && warning !== undefined && !warningChosen) {
+						warningChosen = true;
+						run(`window.warningDone(${JSON.stringify(warning.done)})`);
+					}
+				},
+			};
+		});
 		// Not the user's cancel: TIDAL was hidden or the window failed before it showed
 		if (!asked?.shown) return { answer: false, refused: "its window could not be shown over TIDAL" };
 		// Closing the window is a cancel
-		answer = asked.answer === "yes";
+		const confirmed = asked.answer === "yes";
+		const action = actionToRun(confirmed, warningChosen, warning);
+		// Runs after the window's turn: revokeAllVersions is synchronous, so it is done before the next prompt reads its warning.
+		// Before the answer counts: what it confirms (an update, say) must find the action done. If it fails, the
+		// confirmation fails: the asker (registry.ts) does nothing, and the renderer shows why
+		if (action !== undefined)
+			try {
+				await action();
+			} catch (err: any) {
+				console.error("[🛑Security🛑] The confirmation's warning action failed", err);
+				throw new Error(`[Luna.core] "${warning?.action}" failed, so "${request.title}" is not confirmed: ${err?.message ?? err}`);
+			}
+		answer = confirmed;
 		return { answer };
 	} finally {
 		gate.answered(answer, Date.now());
@@ -83,8 +126,8 @@ ipcMain.on("__Luna.userInput", (event, active: unknown) => {
 export const askerFor = (sender: Electron.WebContents) => {
 	const parent = BrowserWindow.fromWebContents(sender) ?? undefined;
 	const recentUserInput = Date.now() - (lastInput.get(sender.id) ?? -Infinity) < USER_INPUT_MS;
-	return async ({ title, lines, confirmText }: ConfirmRequest): Promise<boolean> => {
-		const request = confirmRequest(title, lines, confirmText);
+	return async ({ title, lines, confirmText, warning }: ConfirmRequest): Promise<boolean> => {
+		const request = confirmRequest(title, lines, confirmText, warning);
 		const { answer, refused } = await askConfirm(request, parent, recentUserInput);
 		if (refused === undefined) return answer;
 		throw notAsked(request.title, refused);

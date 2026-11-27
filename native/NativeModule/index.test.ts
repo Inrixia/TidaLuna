@@ -1,6 +1,8 @@
 import { ipcMain } from "electron";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createRegistry, type CoreState, type PluginPackage } from "../core/registry";
+
 /**
  * The handler registerNative installs for a native module's channel is where the core rules are enforced: a deny rule
  * throws, a confirm rule asks first, arguments are checked before the window opens. policy.test.ts covers the rules
@@ -14,8 +16,11 @@ const mocks = vi.hoisted(() => {
 		askerFor: vi.fn(),
 		secureLoad: vi.fn(),
 		isCoreNative: vi.fn(async (_hash: string) => true),
+		/** The registry index.ts asks who owns a plugin's native file (see pluginRegistry below) */
+		registry: {} as { current: unknown },
 	};
 });
+vi.mock("../core/registryMain", () => ({ registry: () => mocks.registry.current }));
 vi.mock("../core/confirmWindow", () => ({ askerFor: mocks.askerFor }));
 vi.mock("./secureLoad", () => ({ secureLoad: mocks.secureLoad }));
 vi.mock("./coreNatives", () => ({ isCoreNative: mocks.isCoreNative }));
@@ -27,6 +32,28 @@ const registered = new Map<string, Handler>();
 const handlers = () => {
 	for (const [channel, handler] of vi.mocked(ipcMain.handle).mock.calls) registered.set(channel, handler as unknown as Handler);
 	return registered;
+};
+
+const PLUGIN_URL = "https://example.com/plugin";
+/**
+ * A plugin installed the way Luna core does it (core/registry.ts): the user accepted it, it is enabled, and its accepted
+ * code holds the native file. `code` is what the page will register for `fileName`.
+ */
+const pluginRegistry = async (fileName: string, code: string) => {
+	let state: CoreState | null = null;
+	const pkg: PluginPackage = { name: "plugin", hash: "h1", version: "1.0.0" };
+	const registry = createRegistry({
+		read: () => state,
+		write: (next) => void (state = JSON.parse(JSON.stringify(next))),
+		fetchPackage: async () => ({ ...pkg }),
+		fetchCode: async () => "plugin code",
+		nativeSources: () => ({ [fileName]: code }),
+		forgetAnswers: () => {},
+		allVersionsAnswers: () => [],
+		revokeAllVersions: () => {},
+	});
+	expect(await registry.install(PLUGIN_URL, async () => true)).toBe(true);
+	return registry;
 };
 
 const exportsOf = () => ({
@@ -145,11 +172,32 @@ describe("a core native's channel", () => {
 
 describe("a plugin's channel", () => {
 	it("is not subject to the core rules", async () => {
+		mocks.registry.current = await pluginRegistry("plugin.native.ts", "code of plugin.native.ts");
 		const call = await register("plugin.native.ts", { isCore: false });
 
 		await expect(call(event, "sendToRender")).resolves.toBe("sent");
 		await expect(call(event, "update", "../x")).resolves.toBe("updated ../x");
 
 		expect(mocks.ask).not.toHaveBeenCalled();
+	});
+
+	it("is not registered for native code no enabled plugin holds", async () => {
+		mocks.registry.current = await pluginRegistry("plugin.native.ts", "code of plugin.native.ts");
+
+		// Another file name, and the same name with other code
+		await expect(register("other.native.ts", { isCore: false })).rejects.toThrow("not native code of an enabled plugin");
+		mocks.registry.current = await pluginRegistry("plugin.native.ts", "other code");
+		await expect(register("plugin.native.ts", { isCore: false })).rejects.toThrow("not native code of an enabled plugin");
+	});
+
+	it("stops working when the plugin is disabled", async () => {
+		const registry = await pluginRegistry("plugin.native.ts", "code of plugin.native.ts");
+		mocks.registry.current = registry;
+		const call = await register("plugin.native.ts", { isCore: false });
+		await expect(call(event, "allowed", 1)).resolves.toBe(2);
+
+		await registry.disable(PLUGIN_URL);
+
+		await expect(call(event, "allowed", 1)).rejects.toThrow("is not a native channel of an enabled plugin");
 	});
 });

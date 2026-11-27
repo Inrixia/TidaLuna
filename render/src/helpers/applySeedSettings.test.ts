@@ -10,6 +10,9 @@ import { applySeedSettings } from "./applySeedSettings";
  * the plugin storage through `LunaPlugin`, whose module boots TIDAL (`render/src/LunaPlugin.ts`), so it is mocked with
  * the statics this file uses. Its own stores are the real ReactiveStore on fake-indexeddb.
  *
+ * What is installed lives in Luna core (`__LunaCore`, main process), which is faked here from the same `storage` map the
+ * page's copy is kept in: an installed entry with a url is a plugin core lists, and `uninstall` removes it.
+ *
  * `../modules` is mocked because the trace helpers dispatch a TIDAL message through it on every error.
  */
 const stubs = vi.hoisted(() => {
@@ -22,6 +25,8 @@ const stubs = vi.hoisted(() => {
 		plugins: {} as Record<string, { installed?: boolean; url?: string }>,
 		corePlugins: new Set<string>(),
 		pluginStorage: { keys: vi.fn(), get: vi.fn(), del: vi.fn() },
+		migrateToCore: vi.fn(async () => {}),
+		core: { list: vi.fn(), uninstall: vi.fn() },
 		fromStorage: vi.fn(async ({ url, package: pkg }: { url: string; package?: unknown }) => {
 			const plugin = { url, package: pkg, installed: false, install: vi.fn(async () => {}) };
 			created.push(plugin);
@@ -36,6 +41,7 @@ const stubs = vi.hoisted(() => {
 vi.mock("../LunaPlugin", () => ({
 	LunaPlugin: {
 		pluginStorage: stubs.pluginStorage,
+		migrateToCore: stubs.migrateToCore,
 		corePlugins: stubs.corePlugins,
 		plugins: stubs.plugins,
 		fromStorage: stubs.fromStorage,
@@ -44,6 +50,8 @@ vi.mock("../LunaPlugin", () => ({
 	},
 }));
 vi.mock("./fetch", () => ({ json: stubs.json }));
+// The user is in TIDAL: waiting for the focus is tested with userInTidal itself
+vi.mock("./userInTidal", () => ({ userInTidal: async () => {} }));
 vi.mock("../modules", () => ({ reduxStore: { dispatch: vi.fn() } }));
 
 const userStore = ReactiveStore.getStore("@luna/storage");
@@ -85,6 +93,15 @@ beforeEach(async () => {
 	stubs.pluginStorage.keys.mockImplementation(async () => [...stubs.storage.keys()]);
 	stubs.pluginStorage.get.mockImplementation(async (key: string) => stubs.storage.get(key));
 	stubs.pluginStorage.del.mockImplementation(async (key: string) => void stubs.storage.delete(key));
+	stubs.core.list.mockImplementation(async () =>
+		[...stubs.storage]
+			.filter(([, entry]) => entry.installed && entry.url)
+			.map(([name, entry]) => ({ url: entry.url, name, enabled: entry.enabled })),
+	);
+	stubs.core.uninstall.mockImplementation(async (url: string) => {
+		for (const [name, entry] of stubs.storage) if (entry.url === url) stubs.storage.delete(name);
+	});
+	(globalThis as any).__LunaCore = stubs.core;
 	stubs.json.mockReset();
 	stubs.json.mockResolvedValue({ plugins: [] });
 	stubs.fetchPackage.mockReset();
@@ -223,7 +240,7 @@ describe("plugins", () => {
 	test("removes every stored plugin that is not declared, keeping the core ones", async () => {
 		stubs.storage.set("@luna/lib", pluginEntry());
 		stubs.storage.set("@luna/ui", pluginEntry());
-		stubs.storage.set("third-party", pluginEntry({ url: "https://luna/luna.third-party" }));
+		stubs.storage.set("third-party", pluginEntry({ url: "https://store.example/luna.third-party" }));
 		stubs.corePlugins.add("@luna/ui");
 
 		seed({ plugins: [] });
@@ -232,8 +249,21 @@ describe("plugins", () => {
 		expect(storedPlugins()).toEqual(["@luna/lib", "@luna/ui"]);
 	});
 
+	test("hands the page's plugins to Luna core first, and removes one that is only named like a core plugin", async () => {
+		stubs.storage.set("@luna/ui", pluginEntry({ url: "https://store.example/lookalike" }));
+		stubs.corePlugins.add("@luna/ui");
+
+		seed({ plugins: [] });
+		await applySeedSettings();
+
+		expect(stubs.migrateToCore).toHaveBeenCalledTimes(1);
+		expect(stubs.migrateToCore.mock.invocationCallOrder[0]).toBeLessThan(stubs.core.list.mock.invocationCallOrder[0]!);
+		expect(stubs.core.uninstall).toHaveBeenCalledWith("https://store.example/lookalike");
+		expect(storedPlugins()).toEqual([]);
+	});
+
 	test("keeps a declared plugin, matched ignoring case", async () => {
-		stubs.storage.set("DiscordRPC", pluginEntry({ url: "https://luna/luna.DiscordRPC" }));
+		stubs.storage.set("DiscordRPC", pluginEntry({ url: "https://store.example/luna.DiscordRPC" }));
 
 		seed({ plugins: ["discordrpc"] });
 		await applySeedSettings();
@@ -244,7 +274,7 @@ describe("plugins", () => {
 	});
 
 	test("matches a declared plugin by the file name its url ends in", async () => {
-		stubs.storage.set("@scope/pretty-name", pluginEntry({ url: "https://luna/luna.plugin-name" }));
+		stubs.storage.set("@scope/pretty-name", pluginEntry({ url: "https://store.example/luna.plugin-name" }));
 
 		seed({ plugins: ["luna.plugin-name"] });
 		await applySeedSettings();
@@ -254,7 +284,7 @@ describe("plugins", () => {
 	});
 
 	test("installs a declared plugin that is stored but not installed, from the store that lists it", async () => {
-		stubs.storage.set("my-plugin", pluginEntry({ installed: false, url: "https://luna/luna.my-plugin" }));
+		stubs.storage.set("my-plugin", pluginEntry({ installed: false, url: "https://store.example/luna.my-plugin" }));
 		await storeUrls("https://store.example");
 		stubs.json.mockResolvedValue({ plugins: ["my-plugin.mjs"] });
 
