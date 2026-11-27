@@ -1,9 +1,14 @@
 import type { LunaUnload, LunaUnloads } from "@luna/core";
 
+import clientHeaderBase64 from "file://../../../assets/brand/client-header.svg?base64";
 import { observe } from "./helpers/observable";
 import { unloads } from "./index.safe";
 
-const lunaTitle = 'TIDA<b><span style="color: #32f4ff;">Luna</span></b>	<span style="color: red;">BETA</span>';
+/**
+ * What TIDAL's title bar is given instead of TIDAL's own wordmark: the brand lockup, wordmark and BETA pill, so the bar
+ * matches the boot splash and the settings header. Inlined at build time, there is no file to ship alongside the plugin.
+ */
+export const lunaTitle = `<img src="data:image/svg+xml;base64,${clientHeaderBase64}" alt="TidaLuna" style="height: 26px; width: auto; vertical-align: middle;" />`;
 
 let titleElem: Element | undefined;
 // TIDAL re-renders the title bar (e.g. after logout/login), so set the Luna title on every new title node

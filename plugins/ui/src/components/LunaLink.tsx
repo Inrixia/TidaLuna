@@ -14,6 +14,7 @@ export const LunaLink = React.memo((props: LunaLinkProps) => {
 					{...props}
 					sx={{
 						textDecoration: "none !important",
+						...props.sx,
 					}}
 					href={href?.startsWith("http") ? href : ""}
 					target={"_blank"}

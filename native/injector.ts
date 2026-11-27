@@ -12,6 +12,7 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
+import { createAppIcon } from "./appIcon";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
@@ -254,6 +255,12 @@ electron.app.whenReady().then(async () => {
 	electron.session.defaultSession.clearStorageData({
 		storages: ["cachestorage"],
 	});
+
+	// macOS ignores a window icon, the dock entry is the one the user sees
+	if (process.platform === "darwin") {
+		const dockIcon = createAppIcon(electron.nativeImage);
+		if (dockIcon !== undefined) electron.app.dock?.setIcon(dockIcon);
+	}
 });
 
 // #region Audio cache
@@ -310,6 +317,15 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			// Sandbox isolates plugins from Node.js and system access
 			options.webPreferences.sandbox = true;
 			options.webPreferences.contextIsolation = true;
+
+			// Painted behind the page, so the flash of a window that has not painted yet is Luna's dark, not the default white
+			options.backgroundColor ??= "#040a11";
+
+			// Taskbar and window switcher icon. macOS ignores a window icon, its dock entry is set in whenReady
+			if (process.platform !== "darwin") {
+				const icon = createAppIcon(electron.nativeImage);
+				if (icon !== undefined) options.icon = icon;
+			}
 		}
 
 		const window = new target(options);
