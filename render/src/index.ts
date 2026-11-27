@@ -1,6 +1,7 @@
 /// <reference path="../../luna.d.ts" />
 // Hook fetch before TIDAL runs so its requests fill the cache
-export { requestCache, type RequestCacheRule } from "./requestCache";
+export { sharedRequests } from "./caches";
+export { SharedRequests, type SharedRequestsRule } from "./SharedRequests";
 // Listen before TIDAL runs so its own reports are logged too
 export { cspReports, cspReportsDropped, type CspReport } from "./cspReports";
 // Always expose internals first
@@ -15,6 +16,7 @@ export { Messager, Tracer } from "./trace";
 
 export { modules, reduxStore } from "./modules";
 
+export * from "./cache";
 export * from "./LunaPlugin";
 export * from "./ReactiveStore";
 export * from "./SettingsTransfer";

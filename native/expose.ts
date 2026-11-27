@@ -1,4 +1,5 @@
 import { clipboard, dialog, shell } from "electron";
+
 export const clipboardWriteText = clipboard.writeText;
 export const openExternal = (url: string) => {
 	if (!/^https?:\/\//i.test(url)) throw new Error(`[🛑Security🛑] openExternal blocked: only http/https allowed, got "${url}"`);
@@ -10,17 +11,20 @@ export const showMessageBox = dialog.showMessageBox;
 export const showErrorBox = dialog.showErrorBox;
 
 export * from "./update";
+
+// Main process caches (audio, offline) and AudioStreams helpers, see native/caches.ts
 export {
-	audioCacheHover,
-	audioCacheOpenFolder,
-	audioCachePersist,
-	audioCacheSetLimit,
-	audioCacheStats,
-	audioCacheStatus,
-	audioCacheUrl,
-	audioCacheWaitFilled,
-	audioCacheWindow,
-	type AudioCacheStats,
-	type AudioCacheStatus,
-} from "./audioCache";
-export { offlineCacheOpenFolder, offlineCacheSetLimit, offlineCacheStats, type OfflineCacheStats } from "./offlineCache";
+	audioStreamsHover,
+	audioStreamsStatus,
+	audioStreamsStore,
+	audioStreamsUrl,
+	audioStreamsWaitFilled,
+	audioStreamsWindow,
+	cacheClear,
+	cacheList,
+	cacheOpenLocation,
+	cacheSetLimit,
+	cacheStats,
+	type AudioMeta,
+	type AudioStreamStatus,
+} from "./caches";

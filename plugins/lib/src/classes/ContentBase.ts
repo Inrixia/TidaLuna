@@ -1,6 +1,7 @@
 import type { MaybePromise } from "@inrixia/helpers";
 import type { IArtistCredit } from "musicbrainz-api";
 
+import { contentInstances } from "../caches";
 import * as redux from "../redux";
 import type { Artist } from "./Artist";
 
@@ -18,24 +19,37 @@ export type TCoverOpts = {
 };
 
 export class ContentBase {
-	private static readonly _instances: Record<string, Record<redux.ItemId, ContentClass<ContentType>>> = {};
-
 	/**
 	 * Ensure instances of ContentClass's are properly cached and abstracts fetching from the store.
+	 * Looks in the type's bounded cache, then its weak refs (an instance evicted but still held keeps its identity), then builds with `generator`.
 	 */
 	protected static async fromStore<K extends ContentType, C extends ContentClass<K>, I extends InstanceType<C>>(
 		itemId: redux.ItemId,
 		contentType: K,
 		generator: (contentItem?: ContentItem<K>) => MaybePromise<I | undefined>,
 	): Promise<I | undefined> {
-		if (this._instances[contentType]?.[itemId] !== undefined) return this._instances[contentType][itemId] as I;
+		const { cache, weakRefs } = contentInstances(contentType);
+		const key = String(itemId);
+		const cached = cache.get(key);
+		if (cached !== undefined) return cached as I;
+		const held = weakRefs.get(key);
+		if (held !== undefined) {
+			cache.set(key, held).catch(ContentBase.keepFailed);
+			return held as I;
+		}
 
 		const contentClass = await generator(this.getItemFromStore(contentType, itemId));
 		if (contentClass === undefined) return;
 
-		this._instances[contentType] ??= {};
-		return (this._instances[contentType][itemId] = contentClass);
+		// Built while another call for the key was building: that one wins so the key has one instance
+		const raced = weakRefs.get(key);
+		if (raced !== undefined) return raced as I;
+		weakRefs.set(key, contentClass);
+		cache.set(key, contentClass).catch(ContentBase.keepFailed);
+		return contentClass;
 	}
+	/** An instance the cache can't keep is still held by its weak ref, so the failure costs nothing */
+	private static readonly keepFailed = () => {};
 
 	/**
 	 * Fetches a content item from redux.store.content

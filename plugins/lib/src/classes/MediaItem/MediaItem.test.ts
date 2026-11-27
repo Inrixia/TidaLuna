@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { reduxStore, resetTidalState, setTidalState } from "test/harness/tidalStore";
+import { resetTidalState, setTidalState } from "test/harness/tidalStore";
 
 import type * as redux from "../../redux";
 import { MediaItem } from "./MediaItem";
@@ -10,11 +10,11 @@ import { TidalApi } from "../TidalApi";
 /**
  * `MediaItem` wraps the track TIDAL puts in its store and derives everything else from it, so these tests hand it
  * items shaped like TIDAL's and assert on what it derives. The MusicBrainz lookups are stubbed by stubbing `fetch`:
- * with no network `brainzJson` rejects, which is exactly the "MusicBrainz doesn't know this" path the accessors fall
+ * with no network `musicBrainz` rejects, which is exactly the "MusicBrainz doesn't know this" path the accessors fall
  * back from.
  *
- * `ContentBase` caches instances by item id and `MediaItem` keeps formats and the actual audio quality in a
- * `ReactiveStore` by id, so every test uses its own ids rather than one shared fixture.
+ * `ContentBase` caches instances by item id and `PlaybackInfo` keeps formats in a cache by id and quality,
+ * so every test uses its own ids rather than one shared fixture.
  */
 
 let idSeq = 0;
@@ -79,18 +79,11 @@ const track = (id: redux.ItemId, fields: Partial<redux.Track> = {}): redux.Track
 		...fields,
 	}) as redux.Track;
 
-/** The cache `MediaItem` reads/writes through its `cache` constructor argument */
-type MediaItemCacheArg = ConstructorParameters<typeof MediaItem>[3];
-
-const makeMediaItem = (
-	id: redux.ItemId,
-	fields: Partial<redux.Track> = {},
-	opts: { type?: redux.ContentType; cache?: MediaItemCacheArg } = {},
-) => {
+const makeMediaItem = (id: redux.ItemId, fields: Partial<redux.Track> = {}, opts: { type?: redux.ContentType } = {}) => {
 	const contentType = opts.type ?? "track";
 	const tidalItem = track(id, fields);
 	const mediaItem = { type: contentType, item: tidalItem } as unknown as redux.MediaItem;
-	return new MediaItem(id, mediaItem, contentType, opts.cache ?? {});
+	return new MediaItem(id, mediaItem, contentType);
 };
 
 /**
@@ -118,7 +111,7 @@ describe("constructor", () => {
 	test("keeps the item TIDAL stored and the type it was loaded as", () => {
 		const id = nextId();
 		const tidalItem = track(id, { title: "Hello" });
-		const mediaItem = new MediaItem(id, { type: "track", item: tidalItem }, "track", {});
+		const mediaItem = new MediaItem(id, { type: "track", item: tidalItem }, "track");
 
 		expect(mediaItem.id).toBe(id);
 		expect(mediaItem.contentType).toBe("track");
@@ -127,7 +120,7 @@ describe("constructor", () => {
 
 	test("throws when TIDAL's media item holds no item", () => {
 		// A media item without an item means TIDAL changed shape or gave a failed load's placeholder
-		expect(() => new MediaItem(nextId(), {} as redux.MediaItem, "track", {})).toThrow(/Tidal media item is undefined/);
+		expect(() => new MediaItem(nextId(), {} as redux.MediaItem, "track")).toThrow(/Tidal media item is undefined/);
 	});
 });
 
@@ -201,14 +194,13 @@ describe("bestQuality", () => {
 		expect(mediaItem.bestQuality).toBe(Quality.HiRes);
 	});
 
-	test("uses the quality TIDAL actually played for a spatial-only track", () => {
-		// Atmos falls back to a lossless stereo stream, the cache holds what was played
-		const mediaItem = makeMediaItem(
-			nextId(),
-			{ mediaMetadata: { tags: ["DOLBY_ATMOS"] }, audioQuality: "LOSSLESS" },
-			{ cache: { actualAudioQuality: "LOSSLESS" } },
-		);
+	test("uses the quality TIDAL actually played for a spatial-only track", async () => {
+		// Atmos falls back to a lossless stereo stream, PlaybackInfo's format cache holds what was played
+		const mediaItem = makeMediaItem(nextId(), { mediaMetadata: { tags: ["DOLBY_ATMOS"] }, audioQuality: "LOSSLESS" });
+		const format = await mediaItem.playback().format();
+		format.audioQuality = "LOSSLESS";
 
+		await expect(mediaItem.fetchBestQuality()).resolves.toBe(Quality.High);
 		expect(mediaItem.bestQuality).toBe(Quality.High);
 	});
 
@@ -416,40 +408,40 @@ describe("fromId", () => {
 		expect(mediaItem?.contentType).toBe("video");
 	});
 
-	test("loads the item through TIDAL when its store doesn't have it", async () => {
+	test("loads the item through TidalApi when its store doesn't have it", async () => {
 		const id = nextId();
 		const tidalItem = track(id, { title: "Loaded" });
-		const storeDispatch = reduxStore.dispatch.bind(reduxStore);
-		type DispatchedAction = { type?: string; payload?: unknown };
-		/**
-		 * TIDAL's action creators are what run Luna's interceptors (see exposeTidalInternals.patchAction), so the load's
-		 * response has to be built by a patched creator — dispatching the action object alone would not reach the wait.
-		 */
-		const tidalAction = (type: string) => {
-			const actionCreators = { _: (actionType: string) => (payload?: unknown) => ({ type: actionType, payload }) };
-			window.patchAction(actionCreators);
-			return actionCreators._(type);
-		};
-		const dispatch = vi.spyOn(reduxStore, "dispatch").mockImplementation((action: DispatchedAction) => {
-			const result = storeDispatch(action as never);
-			if (action.type === "content/LOAD_SINGLE_MEDIA_ITEM") {
-				// TIDAL answers a load with its own action, dispatched after the one that asked for it
-				void Promise.resolve().then(() => {
-					// Building the action through the patched creator is what lets the wait see it
-					const loaded = tidalAction("content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS");
-					reduxStore.dispatch(loaded({ mediaItem: { type: "track", item: tidalItem } }) as never);
-				});
-			}
-			return result;
-		});
+		const api = vi.spyOn(TidalApi, "track").mockResolvedValue(tidalItem);
 
 		const mediaItem = await MediaItem.fromId(id);
 
-		expect(dispatch.mock.calls.map(([action]) => (action as DispatchedAction).type)).toEqual([
-			"content/LOAD_SINGLE_MEDIA_ITEM",
-			"content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS",
-		]);
-		expect((dispatch.mock.calls[0][0] as DispatchedAction).payload).toEqual({ id, itemType: "track" });
+		expect(api).toHaveBeenCalledWith(id);
 		expect(mediaItem?.tidalItem.title).toBe("Loaded");
+		expect(mediaItem?.contentType).toBe("track");
+	});
+});
+
+describe("fromIsrc", () => {
+	test("picks the highest-quality item for an ISRC and caches the lookup across calls", async () => {
+		const lowId = nextId();
+		const maxId = nextId();
+		seedContent({
+			mediaItems: {
+				[lowId]: { type: "track", item: track(lowId, { mediaMetadata: { tags: ["LOSSLESS"] }, audioQuality: "LOSSLESS" }) },
+				[maxId]: { type: "track", item: track(maxId, { mediaMetadata: { tags: ["HIRES_LOSSLESS"] }, audioQuality: "HI_RES_LOSSLESS" }) },
+			},
+		});
+		const isrcSpy = vi.spyOn(TidalApi, "isrc").mockImplementation(async function* () {
+			yield { id: String(lowId), type: "tracks", attributes: { mediaTags: ["LOSSLESS"] } } as never;
+			yield { id: String(maxId), type: "tracks", attributes: { mediaTags: ["HIRES_LOSSLESS"] } } as never;
+		});
+
+		const [first, second] = await Promise.all([MediaItem.fromIsrc("US-CACHE-1"), MediaItem.fromIsrc("US-CACHE-1")]);
+		expect(first?.id).toBe(String(maxId));
+		expect(second).toBe(first);
+		expect(isrcSpy).toHaveBeenCalledTimes(1);
+
+		await expect(MediaItem.fromIsrc("US-CACHE-1")).resolves.toBe(first);
+		expect(isrcSpy).toHaveBeenCalledTimes(1);
 	});
 });

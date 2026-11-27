@@ -18,21 +18,21 @@ Run one file or one project:
 
 ```sh
 pnpm exec vitest run --project dom plugins/lib/src/classes/Playlist.test.ts
-pnpm exec vitest run --project node native/offlineCache.test.ts
+pnpm exec vitest run --project node native/OfflineResponses/OfflineResponses.test.ts
 ```
 
 Two projects, because the code runs in two places:
 
-| Project | Environment                                            | Includes                             |
-| ------- | ------------------------------------------------------ | ------------------------------------ |
-| `node`  | node, `electron` aliased to `test/harness/electron.ts` | `native/**`, `build/**`              |
-| `dom`   | happy-dom, fake-indexeddb                              | `render/**`, `plugins/**`, `test/**` |
+| Project | Environment                                            | Includes                                      |
+| ------- | ------------------------------------------------------ | --------------------------------------------- |
+| `node`  | node, `electron` aliased to `test/harness/electron.ts` | `cache/**`, `native/**`, `build/**`           |
+| `dom`   | happy-dom, fake-indexeddb                              | `render/**`, `plugins/**`, `test/**`          |
 
 ## The `@luna/core` stand-in
 
 `render/src/index.ts` boots TIDAL: it re-exports `exposeTidalInternals.ts`, which awaits TIDAL's scripts at module scope and touches `document`. Importing it in a test throws `window is not defined`, and with a DOM it would hang on the top-level await. Almost every `plugins/lib` module value-imports it, so tests get `test/harness/core.ts` instead:
 
-- **Real:** `requestCache`, `unloadSet`, `ReactiveStore`, `findModuleProperty`/`findModuleByProperty`/`recursiveSearch`, `buildActions`, `interceptors`, `tidalModules`, `ftch`, and a `Tracer` with the real logger shape.
+- **Real:** `Cache` (and `cache/` exports), `sharedRequests`, `unloadSet`, `ReactiveStore`, `findModuleProperty`/`findModuleByProperty`/`recursiveSearch`, `buildActions`, `interceptors`, `tidalModules`, `ftch`, and a `Tracer` with the real logger shape.
 - **Faked:** `reduxStore` (a real redux store shaped like TIDAL's, `test/harness/tidalStore.ts`), `LunaPlugin`, `modules`.
 
 `SettingsTransfer` is deliberately not in the stand-in: it imports `render/src/LunaPlugin.ts`, which loads boot code (`nativeScrollbars.ts`). Its test `vi.mock`s that import, and so must anything else that needs it.
@@ -44,7 +44,7 @@ Two projects, because the code runs in two places:
 - Import `@luna/core` normally in the source; in the test use `test/harness/tidalStore.ts` (`setTidalState`, `reduxStore`) to shape TIDAL's state, and `test/harness/actions.ts` (`mockAction`) to observe or override a dispatched action.
 - `buildActions` is copied into `redux/actions.ts` **once, at import**, so action builders have to be seeded before that module loads — `test/setup-dom.ts` does it for the actions Luna dispatches. `setup-dom`/`setup-node` also provide `__ipcRenderer`, `__platform`, `luna`, and (dom) fake-indexeddb and a `MediaSession` stub.
 - Native modules import `electron` at module scope; the node project aliases it to `test/harness/electron.ts`. Caches that write to `userData` point it at a scratch directory with `setUserDataDir(await mkdtemp(...))` (import that file by relative path, it is the same module instance the alias resolves to).
-- Module-level state (playlist change queues, `requestCache`, `TidalApi` memoization, `ContentBase`'s instance cache) lasts for the whole file: give each test its own ids, or `vi.resetModules()` plus a dynamic import.
+- Module-level state (playlist change queues, `sharedRequests`, `TidalApi` memoization, `ContentBase`'s instance cache) lasts for the whole file: give each test its own ids, or `vi.resetModules()` plus a dynamic import.
 - Determinism: no network, no real sleeps (`vi.useFakeTimers`), temp directories under `os.tmpdir()`, unique indexeddb store names.
 - Assert the real behaviour. When the code does something surprising, pin it with a comment and report it rather than encoding the behaviour you expected.
 

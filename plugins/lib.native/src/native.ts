@@ -13,20 +13,18 @@ export const showErrorBox = luna.showErrorBox;
 export const clipboardWriteText = luna.clipboardWriteText;
 export const openExternal = luna.openExternal;
 
-// Audio cache, see native/audioCache.ts
-export type { AudioCacheStats, AudioCacheStatus } from "../../../native/audioCache";
-export const audioCacheUrl = luna.audioCacheUrl;
-export const audioCacheWindow = luna.audioCacheWindow;
-export const audioCacheHover = luna.audioCacheHover;
-export const audioCacheWaitFilled = luna.audioCacheWaitFilled;
-export const audioCachePersist = luna.audioCachePersist;
-export const audioCacheStatus = luna.audioCacheStatus;
-export const audioCacheStats = luna.audioCacheStats;
-export const audioCacheSetLimit = luna.audioCacheSetLimit;
-export const audioCacheOpenFolder = luna.audioCacheOpenFolder;
+// AudioStreams, see native/AudioStreams
+export type { AudioMeta, AudioStreamStatus } from "../../../native/AudioStreams";
+export const audioStreamsUrl = luna.audioStreamsUrl;
+export const audioStreamsWindow = luna.audioStreamsWindow;
+export const audioStreamsHover = luna.audioStreamsHover;
+export const audioStreamsWaitFilled = luna.audioStreamsWaitFilled;
+export const audioStreamsStore = luna.audioStreamsStore;
+export const audioStreamsStatus = luna.audioStreamsStatus;
 
-// Offline cache, see native/offlineCache.ts
-export type { OfflineCacheStats } from "../../../native/offlineCache";
-export const offlineCacheStats = luna.offlineCacheStats;
-export const offlineCacheSetLimit = luna.offlineCacheSetLimit;
-export const offlineCacheOpenFolder = luna.offlineCacheOpenFolder;
+// The main process caches (audio, offline) by key, see native/caches.ts
+export const cacheList = luna.cacheList;
+export const cacheStats = luna.cacheStats;
+export const cacheSetLimit = luna.cacheSetLimit;
+export const cacheClear = luna.cacheClear;
+export const cacheOpenLocation = luna.cacheOpenLocation;

@@ -6,10 +6,10 @@
  * one. They only ever go up: raise them by adding tests, never by lowering the number to make a build pass.
  */
 export const coverageThresholds = {
-	lines: 77,
-	statements: 75,
-	branches: 66,
-	functions: 74,
+	lines: 83,
+	statements: 80,
+	branches: 72,
+	functions: 80,
 } as const;
 
 export type CoverageMetric = keyof typeof coverageThresholds;

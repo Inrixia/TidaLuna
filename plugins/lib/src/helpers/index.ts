@@ -1,7 +1,5 @@
-export * from "./brainzJson";
 export * from "./downloadObject";
 export * from "./getCredentials";
-export * from "./getPlaybackInfo";
 export * from "./listenerError";
 export * from "./observable";
 export * from "./parseDashManifest";

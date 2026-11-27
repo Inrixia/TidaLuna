@@ -7,7 +7,7 @@ import { fetchMediaItemStream } from "../../../../lib.native/src/index.native";
 
 import { getStreamBytes, parseStreamFormat } from "./parseStreamFormat.native";
 
-import type { PlaybackInfo } from "../../helpers";
+import type { TrackPlaybackInfo } from "../PlaybackInfo";
 
 /**
  * `parseStreamFormat` reads the codec of a TIDAL stream without downloading it: the DASH init segment for
@@ -49,8 +49,8 @@ const cmafAac = async (): Promise<Buffer> => {
 	return Buffer.concat([Buffer.from(init.buffer!), Buffer.from(output.target.buffer!)]);
 };
 
-const dashInfo = { manifestMimeType: "application/dash+xml", manifest: {} } as unknown as PlaybackInfo;
-const btsInfo = { manifestMimeType: "application/vnd.tidal.bts", manifest: { mimeType: "audio/flac" } } as unknown as PlaybackInfo;
+const dashInfo = { manifestMimeType: "application/dash+xml", manifest: {} } as unknown as TrackPlaybackInfo;
+const btsInfo = { manifestMimeType: "application/vnd.tidal.bts", manifest: { mimeType: "audio/flac" } } as unknown as TrackPlaybackInfo;
 
 /** The fetcher mutates the progress object it is handed, as the real one does while streaming */
 const serveStream = (data: Buffer, total: number) => {

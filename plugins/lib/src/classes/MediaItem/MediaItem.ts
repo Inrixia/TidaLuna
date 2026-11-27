@@ -1,87 +1,81 @@
-import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver, type Emit } from "@inrixia/helpers";
+import { asyncDebounce, memoize, memoizeArgless, registerEmitter, type AddReceiver } from "@inrixia/helpers";
 import type { IRecording, ITrack } from "musicbrainz-api";
 
-import { ReactiveStore, type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
+import { type LunaUnload, type LunaUnloads, type Tracer } from "@luna/core";
 
-import { getPlaybackInfo, getVideoPlaybackInfo, listenerError, parseDate, type PlaybackInfo } from "../../helpers";
-import { brainzJson } from "../../helpers/brainzJson";
+import { listenerError, parseDate, safeTimeout } from "../../helpers";
+import { isrcItems, musicBrainz } from "../../caches";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
 import { Album } from "../Album";
 import { Artist } from "../Artist";
 import { ContentBase, type TCoverOpts } from "../ContentBase";
+import { PlaybackInfo, type MediaFormat, type TrackPlaybackInfo } from "../PlaybackInfo";
 import { PlayState } from "../PlayState";
 import { Quality } from "../Quality";
 import { TidalApi } from "../TidalApi";
 import { download, downloadProgress } from "./MediaItem.download.native";
 import { availableTags, makeTags, MetaTags } from "./MediaItem.tags";
-import { getStreamBytes, parseStreamFormat } from "./parseStreamFormat.native";
-
-export type MediaFormat = {
-	bitDepth?: number;
-	sampleRate?: number;
-	codec?: string;
-	duration?: number;
-	bytes?: number;
-	bitrate?: number;
-};
-type MediaItemCache = {
-	format?: { [K in redux.AudioQuality]?: MediaFormat };
-	actualAudioQuality?: redux.AudioQuality;
-};
+import type { MediaItemBase } from "./MediaItems";
 
 export class MediaItem extends ContentBase {
 	public static readonly trace: Tracer = libTrace.withSource(".MediaItem").trace;
 	public static readonly availableTags = availableTags;
-
-	private static cache = ReactiveStore.getStore("@luna/MediaItemCache");
 
 	private static _supportsSpatialAudio: boolean | undefined;
 	public static get supportsSpatialAudio(): boolean | undefined {
 		return MediaItem._supportsSpatialAudio;
 	}
 
-	private static async fetchMediaItem(itemId: redux.ItemId, contentType: redux.ContentType) {
-		// Supress missing content warning when programatically loading mediaItems
-		const clearWarnCatch = redux.intercept("message/MESSAGE_WARN", unloads, (message) => {
-			if (message?.message === "The content is no longer available") return true;
-		});
-		try {
-			const { mediaItem } = await redux.interceptActionResp(
-				() => redux.actions["content/LOAD_SINGLE_MEDIA_ITEM"]({ id: itemId, itemType: contentType }),
-				unloads,
-				["content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS"],
-				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
-			);
-			return mediaItem;
-		} finally {
-			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
-			clearWarnCatch();
-		}
+	/**
+	 * An item that isn't in the redux store, from the same request TIDAL's LOAD_SINGLE_MEDIA_ITEM makes, through `TidalApi` so it is
+	 * cached and shared with TIDAL's. Not dispatched through redux: interceptActionResp runs one load at a time, and the item isn't put in the store
+	 */
+	private static async fetchMediaItem(itemId: redux.ItemId, contentType: redux.ContentType): Promise<redux.MediaItem | undefined> {
+		const item = contentType === "video" ? await TidalApi.video(itemId) : await TidalApi.track(itemId);
+		// TIDAL adds contentType to the items it stores
+		return item && <redux.MediaItem>{ item: { ...item, contentType }, type: contentType };
 	}
 
 	// #region Static Construction
-	// Calls for the same item share one lookup. Items that are not in the redux store are loaded through
-	// interceptActionResp, which runs one LOAD_SINGLE_MEDIA_ITEM at a time, so repeated calls (e.g. a tracklist row
-	// that is reported again while scrolling) queued up thousands of loads and kept their callers waiting for minutes.
-	public static fromId: (itemId?: redux.ItemId, contentType?: redux.ContentType) => Promise<MediaItem | undefined> = asyncDebounce(
-		async (itemId?: redux.ItemId, contentType: redux.ContentType = "track") => {
-			if (itemId === undefined) return;
-			// Prefetch mediaItemCache while constructing
-			const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
-			const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
-				mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
-				if (mediaItem === undefined) return;
-				const cache = await mediaItemCache;
-				// Prefer the type Tidal stored the item with, callers often default to "track" for videos
-				return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
-			});
-			// Fetch real quality for spatial tracks
-			if (item) await item.fetchBestQuality();
-			return item;
-		},
-	);
-	public static fromIsrc: (isrc: string) => Promise<MediaItem | undefined> = memoize(async (isrc) => {
+	// Calls for the same item share one lookup, so repeated calls (e.g. a tracklist row that is reported again while scrolling) load it once
+	public static async fromId(itemId?: redux.ItemId, contentType: redux.ContentType = "track"): Promise<MediaItem | undefined> {
+		return itemId === undefined ? undefined : MediaItem.build(itemId, contentType);
+	}
+	/** Builds in flight by item, fromId and fromTMediaItems share them so an item never gets two instances */
+	private static readonly building = new Map<string, Promise<MediaItem | undefined>>();
+	/** The MediaItem of `itemId`, from the redux store's item, else `fetched` (item data a request already returned, e.g. an album's tracks), else loaded */
+	private static build(itemId: redux.ItemId, contentType: redux.ContentType, fetched?: redux.MediaItem): Promise<MediaItem | undefined> {
+		const key = String(itemId);
+		let building = MediaItem.building.get(key);
+		if (building === undefined) {
+			building = MediaItem.construct(itemId, contentType, fetched).finally(() => MediaItem.building.delete(key));
+			MediaItem.building.set(key, building);
+		}
+		return building;
+	}
+	private static async construct(itemId: redux.ItemId, contentType: redux.ContentType, fetched?: redux.MediaItem) {
+		const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
+			mediaItem ??= fetched ?? (await this.fetchMediaItem(itemId, contentType));
+			if (mediaItem === undefined) return;
+			// Prefer the type Tidal stored the item with, callers often default to "track" for videos
+			return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType);
+		});
+		// Fetch real quality for spatial tracks
+		if (item) await item.fetchBestQuality();
+		return item;
+	}
+	/** The best item with `isrc`. The lookup (an id, the instances are `ContentBase`'s) is cached by `isrcItems`, calls in flight share one */
+	public static fromIsrc(isrc: string): Promise<MediaItem | undefined> {
+		let id = isrcItems.get(isrc);
+		if (id === undefined) {
+			id = MediaItem.findByIsrc(isrc).then((item) => item?.id);
+			// A rejection drops it once sized
+			isrcItems.set(isrc, id).catch(MediaItem.trace.err.withContext("fromIsrc", isrc));
+		}
+		return id.then((itemId) => MediaItem.fromId(itemId));
+	}
+	private static async findByIsrc(isrc: string): Promise<MediaItem | undefined> {
 		let bestMediaItem: MediaItem | undefined = undefined;
 		for await (const track of TidalApi.isrc(isrc)) {
 			// If quality is higher than current best, set as best
@@ -92,7 +86,7 @@ export class MediaItem extends ContentBase {
 			}
 		}
 		return bestMediaItem;
-	});
+	}
 	public static async fromPlaybackContext(playbackContext?: redux.PlaybackContext) {
 		// This has to be here to avoid ciclic requirements breaking
 		playbackContext ??= PlayState.playbackContext;
@@ -114,12 +108,14 @@ export class MediaItem extends ContentBase {
 			if (mediaItem !== undefined) yield mediaItem;
 		}
 	}
-	public static async *fromTMediaItems(tMediaItems?: ({ item: { id: redux.ItemId }; type: redux.ContentType } | undefined)[]) {
+	/** Items with their data (e.g. an album's or playlist's tracks from `TidalApi`) are built from it rather than loaded one at a time */
+	public static async *fromTMediaItems(tMediaItems?: (MediaItemBase | redux.MediaItem | undefined)[]) {
 		if (tMediaItems === undefined) return;
 		for (const tMediaItem of tMediaItems.filter((tMediaItem) => tMediaItem !== undefined)) {
-			const mediaItem = await MediaItem.fromId(tMediaItem.item.id, tMediaItem.type).catch(
-				MediaItem.trace.err.withContext("fromTMediaItems", tMediaItem.item.id),
-			);
+			const { item, type } = tMediaItem;
+			// Only an id (e.g. a context menu's selection) is loaded through fromId
+			const built = "title" in item ? MediaItem.build(item.id, type, <redux.MediaItem>tMediaItem) : MediaItem.fromId(item.id, type);
+			const mediaItem = await built.catch(MediaItem.trace.err.withContext("fromTMediaItems", item.id));
 			if (mediaItem !== undefined) yield mediaItem;
 		}
 	}
@@ -169,6 +165,21 @@ export class MediaItem extends ContentBase {
 			),
 		),
 	);
+	/** Triggered with the id of a track row (`data-track-id`) the pointer rests on for 100ms, e.g. to prefetch what it plays */
+	public static onHover: AddReceiver<redux.ItemId> = registerEmitter((emit) => {
+		let hoveredId: string | null = null;
+		let cancelHover: (() => void) | undefined;
+		const onPointerOver = (event: PointerEvent) => {
+			const id = (<Element>event.target).closest?.("[data-track-id]")?.getAttribute("data-track-id") ?? null;
+			if (id === hoveredId) return;
+			hoveredId = id;
+			cancelHover?.();
+			if (id !== null)
+				cancelHover = safeTimeout(unloads, () => emit(id, listenerError("MediaItem.onHover", this.trace.err.withContext("onHover"))), 100);
+		};
+		document.addEventListener("pointerover", onPointerOver, { passive: true });
+		unloads.add(() => document.removeEventListener("pointerover", onPointerOver));
+	});
 	// #endregion
 	public readonly tidalItem: Readonly<redux.Track>;
 	public readonly trace: Tracer;
@@ -177,7 +188,6 @@ export class MediaItem extends ContentBase {
 		public readonly id: redux.ItemId,
 		tidalMediaItem: redux.MediaItem,
 		public readonly contentType: redux.ContentType,
-		private readonly cache: MediaItemCache,
 	) {
 		super();
 		// Ick, really need to figure out how to deal with videos
@@ -203,9 +213,8 @@ export class MediaItem extends ContentBase {
 	public brainzItem: () => Promise<ITrack | undefined> = memoize(async () => {
 		const releaseTrackFromRecording = async (recording: IRecording) => {
 			// If a recording exists then fetch the full recording details including media for title resolution
-			const release = await brainzJson<IRecording>(
-				`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`,
-			)
+			const release = await musicBrainz
+				.json<IRecording>(`https://musicbrainz.org/ws/2/recording/${recording.id}?inc=releases+media+artist-credits+isrcs&fmt=json`)
 				.then(({ title, releases }) => {
 					// Release data can be wrong (eg a Japanese release tagged as English), only use releases where the track title matches the recording
 					releases = releases?.filter((release) => MediaItem.baseTitle(release.media?.[0]?.tracks?.[0]?.title) === MediaItem.baseTitle(title));
@@ -214,16 +223,16 @@ export class MediaItem extends ContentBase {
 				.catch(this.trace.warn.withContext("brainzItem.getISRCRecordings"));
 			if (release === undefined) return undefined;
 
-			const releaseTrack = release.media?.[0].tracks?.[0];
+			const releaseTrack = release.media?.[0]?.tracks?.[0];
+			if (releaseTrack === undefined) return undefined;
 			releaseTrack.recording ??= recording;
 			return releaseTrack;
 		};
 
 		if (this.tidalItem.isrc !== undefined) {
 			// Lookup the recording from MusicBrainz by ISRC
-			const recording = await brainzJson<{ recordings: IRecording[] }>(
-				`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`,
-			)
+			const recording = await musicBrainz
+				.json<{ recordings: IRecording[] }>(`https://musicbrainz.org/ws/2/isrc/${this.tidalItem.isrc}?inc=isrcs&fmt=json`)
 				.then(({ recordings }) => this.matchBrainzRecording(recordings))
 				.catch((err) => {
 					// 404 means MusicBrainz doesn't know the ISRC, not worth a warning
@@ -243,7 +252,7 @@ export class MediaItem extends ContentBase {
 
 		let brainzItem = albumRelease?.media?.[volumeNumber]?.tracks?.[trackNumber];
 		// If this is not the english version of the release try to find the english version of the release track
-		if (albumRelease?.["text-representation"].language !== "eng" && brainzItem?.recording !== undefined) {
+		if (albumRelease?.["text-representation"]?.language !== "eng" && brainzItem?.recording !== undefined) {
 			return (await releaseTrackFromRecording(brainzItem.recording)) ?? brainzItem;
 		}
 		return brainzItem;
@@ -279,7 +288,7 @@ export class MediaItem extends ContentBase {
 
 	public brainzId: () => Promise<string | undefined> = memoize(async () => {
 		const brainzItem = await this.brainzItem();
-		return brainzItem?.recording.id;
+		return brainzItem?.recording?.id;
 	});
 	// #endregion
 
@@ -310,7 +319,7 @@ export class MediaItem extends ContentBase {
 		}
 
 		const brainzItem = await this.brainzItem();
-		if (brainzItem?.recording.isrcs) {
+		if (brainzItem?.recording?.isrcs) {
 			for (const isrc of brainzItem.recording.isrcs) {
 				if (seen.has(isrc)) continue;
 				yield isrc;
@@ -323,7 +332,7 @@ export class MediaItem extends ContentBase {
 		for await (const isrc of this.isrcs()) return isrc;
 	});
 
-	public lyrics: () => Promise<redux.Lyrics | undefined> = memoize(() => TidalApi.lyrics(this.id));
+	public lyrics: () => Promise<redux.Lyrics | undefined> = () => TidalApi.lyrics(this.id);
 
 	public title: () => Promise<string> = memoize(async () => {
 		const brainzItem = await this.brainzItem();
@@ -410,23 +419,22 @@ export class MediaItem extends ContentBase {
 		const hasSpatial = allTags.some((q) => q === Quality.Atmos || q === Quality.Sony630);
 		// Filter out spatial audio tags - they can't display correct metadata
 		const tags = allTags.filter((q) => q !== Quality.Atmos && q !== Quality.Sony630);
-		// For spatial-only tracks, use cached actualAudioQuality or default to HiRes
-		if (hasSpatial && tags.length === 0) {
-			if (this.cache.actualAudioQuality) {
-				return Quality.fromAudioQuality(this.cache.actualAudioQuality) ?? Quality.HiRes;
-			}
-			return Quality.HiRes;
-		}
+		// For spatial-only tracks, use the quality its stream is at (see fetchBestQuality) or default to HiRes
+		if (hasSpatial && tags.length === 0) return Quality.fromAudioQuality(this.maxFormat?.audioQuality) ?? Quality.HiRes;
 		return Quality.max(...tags, Quality.fromAudioQuality(this.tidalItem.audioQuality) ?? Quality.Lowest);
 	}
+	/** The format of the stream at `Quality.Max`, read by fetchBestQuality for spatial-only tracks. An oby store, kept current */
+	private maxFormat?: MediaFormat;
 	/** Fetches playbackInfo to get real quality for spatial-only tracks */
 	public fetchBestQuality: () => Promise<Quality> = memoize(async () => {
 		const allTags = Quality.fromMetaTags(this.tidalItem.mediaMetadata?.tags);
 		const hasSpatial = allTags.some((q) => q === Quality.Atmos || q === Quality.Sony630);
 		const nonSpatialTags = allTags.filter((q) => q !== Quality.Atmos && q !== Quality.Sony630);
-		// Spatial-only tracks need playbackInfo lookup to get real quality
-		if (hasSpatial && nonSpatialTags.length === 0 && !this.cache.actualAudioQuality) {
-			await this.playbackInfo();
+		// Spatial-only tracks need playbackInfo lookup to get real quality, kept in the format across restarts
+		if (hasSpatial && nonSpatialTags.length === 0) {
+			const playback = this.playback();
+			this.maxFormat = await playback.format();
+			if (this.maxFormat.audioQuality === undefined) await playback.info();
 		}
 		return this.bestQuality;
 	});
@@ -455,23 +463,14 @@ export class MediaItem extends ContentBase {
 	// #endregion
 
 	// #region PlaybackInfo
-	public playbackInfo: (audioQuality?: redux.AudioQuality) => Promise<PlaybackInfo | undefined> = memoize(
-		async (audioQuality?: redux.AudioQuality) => {
-			audioQuality ??= Quality.Max.audioQuality;
-			const playbackInfo = await getPlaybackInfo(this.id, audioQuality);
-			if (!playbackInfo) return undefined;
-			const [_, emitFormat] = this.formatEmitters[audioQuality] ?? [];
-			this.cache.format ??= {};
-			this.cache.format[audioQuality] = {
-				...this.cache.format[audioQuality],
-				bitDepth: playbackInfo.bitDepth,
-				sampleRate: playbackInfo.sampleRate,
-			};
-			this.cache.actualAudioQuality = playbackInfo.audioQuality;
-			emitFormat?.(this.cache.format[audioQuality]!, this.trace.err.withContext("playbackInfo.emitFormat"));
-			return playbackInfo;
-		},
-	);
+	private readonly playbacks: { [K in redux.AudioQuality]?: PlaybackInfo } = {};
+	/** This track's stream at `audioQuality`: its playbackInfo, file extension and format */
+	public playback(audioQuality: redux.AudioQuality = Quality.Max.audioQuality): PlaybackInfo {
+		return (this.playbacks[audioQuality] ??= new PlaybackInfo(this.id, audioQuality, this.duration));
+	}
+	public playbackInfo(audioQuality?: redux.AudioQuality): Promise<TrackPlaybackInfo | undefined> {
+		return this.playback(audioQuality).info();
+	}
 	// #endregion
 
 	// #region Download
@@ -481,7 +480,7 @@ export class MediaItem extends ContentBase {
 	public download: (path: string | string[], audioQuality?: redux.AudioQuality) => Promise<string> = asyncDebounce(
 		async (path: string | string[], audioQuality?: redux.AudioQuality) => {
 			if (this.contentType === "video") {
-				const [playbackInfo, tags] = await Promise.all([getVideoPlaybackInfo(this.id), this.flacTags()]);
+				const [playbackInfo, tags] = await Promise.all([PlaybackInfo.video(this.id), this.flacTags()]);
 				if (!playbackInfo) throw new Error(`Video ${this.id} is not available`);
 				return download(playbackInfo, path, tags);
 			}
@@ -492,78 +491,17 @@ export class MediaItem extends ContentBase {
 	);
 	public async fileExtension(audioQuality?: redux.AudioQuality): Promise<string> {
 		if (this.contentType === "video") return "mp4";
-		const playbackInfo = await this.playbackInfo(audioQuality);
-		if (!playbackInfo) throw new Error(`Track ${this.id} is not available`);
-		switch (playbackInfo.manifestMimeType) {
-			case "application/dash+xml":
-				// Lossless DASH streams carry FLAC in MP4, which is remuxed into a native FLAC file
-				return playbackInfo.manifest.tracks.audios[0]?.codec === "FLAC" ? "flac" : "m4a";
-			case "application/vnd.tidal.bts":
-				return "flac";
-			default: {
-				const unsupported: never = playbackInfo;
-				throw new Error(`Unsupported Stream Info manifest mime type: ${(unsupported as PlaybackInfo).manifestMimeType}`);
-			}
-		}
+		return this.playback(audioQuality).fileExtension();
 	}
 	// #endregion
 
 	// #region Format
-	private readonly formatEmitters: { [K in redux.AudioQuality]?: [onEvent: AddReceiver<MediaFormat>, emitEvent: Emit<MediaFormat>] } = {};
+	/** Calls `listener` with the format of this track's stream at `audioQuality` now (if known) and on every change */
 	public withFormat(unloads: LunaUnloads, audioQuality: redux.AudioQuality, listener: (format: MediaFormat) => void): LunaUnload {
-		const [onFormat] = (this.formatEmitters[audioQuality] ??= registerEmitter<MediaFormat>());
-		const unload = onFormat(unloads, listener);
-		// Use actualAudioQuality as fallback key for cache lookup (handles Atmos/Sony360 fallback quality)
-		const cacheKey = audioQuality ?? this.cache.actualAudioQuality;
-		const cachedFormat = cacheKey !== undefined ? this.cache.format?.[cacheKey] : undefined;
-		if (cachedFormat !== undefined) listener(cachedFormat);
-		return unload;
+		return this.playback(audioQuality).withFormat(unloads, listener);
 	}
-	public updateFormat: (audioQuality?: redux.AudioQuality, force?: true) => Promise<MediaFormat | undefined> = asyncDebounce(async (audioQuality, force) => {
-		this.cache.format ??= {};
-		const requestedQuality = audioQuality;
-		audioQuality ??= Quality.Max.audioQuality;
-		const format = (this.cache.format[audioQuality] ??= {});
-
-		if (format.bitrate !== undefined && format.sampleRate !== undefined && force !== true) return format;
-
-		const playbackInfo = await this.playbackInfo(audioQuality);
-		if (!playbackInfo) return undefined;
-		format.duration = this.duration;
-
-		if (format.bitDepth === undefined || format.sampleRate === undefined || format.duration === undefined || format.bytes === undefined) {
-			const { format: streamFormat, bytes } = await parseStreamFormat(playbackInfo);
-			format.bytes = bytes;
-			format.bitDepth = streamFormat.bitsPerSample || format.bitDepth;
-			format.sampleRate = streamFormat.sampleRate || format.sampleRate;
-			format.duration = streamFormat.duration ?? format.duration;
-			format.codec = streamFormat.codec?.toLowerCase() ?? format.codec;
-			// Complement with DASH manifest data if available
-			if (playbackInfo.manifestMimeType === "application/dash+xml") {
-				format.bitrate = playbackInfo.manifest.tracks.audios[0].bitrate.bps ?? format.bitrate;
-				format.bytes = playbackInfo.manifest.tracks.audios[0].size?.b ?? format.bytes;
-			}
-		} else {
-			format.bytes = (await getStreamBytes(playbackInfo)) ?? format.bytes;
-		}
-
-		format.bitrate ??= !!format.bytes && !!format.duration ? (format.bytes / format.duration) * 8 : undefined;
-
-		// Also store format under actual audio quality for cache lookup (handles Atmos/Sony360 fallback)
-		if (playbackInfo.audioQuality !== audioQuality) {
-			this.cache.format[playbackInfo.audioQuality] = format;
-		}
-
-		const [_, emitFormat] = this.formatEmitters[playbackInfo.audioQuality] ?? [];
-		emitFormat?.(format, listenerError("MediaItem.withFormat", this.trace.err.withContext("updateFormat.emitFormat")));
-
-		// Emit to originally requested quality if different
-		if (requestedQuality && requestedQuality !== playbackInfo.audioQuality) {
-			const [_, emitRequested] = this.formatEmitters[requestedQuality] ?? [];
-			emitRequested?.(format, listenerError("MediaItem.withFormat", this.trace.err.withContext("updateFormat.emitFormat.requested")));
-		}
-
-		return format;
-	});
+	public updateFormat(audioQuality?: redux.AudioQuality, force?: true): Promise<MediaFormat | undefined> {
+		return this.playback(audioQuality).updateFormat(force);
+	}
 	// #endregion
 }

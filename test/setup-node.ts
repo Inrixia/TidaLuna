@@ -9,7 +9,9 @@ export const setIpcHandler = (channel: string, handler: (...args: any[]) => unkn
 	ipcHandlers.set(channel, handler);
 };
 
-(globalThis as any).luna = {};
+(globalThis as any).luna = {
+	cacheList: async () => [],
+};
 (globalThis as any).__platform = "win32";
 (globalThis as any).__ipcRenderer = {
 	invoke: async (channel: string, ...args: any[]) => ipcHandlers.get(channel)?.(...args),

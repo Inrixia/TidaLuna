@@ -61,7 +61,9 @@ export class Messager {
 }
 
 // Real implementations, none of these import the TIDAL boot code
-export { requestCache, type RequestCacheRule } from "../../render/src/requestCache";
+export { sharedRequests } from "../../render/src/caches";
+export { SharedRequests, type SharedRequestsRule } from "../../render/src/SharedRequests";
+export * from "../../render/src/cache";
 export { tidalModules } from "../../render/src/tidalModules";
 export { cspReports, cspReportsDropped, type CspReport } from "../../render/src/cspReports";
 export { buildActions, interceptors } from "../../render/src/exposeTidalInternals.patchAction";

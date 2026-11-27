@@ -1,18 +1,16 @@
-import type { PlaybackInfo, VideoPlaybackInfo } from "@luna/lib";
-import { pipeline, Readable } from "stream";
+import type { TrackPlaybackInfo, VideoPlaybackInfo } from "@luna/lib";
+import { Readable } from "stream";
 
+import { audioStreamsStore } from "../native";
 import { makeDecipher } from "./decrypt";
 import { fetchStream, type TrackStreamOptions } from "./fetchStream";
 import { fetchTidal } from "./guards";
+import { tagStream, type StreamTags } from "./tagStream";
 
-import { rejectNotOk, Semaphore, toArrayBuffer } from "@inrixia/helpers";
-import { FlacStreamTagger, PictureType } from "flac-stream-tagger";
+import { rejectNotOk, Semaphore } from "@inrixia/helpers";
 
 interface FetchOptions extends Omit<TrackStreamOptions, "deciper"> {
-	tags?: {
-		tags: Record<string, string[] | string>;
-		coverUrl?: string;
-	};
+	tags?: StreamTags;
 	/** For DASH streams, only fetch the init segment (for metadata parsing) */
 	initSegmentOnly?: boolean;
 }
@@ -50,7 +48,7 @@ const hlsSegmentUrls = async (playlistUrl: string): Promise<string[]> => {
 // Lock to 2 concurrent streams
 const fetchMediaItemStremaSemaphore = new Semaphore(2);
 export const fetchMediaItemStream = (
-	{ manifestMimeType, manifest }: PlaybackInfo | VideoPlaybackInfo,
+	{ manifestMimeType, manifest }: TrackPlaybackInfo | VideoPlaybackInfo,
 	options: FetchOptions = {},
 ): Promise<Readable> =>
 	fetchMediaItemStremaSemaphore.with(async () => {
@@ -60,33 +58,11 @@ export const fetchMediaItemStream = (
 				const stream = Readable.from(fetchStream(manifest.urls, options), { objectMode: false });
 				if (options.tags === undefined) return stream;
 
-				const { tags, coverUrl } = options.tags;
-				let picture;
-				if (coverUrl !== undefined) {
-					picture = await fetchTidal(coverUrl)
-						.then(rejectNotOk)
-						.then(toArrayBuffer)
-						.then((arrayBuffer) => ({
-							pictureType: PictureType.FrontCover,
-							buffer: Buffer.from(arrayBuffer),
-						}))
-						.catch(() => undefined);
-				}
-				// pipeline forwards source errors to the tagger, pipe() would leave them unhandled
-				return pipeline(
-					stream,
-					new FlacStreamTagger({
-						tagMap: tags,
-						picture,
-					}),
-					() => {},
-				);
+				return tagStream(stream, options.tags, manifest.mimeType === "audio/mp4" ? "m4a" : "flac");
 			}
 			case "application/dash+xml": {
 				const trackManifest = manifest.tracks.audios[0];
-				const segments = options.initSegmentOnly
-					? trackManifest.segments.filter((segment) => segment.init)
-					: trackManifest.segments;
+				const segments = options.initSegmentOnly ? trackManifest.segments.filter((segment) => segment.init) : trackManifest.segments;
 				return Readable.from(
 					fetchStream(
 						segments.map((segment) => segment.url),
@@ -104,3 +80,30 @@ export const fetchMediaItemStream = (
 			}
 		}
 	});
+
+/**
+ * Reads a filled live BTS audio stream once, decrypts and tags it in-flight, and stores it into `AudioStreams.cache`
+ * (memory + disk tiers). Releases the live buffer's `persisting` pin even if skipped or failed
+ */
+export const persistAudioStream = async (
+	url: string,
+	playbackInfo?: TrackPlaybackInfo,
+	relativePath?: string,
+	tags?: StreamTags,
+): Promise<void> => {
+	if (playbackInfo?.manifestMimeType !== "application/vnd.tidal.bts" || !relativePath) {
+		await audioStreamsStore(url);
+		return;
+	}
+	let stored = false;
+	try {
+		const stream = await fetchMediaItemStream(playbackInfo, { tags });
+		stored = true;
+		await audioStreamsStore(url, <ReadableStream<Uint8Array>>Readable.toWeb(stream), {
+			path: relativePath,
+			type: playbackInfo.manifest.mimeType,
+		});
+	} finally {
+		if (!stored) await audioStreamsStore(url);
+	}
+};
