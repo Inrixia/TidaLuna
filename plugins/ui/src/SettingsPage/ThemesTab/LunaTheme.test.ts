@@ -125,6 +125,15 @@ describe("LunaTheme.from", () => {
 		expect(styleFor("https://t.example.com/a.css")).toBeNull();
 		expect(LunaTheme.all()).toHaveLength(1);
 	});
+
+	test("refuses a record that should never have been written without leaving anything behind", () => {
+		// The record is refused before an instance exists, so there is no StyleTag and no unload handler for a theme that
+		// never was
+		const registered = unloads.size;
+		expect(() => themeFor("https://github.com/o/r/blob/main/a.css")).toThrow("That theme is stored as a page");
+		expect(unloads.size).toBe(registered);
+		expect(LunaTheme.all()).toHaveLength(0);
+	});
 });
 
 describe("LunaTheme.loadFromStore", () => {
@@ -518,6 +527,14 @@ describe("LunaTheme.check", () => {
 		await expect(themeFor("https://t.example.com/a.css", { css: "@font-face { src: url(https://a.test/x.woff2); }" }).check()).rejects.toThrow(
 			"is not a font (text/html)",
 		);
+	});
+
+	test("clears the row's progress even when the check failed", async () => {
+		// The failure is reported, and the row goes back to its normal line rather than sitting on "checking 1 of 1" forever
+		const theme = themeFor("https://t.example.com/a.css", { css: "@font-face { src: url(https://a.test/x.woff2); }" });
+		stubFetch(() => ({ status: 200, headers: { get: () => "text/html" } }));
+		await expect(theme.check()).rejects.toThrow("is not a font");
+		expect(resourceProgress._["https://t.example.com/a.css"]).toBeUndefined();
 	});
 });
 

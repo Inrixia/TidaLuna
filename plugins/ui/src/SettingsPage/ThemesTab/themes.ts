@@ -48,7 +48,7 @@ LunaTheme.refreshAll()
 			const which = rest > 0 ? `${listed} and ${rest} more` : listed;
 			const message = names.length === 1 ? `Theme updated at startup: ${which}` : `${names.length} themes updated at startup: ${which}`;
 			startupNotice._ = message;
-			whenAppReady(unloads)
+			whenAppReady()
 				.then((ready) => {
 					if (ready) Messager.Info(message);
 				})

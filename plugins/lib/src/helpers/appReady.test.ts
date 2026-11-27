@@ -19,7 +19,7 @@ describe("whenAppReady", () => {
 	test("answers at once when TIDAL has already painted", async () => {
 		paint();
 		const whenAppReady = await load();
-		await expect(whenAppReady(new Set())).resolves.toBe(true);
+		await expect(whenAppReady()).resolves.toBe(true);
 	});
 
 	test("waits for the page, not just the sidebar", async () => {
@@ -27,7 +27,7 @@ describe("whenAppReady", () => {
 		document.body.innerHTML = `<nav></nav>`;
 		const whenAppReady = await load();
 		let ready: boolean | undefined;
-		const promise = whenAppReady(new Set()).then((answer) => (ready = answer));
+		const promise = whenAppReady().then((answer) => (ready = answer));
 
 		await Promise.resolve();
 		expect(ready).toBeUndefined();
@@ -42,7 +42,7 @@ describe("whenAppReady", () => {
 		vi.useFakeTimers();
 		const whenAppReady = await load();
 		let answer: boolean | undefined;
-		const promise = whenAppReady(new Set(), 1000).then((ready) => (answer = ready));
+		const promise = whenAppReady(1000).then((ready) => (answer = ready));
 
 		await vi.advanceTimersByTimeAsync(1000);
 		await promise;
@@ -54,7 +54,7 @@ describe("whenAppReady", () => {
 		document.body.innerHTML = `<nav></nav>`;
 		const whenAppReady = await load();
 		let answer: boolean | undefined;
-		const promise = whenAppReady(new Set(), 1000).then((ready) => (answer = ready));
+		const promise = whenAppReady(1000).then((ready) => (answer = ready));
 
 		await vi.advanceTimersByTimeAsync(1000);
 		await promise;
@@ -64,23 +64,26 @@ describe("whenAppReady", () => {
 	test("answers every later caller at once with the same promise", async () => {
 		paint();
 		const whenAppReady = await load();
-		const unloads = new Set<() => unknown>();
-		const first = whenAppReady(unloads);
-		const second = whenAppReady(unloads);
+		const first = whenAppReady();
+		const second = whenAppReady();
 		expect(second).toBe(first);
 		await first;
 	});
 
-	test("stops watching the page when the plugin unloads", async () => {
+	test("a caller that goes away cannot cancel the wait for everyone after it", async () => {
+		// The observation belongs to the page: an unloaded caller used to take the observer with it, leaving later callers
+		// awaiting a promise that could never settle
 		vi.useFakeTimers();
 		const whenAppReady = await load();
-		const unloads = new Set<() => unknown>();
-		void whenAppReady(unloads, 30_000);
-		expect(unloads.size).toBeGreaterThan(0);
-		for (const unload of unloads) unload();
+		const first = whenAppReady(5000);
 
-		// Nothing is left armed for a page that will never paint
-		await vi.advanceTimersByTimeAsync(30_000);
+		await vi.advanceTimersByTimeAsync(4999);
+		// Whatever the first caller does with its own handles, the shared answer still arrives
+		paint();
+		const second = whenAppReady(5000);
+		expect(second).toBe(first);
+		await vi.advanceTimersByTimeAsync(1);
+		await first;
 		expect(vi.getTimerCount()).toBe(0);
 	});
 });

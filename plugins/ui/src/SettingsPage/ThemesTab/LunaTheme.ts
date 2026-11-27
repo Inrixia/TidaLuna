@@ -100,6 +100,20 @@ const assertThemeCss = (css: string): void => {
 	if (!css.includes("{") && !css.includes("@")) throw new Error("That url does not look like css");
 };
 
+/**
+ * Throw when a stored url, or the css stored beside it, should never have been written.
+ *
+ * Themes are also written wholesale by importing a settings backup or a `luna-settings.json` seed, which never see the
+ * install box, so this runs when a theme is created rather than only where a url is typed. It runs before the instance
+ * exists, so a refused record does not leave a StyleTag and an unload handler behind for a theme that never was.
+ */
+const validateTheme = (url: string, data: ThemeData): void => {
+	// A stored page url arrived from an imported backup. Fetching it would store an HTML page as css
+	if (GitUrl.from(url)?.kind === "blob") throw new Error("That theme is stored as a page, not the file behind it");
+	validateUrl(url);
+	if (data.css !== undefined) assertThemeCss(data.css);
+};
+
 export class LunaTheme extends StyleTag {
 	/** Upper bound on a theme's css, so a caller can check a length without importing the rule */
 	public static readonly maxCssBytes = cssLimit;
@@ -115,18 +129,19 @@ export class LunaTheme extends StyleTag {
 	/** The files it loads, read from the css it has */
 	public resources: ThemeResources;
 
+	/** The css with its surrounding whitespace gone, which is what makes two urls serving one file the same theme */
+	private cleanCss?: string;
+
 	private constructor(url: string, data: ThemeData, unloads: LunaUnloads) {
 		super(url, unloads);
 		this.url = url;
 		this.data = data;
-		// A stored record that should never have been written is refused here rather than applied and found out later
-		this.validate();
+		this.cleanCss = data.css?.trim();
 		this.manifest = ThemeManifest.from(url, data.css);
 		this.resources = ThemeResources.from(data.css ?? "", url);
-		if (!data.enabled) return;
-		// The stored css goes on the page without a request; a theme that never finished downloading is fetched
-		if (data.css === undefined) this.reload();
-		else this.apply(data.css);
+		// The stored css goes on the page without a request. A theme that never finished downloading is fetched by
+		// startLoading, once it is registered and its row can report the outcome
+		if (data.enabled && data.css !== undefined) this.apply(data.css);
 	}
 
 	/**
@@ -138,9 +153,16 @@ export class LunaTheme extends StyleTag {
 	static from(url: string, data: ThemeData, unloads: LunaUnloads): LunaTheme {
 		const known = LunaTheme.themes.get(url);
 		if (known !== undefined) return known;
+		validateTheme(url, data);
 		const theme = new LunaTheme(url, data, unloads);
 		LunaTheme.themes.set(url, theme);
+		theme.startLoading();
 		return theme;
+	}
+
+	/** Fetch a theme that is on but has never been applied, now that it is registered and its row can show the failure */
+	private startLoading(): void {
+		if (this.data.enabled && this.data.css === undefined) this.reload();
 	}
 
 	/**
@@ -168,7 +190,7 @@ export class LunaTheme extends StyleTag {
 	static findByCss(css: string, exceptUrl?: string): LunaTheme | undefined {
 		const wanted = css.trim();
 		for (const theme of LunaTheme.themes.values()) {
-			if (theme.url !== exceptUrl && theme.data.css?.trim() === wanted) return theme;
+			if (theme.url !== exceptUrl && theme.cleanCss === wanted) return theme;
 		}
 		return undefined;
 	}
@@ -207,8 +229,10 @@ export class LunaTheme extends StyleTag {
 			if (!(await askConsent(consent))) throw new Error("Theme was not installed");
 		}
 
-		// Accepted: only now does the entry exist, with the css already in hand
-		const theme = LunaTheme.from(url, (store[url] = { enabled: true, css }), unloads);
+		// Accepted: the record is written only once the theme exists, so a refusal cannot leave a stored entry behind
+		const data: ThemeData = { enabled: true, css };
+		const theme = LunaTheme.from(url, data, unloads);
+		store[url] = data;
 
 		// What the theme loads and whether it is what it claims: one bad file is not a reason to throw away a theme that
 		// otherwise works, so it is reported on the row rather than refused
@@ -239,20 +263,11 @@ export class LunaTheme extends StyleTag {
 	}
 
 	/**
-	 * Throw when this url, or the css stored beside it, should never have been written.
+	 * Apply the stored css, fetching it first when the theme has never been applied.
 	 *
-	 * Themes are also written wholesale by importing a settings backup or a `luna-settings.json` seed, which never see the
-	 * install box, so this is checked on creation rather than only where a url is typed.
+	 * Does not reject: a fetch that fails turns the theme off and says so through the tracer, so a caller with no error path
+	 * of its own is not left holding a rejected promise.
 	 */
-	private validate(): void {
-		// A stored page url arrived from an imported backup. Fetching it would store an HTML page as css, so it is refused
-		// rather than silently normalised mid-startup
-		if (GitUrl.from(this.url)?.kind === "blob") throw new Error("That theme is stored as a page, not the file behind it");
-		validateUrl(this.url);
-		if (this.data.css !== undefined) assertThemeCss(this.data.css);
-	}
-
-	/** Apply the stored css, fetching it first when the theme has never been applied */
 	async enable(): Promise<void> {
 		this.data.enabled = true;
 		if (this.data.css === undefined) return this.reload();
@@ -293,13 +308,18 @@ export class LunaTheme extends StyleTag {
 		// A theme that is off is not on the page, so there is nothing to restyle and nothing worth a request
 		if (!this.data.enabled) return "unchanged";
 		try {
-			this.validate();
+			// Only the size is checked again: the url rules and the shape of the stylesheet were settled when this was created,
+			// and re-reading a stored stylesheet on every start costs a full pass over it for an answer already known
+			const stored = this.data.css;
+			if (stored !== undefined && stored.length > cssLimit) {
+				throw new Error(`That theme has ${stored.length} bytes of css stored, over the ${cssLimit} limit`);
+			}
 			const response = await fetch(this.url);
 			if (response.status === 304) return "unchanged";
 			if (!response.ok) throw new Error(`answered HTTP ${response.status}`);
 			const css = await response.text();
 			assertThemeCss(css);
-			if (css === this.data.css) return "unchanged";
+			if (css === stored) return "unchanged";
 			this.apply(css);
 			return "updated";
 		} catch (e) {
@@ -333,6 +353,7 @@ export class LunaTheme extends StyleTag {
 	/** Put a theme's css in place, storing it so the next start needs no request */
 	private apply(css: string): void {
 		this.data.css = css;
+		this.cleanCss = css.trim();
 		this.manifest = ThemeManifest.from(this.url, css);
 		this.resources = ThemeResources.from(css, this.url);
 		// A disabled theme still stores what it downloaded; only an enabled one is on the page

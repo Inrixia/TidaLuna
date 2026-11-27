@@ -1,6 +1,4 @@
-import type { LunaUnloads } from "@luna/core";
-
-import { libTrace } from "../index.safe";
+import { libTrace, unloads } from "../index.safe";
 import { observePromise } from "./observable";
 
 const { trace } = libTrace.withSource(".appReady");
@@ -13,6 +11,12 @@ const contentSelector = "main";
 /** The one answer to "is TIDAL up yet", so everything that waits for it waits for the same thing */
 let appReady: Promise<boolean> | undefined;
 
+/** Say that the wait ran out, naming what never arrived, so a page that does not paint is reported rather than tolerated */
+const notReady = (maxMs: number, what: string): false => {
+	trace.msg.warn(`TIDAL did not paint ${what} within ${maxMs}ms, continuing without waiting for it`);
+	return false;
+};
+
 /**
  * Resolve once TIDAL has painted its own interface, or when the cap expires.
  *
@@ -23,21 +27,16 @@ let appReady: Promise<boolean> | undefined;
  * The cap keeps a page that never paints (a failed load, an update midway) from swallowing whatever is waiting, and it
  * says so through the tracer: a silent cap is a bug nobody can report.
  *
- * Answers once. Later callers get the same answer immediately, and a page reload starts a new one.
+ * The observation belongs to the page, not to whoever asked first. Tying it to a caller's `unloads` meant a caller that
+ * unloaded mid-wait cancelled the observation for everyone after it, and left them awaiting a promise that could no longer
+ * settle. Answers once; later callers get the answer at once.
  *
- * @param unloads Stops the observation when the plugin unloads
  * @param maxMs How long to wait before giving up on the interface
  * @returns Whether the interface was up before the cap expired
  */
-export const whenAppReady = (unloads: LunaUnloads, maxMs = 8000): Promise<boolean> =>
+export const whenAppReady = (maxMs = 8000): Promise<boolean> =>
 	(appReady ??= (async () => {
 		if ((await observePromise(unloads, shellSelector, maxMs)) === null) return notReady(maxMs, "its sidebar");
 		if ((await observePromise(unloads, contentSelector, maxMs)) === null) return notReady(maxMs, "its page content");
 		return true;
 	})());
-
-/** Say that the wait ran out, naming what never arrived, so a page that does not paint is reported rather than tolerated */
-const notReady = (maxMs: number, what: string): false => {
-	trace.msg.warn(`TIDAL did not paint ${what} within ${maxMs}ms, continuing without waiting for it`);
-	return false;
-};

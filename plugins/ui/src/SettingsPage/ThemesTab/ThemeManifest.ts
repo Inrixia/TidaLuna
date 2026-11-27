@@ -45,9 +45,27 @@ const decodedOwner = (owner: string | undefined): string | undefined => {
 	}
 };
 
+/** A name for a theme that declares none: its file name made readable, its host, or the url itself */
+const nameOf = (file: string | undefined, host: string | undefined, url: string): string => {
+	const readable = file === undefined ? "" : humanizeFileName(file);
+	if (readable !== "") return readable;
+	return host ?? url;
+};
+
+/** Where a theme came from, in the form a row shows it: `tidaluna.dev/nightwave.css` */
+const sourceOf = (file: string | undefined, host: string | undefined, url: string): string => {
+	if (host === undefined) return url;
+	return file === undefined ? host : `${host}/${file}`;
+};
+
 export class ThemeManifest {
-	/** Read once per url and css pair, since a row, a refresh and a toast all ask for the same one */
-	private static readonly created = new Map<string, ThemeManifest>();
+	/**
+	 * Read once per url, replaced when the css behind it changes.
+	 *
+	 * Keyed by url rather than by the css: the manifest a theme shows is the one for its current file, and keying on the css
+	 * kept every earlier version alive for the life of the page while making each lookup compare a full stylesheet.
+	 */
+	private static readonly created = new Map<string, { css?: string; manifest: ThemeManifest }>();
 
 	/** What the row's title says: the manifest's name, or the file name made readable */
 	public readonly name: string;
@@ -73,11 +91,10 @@ export class ThemeManifest {
 	 * @param css The theme's css, when it has been loaded
 	 */
 	static from(url: string, css?: string): ThemeManifest {
-		const key = JSON.stringify([url, css ?? null]);
-		const known = ThemeManifest.created.get(key);
-		if (known !== undefined) return known;
+		const known = ThemeManifest.created.get(url);
+		if (known !== undefined && known.css === css) return known.manifest;
 		const manifest = new ThemeManifest(url, css);
-		ThemeManifest.created.set(key, manifest);
+		ThemeManifest.created.set(url, { css, manifest });
 		return manifest;
 	}
 
@@ -95,10 +112,10 @@ export class ThemeManifest {
 		// and `raw.githubusercontent.com` is the repository's host only in the sense that the file lives on github
 		const host = urlHost(url);
 
-		this.name = stringNotEmpty(declared?.name) ? declared.name : (file !== undefined && humanizeFileName(file)) || host || url;
+		this.name = stringNotEmpty(declared?.name) ? declared.name : nameOf(file, host, url);
 		this.author = stringNotEmpty(declared?.author) ? declared.author : decodedOwner(this.git?.owner);
 		this.description = stringNotEmpty(declared?.description) ? declared.description : undefined;
-		this.source = host === undefined ? url : file === undefined ? host : `${host}/${file}`;
+		this.source = sourceOf(file, host, url);
 		this.codeUrl = this.git?.browseUrl;
 	}
 

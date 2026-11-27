@@ -60,6 +60,15 @@ describe("ThemeResources.from", () => {
 		// A different base url resolves relative urls differently, so it is a different list
 		expect(ThemeResources.from(css, "https://b.test/t.css")).not.toBe(ThemeResources.from(css, "https://a.test/t.css"));
 	});
+
+	test("replaces what it read when the stylesheet at that url changes", () => {
+		// Keyed by url, not by the css: the old version is dropped rather than kept for the life of the page
+		const first = ThemeResources.from(".a{background:url(https://img.example.com/a.png)}", "https://a.test/t.css");
+		const second = ThemeResources.from(".b{background:url(https://img.example.com/b.png)}", "https://a.test/t.css");
+		expect(second).not.toBe(first);
+		expect(second.remote[0].absolute).toBe("https://img.example.com/b.png");
+		expect(ThemeResources.from(".b{background:url(https://img.example.com/b.png)}", "https://a.test/t.css")).toBe(second);
+	});
 });
 
 describe("ThemeResources.describe", () => {
@@ -103,6 +112,15 @@ describe("ThemeResources.check", () => {
 		const bad = resources.resources[39].absolute!;
 		stubFetch((url) => response(200, url === bad ? "text/html" : "font/woff2"));
 		await expect(resources.check()).rejects.toThrow("f39.woff2 is not a font (text/html)");
+	});
+
+	test("checks every file before reporting a failure, so the row's progress finishes first", async () => {
+		// Reporting as soon as one file fails left the rest in flight, and they wrote progress after the caller had cleared it
+		const seen: number[] = [];
+		const resources = ThemeResources.from(Array.from({ length: 4 }, (_, i) => `@font-face { src: url(https://a.test/f${i}.woff2); }`).join("\n"));
+		stubFetch((url) => response(200, url.includes("f1") ? "text/html" : "font/woff2"));
+		await expect(resources.check((done) => seen.push(done))).rejects.toThrow("is not a font");
+		expect(seen).toEqual([1, 2, 3, 4]);
 	});
 
 	test("checks a repeated url once, since it is one download", async () => {

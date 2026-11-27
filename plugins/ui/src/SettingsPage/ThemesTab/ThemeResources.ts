@@ -32,32 +32,37 @@ const fontExtensions = [".woff2", ".woff", ".ttf", ".otf", ".eot"];
 const imageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico"];
 
 export class ThemeResources {
-	/** Read once per css and base url pair: a row, a consent prompt and a check all ask about the same file */
-	private static readonly created = new Map<string, ThemeResources>();
+	/**
+	 * Read once per url, replaced when the stylesheet at that url changes.
+	 *
+	 * Keyed by url rather than by the css: a stylesheet is replaced whole, and keying on the css kept every version of it
+	 * alive for the life of the page, in a map that also had to compare a few hundred KB per lookup.
+	 */
+	private static readonly created = new Map<string, { css: string; resources: ThemeResources }>();
 
 	/** The resources a stylesheet references, so they can be checked and reported */
 	static from(css: string, baseUrl?: string): ThemeResources {
-		const key = `${baseUrl ?? ""}\n${css}`;
+		const key = baseUrl ?? "";
 		const known = ThemeResources.created.get(key);
-		if (known !== undefined) return known;
+		if (known !== undefined && known.css === css) return known.resources;
 		const resources = new ThemeResources(ThemeResources.parse(css, baseUrl));
-		ThemeResources.created.set(key, resources);
+		ThemeResources.created.set(key, { css, resources });
 		return resources;
 	}
 
 	public readonly resources: ThemeResource[];
 
-	private constructor(resources: ThemeResource[]) {
-		this.resources = resources;
-	}
-
 	/**
 	 * The files this theme fetches from the network.
 	 *
 	 * A `data:` url is inside the css already and fetches nothing, so it is not something to check, count or ask about.
+	 * Worked out once, because a row and a check both ask, and asking meant filtering the whole list per question.
 	 */
-	public get remote(): ThemeResource[] {
-		return this.resources.filter((resource) => resource.absolute?.startsWith("http") ?? false);
+	public readonly remote: ThemeResource[];
+
+	private constructor(resources: ThemeResource[]) {
+		this.resources = resources;
+		this.remote = resources.filter((resource) => resource.absolute?.startsWith("http") ?? false);
 	}
 
 	/** A one-line summary of what a theme loads, for its row */
@@ -81,8 +86,8 @@ export class ThemeResources {
 	 * harmless files and then its hostile one would never have the hostile one looked at, and the cap silently turns the
 	 * check into a decoration. A few requests run at once instead, so a theme naming a hundred files still finishes.
 	 *
-	 * The first failure is the one reported, and it stops the rest: a theme with a file that is not what it claims is
-	 * already not the theme it says it is, and the caller says so on the row.
+	 * The first failure is the one reported, and only once every file has been looked at: the caller clears the row's
+	 * progress when this returns, so a file still in flight would write a progress line nothing ever clears again.
 	 */
 	public async check(onProgress?: (done: number, total: number) => void): Promise<void> {
 		// Repeated urls are checked once. A font pack can point four @font-face rules at one file, and those are one download
@@ -97,7 +102,7 @@ export class ThemeResources {
 		const total = unique.length;
 		const semaphore = new Semaphore(concurrency);
 		let done = 0;
-		await Promise.all(
+		const results = await Promise.allSettled(
 			unique.map((resource) =>
 				semaphore.with(async () => {
 					try {
@@ -109,6 +114,7 @@ export class ThemeResources {
 				}),
 			),
 		);
+		for (const result of results) if (result.status === "rejected") throw result.reason;
 	}
 
 	/**
