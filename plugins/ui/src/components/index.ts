@@ -10,5 +10,4 @@ export * from "./LunaTitle";
 export * from "./LunaTrashButton";
 export * from "./settings";
 export * from "./SpinningButton";
-export * from "./UpdateDetails";
 export * from "./updateLinks";
