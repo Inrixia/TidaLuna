@@ -30,7 +30,14 @@ export const interceptActionResp = async <RESAT extends ActionType, REJAT extend
 	timeoutMs ??= 5000;
 
 	const resPromises = resActionTypes.map((type) => interceptPromise(type, _unloads, cancel));
-	const rejPromises = rejActionTypes?.map((type) => interceptPromise(type, _unloads, cancel)) ?? [];
+	// interceptPromise resolves the payload of whichever action it intercepts, so a rejection action has to be turned into
+	// a rejection here: this promise rejects on rejActionTypes, as its signature and docs say
+	const rejPromises =
+		rejActionTypes?.map((type) =>
+			interceptPromise(type, _unloads, cancel).then((payload) => {
+				throw payload;
+			}),
+		) ?? [];
 	const rejTimeout = new Promise<never>((_, rej) =>
 		safeTimeout(_unloads, () => rej(`[interceptActionResp.TIMEOUT] ${JSON.stringify([resActionTypes, rejActionTypes])}`), timeoutMs),
 	);
