@@ -61,11 +61,11 @@ export class Quality {
 	}
 
 	/**
-	 * Convert Tidal `mediaItem.mediaMetadata?.tags` to Quality
+	 * Convert Tidal `mediaItem.mediaMetadata?.tags` to Quality. Tags Luna has no quality for (TIDAL can add new ones) are left out.
 	 */
 	public static fromMetaTags(qualityTags?: redux.MediaMetadataTag[]): Quality[] {
 		if (!qualityTags) return [];
-		return qualityTags.map((tag) => this.lookups.metadataTags[tag]);
+		return qualityTags.map((tag) => this.lookups.metadataTags[tag]).filter((quality) => quality instanceof Quality);
 	}
 
 	/**
@@ -76,11 +76,16 @@ export class Quality {
 		return this.lookups.audioQuality[audioQuality];
 	}
 
-	public static min(...qualities: Quality[]): Quality {
-		return Quality.fromIdx(Math.min(...(qualities as unknown as number[])));
+	/** The lowest of `qualities`. Undefined entries (unknown tags) are ignored, with none left this is Lowest */
+	public static min(...qualities: (Quality | undefined)[]): Quality {
+		return Quality.fromIdx(Math.min(...Quality.ranks(qualities)));
 	}
-	public static max(...qualities: Quality[]): Quality {
-		return Quality.fromIdx(Math.max(...(qualities as unknown as number[])));
+	/** The highest of `qualities`. Undefined entries (unknown tags) are ignored, with none left this is Lowest */
+	public static max(...qualities: (Quality | undefined)[]): Quality {
+		return Quality.fromIdx(Math.max(...Quality.ranks(qualities)));
+	}
+	private static ranks(qualities: (Quality | undefined)[]): number[] {
+		return qualities.filter((q) => q !== undefined).map((q) => q.valueOf());
 	}
 
 	/**
