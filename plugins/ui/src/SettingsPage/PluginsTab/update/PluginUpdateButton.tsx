@@ -1,7 +1,7 @@
 import React from "react";
 
 import { type LunaPlugin, type PluginPackage } from "@luna/core";
-import { GitUrl, ipcRenderer } from "@luna/lib";
+import { ipcRenderer } from "@luna/lib";
 import { useConfirm } from "material-ui-confirm";
 
 import IconButton from "@mui/material/IconButton";
@@ -11,6 +11,7 @@ import { green } from "@mui/material/colors";
 
 import { UpdateDetails } from "../../../components";
 import { PluginUpdatePermissionWarning } from "./PluginUpdatePermissionWarning";
+import { pluginUpdateSource } from "./pluginUpdateSource";
 
 export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }) => {
 	const subscribe = React.useCallback((notify: () => void) => plugin.pendingUpdate.onValue(notify), [plugin]);
@@ -21,10 +22,7 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 	const onClick = React.useCallback(async () => {
 		if (update === undefined) return;
 		const current: Readonly<Partial<PluginPackage>> = plugin.package ?? {};
-		const source = GitUrl.from(plugin.url);
-		// Only a release asset url says where the code comes from; any other plugin url is a store path, not a repository
-		const release = source?.kind === "release" ? source : undefined;
-		const git = release ?? GitUrl.fromRepository(current.repository) ?? GitUrl.fromRepository(update.repository);
+		const { git, releaseTag } = pluginUpdateSource(plugin.url, current, update);
 		// Answers the user chose to revoke in the dialog ("Ask again"), revoked only if they update
 		let permissionKeys: string[] = [];
 		const { confirmed } = await confirm({
@@ -34,7 +32,7 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 					from={{ version: current.version, commit: current.commit, sha256: current.codeSha256 }}
 					to={{ version: update.version, commit: update.commit, sha256: update.codeSha256 }}
 					git={git}
-					releaseTag={release?.tag}
+					releaseTag={releaseTag}
 					trustUrl={plugin.url}
 					trustHref={`${plugin.url}.json`}
 				>
