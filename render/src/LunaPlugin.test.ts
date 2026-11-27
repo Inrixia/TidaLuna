@@ -736,14 +736,11 @@ describe("ipc handlers", () => {
 		await settle();
 		expect(base.plugin.exports).toBeUndefined();
 		expect(dependant.plugin.exports).toBeUndefined();
-		// `window.close` doesn't await each unload, so the dependant is unloaded twice: once by the dependency it is
-		// reached through, and once by the loop itself before the first unload cleared its unloads. Real behaviour,
-		// reported as a bug (unload functions are expected to be idempotent).
+		// `window.close` doesn't await each unload, but each plugin is only unloaded once: the dependant is reached through
+		// its dependency first, and the loop's call joins the unload already in flight instead of running it again
 		expect(log).toEqual([
 			"load:ipcA",
 			"load:ipcB",
-			"unload:ipcB",
-			"onUnload:ipcB",
 			"unload:ipcB",
 			"onUnload:ipcB",
 			"unload:ipcA",
