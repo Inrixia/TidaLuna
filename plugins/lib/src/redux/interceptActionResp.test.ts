@@ -5,7 +5,7 @@ import { interceptors, unloadSet, type LunaUnload } from "@luna/core";
 // TIDAL's action creators are hooked by exposeTidalInternals.patchAction, so the builder it hands back runs the
 // interceptors. Imported for that side effect, the calls below are the ones TIDAL makes.
 import "../../../../render/src/exposeTidalInternals.patchAction";
-import { interceptActionResp, InterceptActionRespFail } from "./interceptActionResp";
+import { interceptActionResp, ReduxActionError } from "./interceptActionResp";
 
 const unloads = new Set<LunaUnload>();
 
@@ -54,7 +54,7 @@ describe("interceptActionResp", () => {
 		const result = await settled;
 		expect(result).not.toHaveProperty("value");
 		const error = (result as { error: unknown }).error;
-		expect(error).toBeInstanceOf(InterceptActionRespFail);
+		expect(error).toBeInstanceOf(ReduxActionError);
 		expect(error).toMatchObject({
 			actionType: "playbackControls/SEEK",
 			payload: 999,
@@ -167,7 +167,7 @@ describe("interceptActionResp", () => {
 		);
 		await flush();
 		tidalAction("playbackControls/SEEK")(8);
-		expect(await settled).toBeInstanceOf(InterceptActionRespFail);
+		expect(await settled).toBeInstanceOf(ReduxActionError);
 
 		expect(Object.keys(interceptors)).toEqual([]);
 	});
