@@ -1,3 +1,5 @@
+import { memoize } from "@inrixia/helpers";
+
 /**
  * What a theme's row says about the theme: its name, who made it, what it does, where it came from and the page its
  * source can be read on.
@@ -23,7 +25,6 @@
 
 /** What a theme file is, as shown on its row */
 export type ThemeKind = "Base" | "Colorway" | "Fonts" | "Theme";
-
 /**
  * A github url taken apart.
  *
@@ -232,8 +233,13 @@ export class ThemeManifest {
 		return "Base";
 	}
 
-	/** A github url taken apart, or undefined when the url is not github's or has no owner and repo */
-	static githubPath(url: string): GithubPath | undefined {
+	/**
+	 * A github url taken apart, or undefined when the url is not github's or has no owner and repo.
+	 *
+	 * Memoized because a row asks for it more than once: once for the raw file, once for the source page and once for the
+	 * author, and a tab full of themes would otherwise parse the same url several times.
+	 */
+	static githubPath = memoize((url: string): GithubPath | undefined => {
 		let parsed: URL;
 		try {
 			parsed = new URL(url);
@@ -246,5 +252,5 @@ export class ThemeManifest {
 		const [owner, repo, ...rest] = segments;
 		if (owner === undefined || repo === undefined) return undefined;
 		return { host, owner: decodeURIComponent(owner), repo: decodeURIComponent(repo), rest };
-	}
+	});
 }

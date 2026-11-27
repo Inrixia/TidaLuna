@@ -260,3 +260,17 @@ describe("ThemeManifest.of", () => {
 		expect(manifest.source).toBe("raw.githubusercontent.com/techroundpack.css");
 	});
 });
+
+describe("ThemeManifest.githubPath", () => {
+	test("is taken apart once per url, since a row asks for it three times", () => {
+		const url = "https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/refs/heads/main/base-windows.css";
+		expect(ThemeManifest.githubPath(url)).toBe(ThemeManifest.githubPath(url));
+		expect(ThemeManifest.githubPath(url)).toMatchObject({ owner: "aya-zzz-zzz", repo: "cotton-candy-colorways" });
+	});
+
+	test("is undefined for a url that is not github's, and for one with no repo", () => {
+		expect(ThemeManifest.githubPath("https://tidaluna.dev/nightwave.css")).toBeUndefined();
+		expect(ThemeManifest.githubPath("not a url")).toBeUndefined();
+		expect(ThemeManifest.githubPath("https://github.com/only-owner")).toBeUndefined();
+	});
+});
