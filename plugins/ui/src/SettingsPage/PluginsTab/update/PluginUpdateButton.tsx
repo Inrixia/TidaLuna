@@ -1,17 +1,20 @@
 import React from "react";
 
-import { type LunaPlugin, type PluginPackage } from "@luna/core";
+import { LunaRegistry, type LunaPlugin, type PluginPackage } from "@luna/core";
 import { ipcRenderer } from "@luna/lib";
 import { useConfirm } from "material-ui-confirm";
 
+import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import { green } from "@mui/material/colors";
 
 import { UpdateDetails } from "../../../components";
+import { useRegistry } from "../RegistryBadge";
 import { PluginUpdatePermissionWarning } from "./PluginUpdatePermissionWarning";
 import { pluginUpdateSource } from "./pluginUpdateSource";
+import { UpdateRegistryStatus } from "./UpdateRegistryStatus";
 
 export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }) => {
 	const subscribe = React.useCallback((notify: () => void) => plugin.pendingUpdate.onValue(notify), [plugin]);
@@ -36,12 +39,14 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 					trustUrl={plugin.url}
 					trustHref={`${plugin.url}.json`}
 				>
+					<UpdateRegistryStatus plugin={plugin} update={update} />
 					<PluginUpdatePermissionWarning url={plugin.url} onRevokePermissions={(keys) => (permissionKeys = keys)} />
 				</UpdateDetails>
 			),
 			confirmationText: "Update",
 			cancellationText: "Not now",
 		});
+		// One revoked while the dialog was open is refused by acceptUpdate, with a message
 		if (!confirmed) return;
 		setUpdating(true);
 		// Right before the update is applied: an update that doesn't go ahead leaves the answers, and the running version
@@ -57,13 +62,24 @@ export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }
 			// The update the user was shown, even if a newer one arrived meanwhile
 			await plugin.acceptUpdate(update, permissionKeys.length === 0 ? undefined : revokePermissions);
 		} catch {
-			// Said already: a load error on the plugin's card, a refused update or a failed revoke as an error message
+			// Already shown: a load error on the plugin's card, a refused (revoked) version or a failed revoke as an error message
 		} finally {
 			setUpdating(false);
 		}
 	}, [plugin, update, confirm]);
 
+	// Re-renders when the lists or "Only verified updates" change: an update verified meanwhile becomes a button
+	useRegistry();
+
 	if (update === undefined) return null;
+	if (!LunaRegistry.updateOffered(update.rawSha256, update.name ?? plugin.name))
+		return (
+			<Tooltip
+				title={`${update.version ?? "A new version"} is not verified by the Luna plugin registry. Only verified updates are offered: turn that off above to update anyway`}
+			>
+				<Chip size="small" variant="outlined" color="warning" label={`Unverified update ${update.version ?? ""}`.trim()} sx={{ marginLeft: 1 }} />
+			</Tooltip>
+		);
 	return (
 		<Tooltip title={`Update plugin${update.version === undefined ? "" : ` to ${update.version}`}`}>
 			<span>

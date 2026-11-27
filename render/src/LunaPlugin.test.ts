@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { setIpcHandler } from "../../test/setup-node";
 import { LunaPlugin, type LunaPluginStorage } from "./LunaPlugin";
+import { LunaRegistry } from "./LunaRegistry";
 
 /**
  * `render/src/LunaPlugin.ts` is the renderer's plugin loader: it fetches `<url>.json` + `<url>.mjs`, imports the bundle,
@@ -40,16 +41,29 @@ const { modules, ipcHandlers, traceLines } = vi.hoisted(() => {
 
 vi.mock("./modules", () => ({ modules, reduxStore: { dispatch: () => {} } }));
 
-/** Only the two fields the real `@inrixia/helpers` fetch helpers read */
-type FakeResponse = { status: number; statusText: string; json: () => Promise<unknown>; text: () => Promise<string> };
+/** Only the fields the real `@inrixia/helpers` fetch helpers and `LunaPlugin.fetchCode` (the served bytes) read */
+type FakeResponse = {
+	status: number;
+	statusText: string;
+	json: () => Promise<unknown>;
+	text: () => Promise<string>;
+	arrayBuffer: () => Promise<ArrayBuffer>;
+};
 
 const ok = (body: { json?: unknown; text?: string }): FakeResponse => ({
 	status: 200,
 	statusText: "OK",
 	json: async () => body.json,
 	text: async () => body.text ?? "",
+	arrayBuffer: async () => new TextEncoder().encode(body.text ?? "").buffer as ArrayBuffer,
 });
-const notFound = (): FakeResponse => ({ status: 404, statusText: "Not Found", json: async () => undefined, text: async () => "" });
+const notFound = (): FakeResponse => ({
+	status: 404,
+	statusText: "Not Found",
+	json: async () => undefined,
+	text: async () => "",
+	arrayBuffer: async () => new ArrayBuffer(0),
+});
 
 /** The package/code served for one plugin url, plus `fetch` requests made against it */
 type Served = { hash?: string; code?: string; package?: Record<string, unknown> };
@@ -152,6 +166,8 @@ const settle = async (ticks = 5) => {
 let forgetNativePermissions: ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
+	// These tests are about loading and updating; the registry gate has its own tests (LunaRegistry.test.ts)
+	LunaRegistry.verifiedUpdatesOnly._ = false;
 	await LunaPlugin.pluginStorage.clear();
 	for (const url of Object.keys(LunaPlugin.plugins)) delete LunaPlugin.plugins[url];
 	for (const name of Object.keys(modules)) delete modules[name];
@@ -736,14 +752,11 @@ describe("ipc handlers", () => {
 		await settle();
 		expect(base.plugin.exports).toBeUndefined();
 		expect(dependant.plugin.exports).toBeUndefined();
-		// `window.close` doesn't await each unload, so the dependant is unloaded twice: once by the dependency it is
-		// reached through, and once by the loop itself before the first unload cleared its unloads. Real behaviour,
-		// reported as a bug (unload functions are expected to be idempotent).
+		// `window.close` doesn't await each unload, and the dependant is reached through its dependency and by the loop
+		// itself: it is unloaded once, the second call waits for the first
 		expect(log).toEqual([
 			"load:ipcA",
 			"load:ipcB",
-			"unload:ipcB",
-			"onUnload:ipcB",
 			"unload:ipcB",
 			"onUnload:ipcB",
 			"unload:ipcA",

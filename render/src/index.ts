@@ -16,6 +16,21 @@ export { Messager, Tracer } from "./trace";
 export { modules, reduxStore } from "./modules";
 
 export * from "./LunaPlugin";
+export * from "./LunaRegistry";
+export { isCoreUrl } from "./helpers/pluginUpdates";
+export {
+	asSentence,
+	defaultRegistryBase,
+	packageSha256s,
+	registryPublicKey,
+	unverifiedPlugins,
+	type CodeSha256,
+	type RegistryFileName,
+	type RevokedEntry,
+	type RevokedFile,
+	type VerifiedEntry,
+	type VerifiedFile,
+} from "./helpers/registry";
 export * from "./ReactiveStore";
 export * from "./SettingsTransfer";
 
@@ -23,6 +38,7 @@ export * from "./SettingsTransfer";
 import "./window.core";
 
 import { LunaPlugin } from "./LunaPlugin";
+import { LunaRegistry } from "./LunaRegistry";
 import { applySeedSettings } from "./helpers/applySeedSettings";
 
 // Wrap loading of plugins in a timeout so native/preload.ts can populate modules with @luna/core (see native/preload.ts)
@@ -38,6 +54,12 @@ setTimeout(async () => {
 
 	// Load ui after lib as it depends on it.
 	await LunaPlugin.fromStorage({ enabled: true, url: "https://luna/luna.ui" });
+
+	// The last good registry lists, so a plugin revoked in one never runs (seed plugins below included). Awaited in full: plugins come from the
+	// same IndexedDB, so this holds them back no longer than reading them does. The fresh lists are fetched without waiting (never blocking
+	// plugins) and then hourly, a newly revoked plugin is unloaded when they arrive (see LunaRegistry)
+	await LunaRegistry.loadCached().catch(LunaRegistry.trace.err.withContext("loadCached"));
+	LunaRegistry.refreshEvery();
 
 	// Apply declarative seed settings (e.g. from Nix) before loading user plugins
 	await applySeedSettings();

@@ -1,7 +1,7 @@
 import React from "react";
 import type { ErrorInfo, ReactNode } from "react";
 
-import { LunaPlugin, unloadSet, type PluginPackage } from "@luna/core";
+import { LunaPlugin, packageSha256s, unloadSet, type PluginPackage } from "@luna/core";
 import { store as obyStore } from "oby";
 
 import Stack from "@mui/material/Stack";
@@ -15,6 +15,7 @@ import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import { LunaSwitch, LunaTrashButton, SpinningButton } from "../../components";
 import { LiveReloadToggle } from "./LiveReloadToggle";
 import { LunaPluginHeader } from "./LunaPluginHeader";
+import { RegistryBadge } from "./RegistryBadge";
 import { PluginUpdateButton } from "./update/PluginUpdateButton";
 
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -133,6 +134,7 @@ export const LunaPluginSettings = React.memo(({ plugin }: { plugin: LunaPlugin }
 						>
 							{collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
 						</IconButton>
+						<RegistryBadge plugin={plugin} rawSha256={packageSha256s(pkg)} name={pkg?.name ?? plugin.name} />
 						{!collapsed && !isCore && (
 							<Tooltip
 								title={enabled ? `Disable ${name}` : `Enable ${name}`}

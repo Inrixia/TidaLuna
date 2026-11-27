@@ -12,6 +12,12 @@ export const updateWaitsForUser = (plugin: {
 }): boolean => plugin.codeChanged && plugin.hasCode && !plugin.isDev && !plugin.liveReload && !plugin.isCore;
 
 /**
+ * Luna's own plugins are served from https://luna/ (part of the Luna build): they update without asking and are not in the plugin registry.
+ * By url, not by name: any plugin can name itself like a core plugin, only Luna serves https://luna/.
+ */
+export const isCoreUrl = (url: string): boolean => url.startsWith("https://luna/");
+
+/**
  * A dev plugin is served from this machine (`slot.mjs serve`, `pnpm watch`): http on host 127.0.0.1, any port.
  * Checked by host, not by prefix, so `http://127.0.0.1.example.com` or `http://127.0.0.1@example.com` don't count (dev plugins skip the update prompt).
  */

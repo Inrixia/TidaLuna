@@ -1,0 +1,15 @@
+{
+	"schema": 1,
+	"kind": "revoked",
+	"serial": 2,
+	"generated": "2026-11-23T12:00:00.000Z",
+	"entries": {
+		"15c4595b543ef0f2097fa4332d774bedc9923d08fdf400c0d3b3cdb174f0a326": {
+			"id": "test.fixture",
+			"reason": "Sends the session token to example.com",
+			"report": "https://github.com/Inrixia/luna-registry/pull/12",
+			"revokedAt": "2026-11-23T12:00:00.000Z",
+			"sig": "z/3kYts84eFgEPgclah13k158j/OnEJOT1RPm+ID5PTrIrPP526Igwg49VHrhtci7paijHXsJ1CqsdNiXt7wAA=="
+		}
+	}
+}
