@@ -104,7 +104,10 @@ export class Album extends ContentBase implements MediaCollection {
 	});
 
 	public upc: () => Promise<string | undefined> = memoize(async () => {
-		return this.tidalAlbum.upc ?? (await this.brainzAlbum())?.barcode;
+		// No MusicBrainz fallback: brainzAlbum() only queries MusicBrainz when TIDAL's upc is set (it looks the release up
+		// by that barcode), so an album without one never has a release to take a barcode from. This is TIDAL's upc or
+		// nothing.
+		return this.tidalAlbum.upc;
 	});
 
 	public async brainzId(): Promise<string | undefined> {
