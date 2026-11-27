@@ -64,6 +64,38 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 - Don't hand-roll mechanics with shared owner, e.g. finding TIDAL modules/functions, DOM watching, hooking Redux/TIDAL state, timers + listeners tied to `unloads`, styles, IPC, TIDAL API, media data. Check for helper first.
 - Write generically reusable code in owning layer, exported from its barrel: renderer helpers in `lib`, main-process helpers in `lib.native`, components in `ui`, loader-level code in `render/` or `native/`. Keep only plugin-specific logic in plugin.
 
+## Code design
+
+How code here is reviewed. Apply to new code, and to the code you are already touching.
+
+- One constructor, `static from(...)`, private constructor. Key it on identity (url, path, id) in a `private static readonly instances = new Map<string, Class>()` and return the existing instance: two `.from` calls with one key are one object. Never `.of`.
+- Statics are that factory and construction-time validation, nothing else. A static that reads instance state is an instance method hiding as a static. A static that takes another class's data to do that class's job belongs on the class that owns the state.
+- A derived value that costs anything is a private field plus a `get`, not recomputed per call.
+- Validate on construction: the constructor throws on state that should not exist. Not a later `validate()`, not inside `install()`.
+- Errors throw. No `{ ok, error }` threaded through helpers: it kills short-circuiting and makes every caller parse. Catch at the boundary, where something can be done about it.
+- A method called exactly once gets inlined. Past ~200 lines, split to `Class.stepName.ts` beside the class.
+- One class per file, named for the class, and the class named for its role: `LunaTheme` beside `LunaPlugin`, not `Theme`.
+- Public state beats accessor ceremony. A public record beats a private registry plus getters, and destructuring that only guards against mutation that cannot happen is noise.
+- Pass a value once. If the callee already holds it, read it from the instance instead of taking a second parameter.
+- Files stay under 400 lines.
+
+### Smells to fix rather than add
+
+- A third copy of the same logic. Extract it into the owning layer before the third exists, then call it from every site.
+- A helper with one caller, a file with one export nobody imports, a wrapper that forwards its arguments and does nothing else.
+- Hand-rolled mechanics that have a shared owner: DOM watching, module finding, redux hooking, timers, styles, IPC, TIDAL API, path parsing, git urls, file names.
+- `any`, an `as` cast covering a mismatch, `typeof` on a declared type, unused parameters, dead or commented-out code, a `TODO` with no issue behind it.
+- A `catch` that swallows, or one that only logs. Silent failure is how a bug survives a release.
+- Anything registered without `unloads`: listeners, observers, timers, style tags, redux intercepts.
+- `console.log` where `Tracer` belongs. CLI tools under `scripts/` print on purpose and are the exception.
+- A comment restating the code. Say why, in one line.
+
+### Names and tests
+
+- Names say what they check: `stringNotEmpty`, not an obscure predicate.
+- Uncertain input is `unknown`, then narrowed. An undefined check is `if (x === undefined)`.
+- A test name is the bug it prevents.
+
 ## Style
 
 - Prettier: tabs, `printWidth` 145, semicolons. Many files not Prettier-clean; match surrounding code, don't reformat files you only edit.
