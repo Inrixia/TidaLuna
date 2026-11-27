@@ -1,6 +1,6 @@
 // Links an update confirmation shows (registry.ts updateQuestion): each version's source and what changed between them.
 // The link building is the shared GitUrl (plugins/lib) and the update links of plugins/ui; this only finds the repository.
-import { GitUrl } from "../../plugins/lib/src/classes/GitUrl";
+import { pluginUpdateSource } from "../../plugins/ui/src/SettingsPage/PluginsTab/update/pluginUpdateSource";
 import { updateLinks as linksBetween, type UpdateLinks } from "../../plugins/ui/src/components/updateLinks";
 
 type SourceInfo = { repository?: unknown; version?: string; commit?: unknown };
@@ -14,8 +14,6 @@ const side = ({ version, commit }: SourceInfo) => ({ version, commit: typeof com
  * (`latest`, `dev`: it moves on); see updateLinks in plugins/ui.
  */
 export const updateLinks = (url: string, current: SourceInfo, update: SourceInfo): UpdateLinks => {
-	const asset = GitUrl.from(url);
-	const release = asset?.kind === "release" && asset.tag !== undefined ? asset : undefined;
-	const git = release ?? GitUrl.fromRepository(current.repository) ?? GitUrl.fromRepository(update.repository);
-	return linksBetween(side(current), side(update), git, release?.tag);
+	const { git, releaseTag } = pluginUpdateSource(url, current, update);
+	return linksBetween(side(current), side(update), git, releaseTag);
 };
