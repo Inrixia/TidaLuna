@@ -1,5 +1,9 @@
 # Tidal Luna
 
+<p align="center">
+	<img src="assets/brand/github-banner.svg" alt="TidaLuna" width="100%">
+</p>
+
 [![Build & Release](https://github.com/Inrixia/TidaLuna/actions/workflows/build.yml/badge.svg)](https://github.com/Inrixia/TidaLuna/actions/workflows/build.yml)
 [![coverage](https://img.shields.io/endpoint?url=https://cdn.jsdelivr.net/gh/Inrixia/TidaLuna@master/.github/badges/coverage.json)](docs/testing.md)
 [![branch coverage](https://img.shields.io/endpoint?url=https://cdn.jsdelivr.net/gh/Inrixia/TidaLuna@master/.github/badges/coverage-branches.json)](docs/testing.md)
