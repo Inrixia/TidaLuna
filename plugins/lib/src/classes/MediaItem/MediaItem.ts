@@ -7,6 +7,7 @@ import { getPlaybackInfo, getVideoPlaybackInfo, listenerError, parseDate, type P
 import { brainzJson } from "../../helpers/brainzJson";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
+import { InterceptTimeoutError } from "../../redux";
 import { Album } from "../Album";
 import { Artist } from "../Artist";
 import { ContentBase, type TCoverOpts } from "../ContentBase";
@@ -36,6 +37,12 @@ export class MediaItem extends ContentBase {
 
 	private static cache = ReactiveStore.getStore("@luna/MediaItemCache");
 
+	/**
+	 * Items whose last load timed out. A timeout says nothing about whether the item exists, so an answer built from one
+	 * must not be kept: `fromIsrc` is memoized and would otherwise remember "no track" for the rest of the session.
+	 */
+	private static readonly timedOutIds = new Set<redux.ItemId>();
+
 	private static _supportsSpatialAudio: boolean | undefined;
 	public static get supportsSpatialAudio(): boolean | undefined {
 		return MediaItem._supportsSpatialAudio;
@@ -54,10 +61,6 @@ export class MediaItem extends ContentBase {
 				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
 			);
 			return mediaItem;
-		} catch {
-			// TIDAL's FAIL action and the timeout reject now: an item that failed to load is what callers already handle
-			// as missing, not an error to throw at them
-			return undefined;
 		} finally {
 			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
 			clearWarnCatch();
@@ -74,7 +77,23 @@ export class MediaItem extends ContentBase {
 			// Prefetch mediaItemCache while constructing
 			const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
 			const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
-				mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
+				if (mediaItem === undefined) {
+					try {
+						mediaItem = await this.fetchMediaItem(itemId, contentType);
+					} catch (err) {
+						// Missing is still what the caller is told, as before: the load failed, and every caller of fromId
+						// already reads that as "no item". A timeout marks the id, because it says nothing about whether the
+						// item exists and whatever would remember this answer must not
+						if (err instanceof InterceptTimeoutError) {
+							MediaItem.timedOutIds.add(itemId);
+							MediaItem.trace.warn(`Timed out loading media item ${itemId}`);
+						}
+						return;
+					}
+				}
+				// A definitive answer clears the mark: only the timeout path above sets it
+				MediaItem.timedOutIds.delete(itemId);
+				// TIDAL answered with its FAIL action: the item is gone, so nothing is remembered either way
 				if (mediaItem === undefined) return;
 				const cache = await mediaItemCache;
 				// Prefer the type Tidal stored the item with, callers often default to "track" for videos
@@ -85,8 +104,13 @@ export class MediaItem extends ContentBase {
 			return item;
 		},
 	);
-	public static fromIsrc: (isrc: string) => Promise<MediaItem | undefined> = memoize(async (isrc) => {
+	/**
+	 * One isrc lookup, memoized, reporting whether a track it needed timed out. Reported rather than acted on because the
+	 * memo can only be cleared from outside it: `fromIsrc` below does that once the answer is known.
+	 */
+	private static readonly lookupIsrc = memoize(async (isrc: string) => {
 		let bestMediaItem: MediaItem | undefined = undefined;
+		let timedOut = false;
 		for await (const track of TidalApi.isrc(isrc)) {
 			// If quality is higher than current best, set as best
 			const maxTrackQuality = Quality.max(...Quality.fromMetaTags((track.attributes?.mediaTags ?? []) as redux.MediaMetadataTag[]));
@@ -94,11 +118,20 @@ export class MediaItem extends ContentBase {
 			// Lowest is not above "no item yet", so it would never be picked even when it is the only result
 			if (bestMediaItem === undefined || maxTrackQuality > bestMediaItem.bestQuality) {
 				bestMediaItem = (await MediaItem.fromId(track.id)) ?? bestMediaItem;
-				if ((bestMediaItem?.bestQuality ?? Quality.Lowest) >= Quality.Max) return bestMediaItem;
+				// Reading the mark consumes it: it describes the load that just happened, so it cannot reach a later one
+				if (MediaItem.timedOutIds.delete(track.id)) timedOut = true;
+				if ((bestMediaItem?.bestQuality ?? Quality.Lowest) >= Quality.Max) break;
 			}
 		}
-		return bestMediaItem;
+		return { bestMediaItem, timedOut };
 	});
+	public static fromIsrc = async (isrc: string): Promise<MediaItem | undefined> => {
+		const { bestMediaItem, timedOut } = await MediaItem.lookupIsrc(isrc);
+		// A lookup that timed out is not this isrc's answer, so it is not kept: the next call asks TIDAL again rather than
+		// serving "no track", or a worse track, for the rest of the session
+		if (timedOut) MediaItem.lookupIsrc.clear(isrc);
+		return bestMediaItem;
+	};
 	public static async fromPlaybackContext(playbackContext?: redux.PlaybackContext) {
 		// This has to be here to avoid ciclic requirements breaking
 		playbackContext ??= PlayState.playbackContext;

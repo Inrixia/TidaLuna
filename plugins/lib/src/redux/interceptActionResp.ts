@@ -7,6 +7,18 @@ import { interceptPromise, type InterceptPayload } from "./intercept";
 import type { ActionType } from "./types";
 
 const intercepts: Record<ActionType, Semaphore> = {} as Record<ActionType, Semaphore>;
+
+/**
+ * Nothing answered within the timeout. It is an Error rather than a string so a caller can tell "TIDAL never replied" from
+ * a rejection action's payload, which is a real answer: one is worth retrying, the other is not.
+ */
+export class InterceptTimeoutError extends Error {
+	public constructor(resActionTypes: ActionType[], rejActionTypes?: ActionType[]) {
+		super(`[interceptActionResp.TIMEOUT] ${JSON.stringify([resActionTypes, rejActionTypes])}`);
+		this.name = "InterceptTimeoutError";
+	}
+}
+
 /**
  * @param trigger Function called after intercepters setup.
  * @param resActionTypes Array of action types to resolve on
@@ -39,7 +51,7 @@ export const interceptActionResp = async <RESAT extends ActionType, REJAT extend
 			}),
 		) ?? [];
 	const rejTimeout = new Promise<never>((_, rej) =>
-		safeTimeout(_unloads, () => rej(`[interceptActionResp.TIMEOUT] ${JSON.stringify([resActionTypes, rejActionTypes])}`), timeoutMs),
+		safeTimeout(_unloads, () => rej(new InterceptTimeoutError(resActionTypes, rejActionTypes)), timeoutMs),
 	);
 	// We dont worry about removing from _unloads as all unloads here are idempotent
 	if (unloads !== null) {

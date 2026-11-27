@@ -5,7 +5,7 @@ import { interceptors, unloadSet, type LunaUnload } from "@luna/core";
 // TIDAL's action creators are hooked by exposeTidalInternals.patchAction, so the builder it hands back runs the
 // interceptors. Imported for that side effect, the calls below are the ones TIDAL makes.
 import "../../../../render/src/exposeTidalInternals.patchAction";
-import { interceptActionResp } from "./interceptActionResp";
+import { interceptActionResp, InterceptTimeoutError } from "./interceptActionResp";
 
 const unloads = new Set<LunaUnload>();
 
@@ -50,6 +50,21 @@ describe("interceptActionResp", () => {
 		tidalAction("playbackControls/SEEK")(999);
 
 		await rejected;
+		expect(interceptors["playbackControls/PLAY"]).toBeUndefined();
+		expect(interceptors["playbackControls/SEEK"]).toBeUndefined();
+	});
+
+	test("a timeout rejects with an error a caller can tell from a rejection payload", async () => {
+		vi.useFakeTimers();
+		const response = interceptActionResp(vi.fn(), unloads, ["playbackControls/PLAY"], ["playbackControls/SEEK"]);
+		// Attach first: this promise is meant to reject, and nothing else would handle it
+		const rejected = expect(response).rejects.toBeInstanceOf(InterceptTimeoutError);
+
+		await vi.advanceTimersByTimeAsync(5000);
+
+		await rejected;
+		// A rejection action rejects with its own payload, which is a value and not this: the difference is what lets a
+		// caller decide whether the answer is worth remembering
 		expect(interceptors["playbackControls/PLAY"]).toBeUndefined();
 		expect(interceptors["playbackControls/SEEK"]).toBeUndefined();
 	});

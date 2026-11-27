@@ -412,6 +412,19 @@ describe("fromId", () => {
 		expect(await MediaItem.fromId()).toBeUndefined();
 	});
 
+	test("resolves undefined when TIDAL never answers, as it does for an item that is gone", async () => {
+		const id = nextId();
+		vi.useFakeTimers();
+		try {
+			const loaded = MediaItem.fromId(id);
+			// Nothing answers the load, so the 5s wait is what ends it
+			await vi.advanceTimersByTimeAsync(5000);
+			await expect(loaded).resolves.toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	test("uses the media item TIDAL's store already has, without asking the api", async () => {
 		const id = nextId();
 		const tidalItem = track(id, { title: "Stored" });
@@ -539,5 +552,41 @@ describe("fromIsrc", () => {
 
 		lookup({ tags: ["MQA"], loaded: null });
 		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toBeUndefined();
+	});
+
+	test("asks TIDAL again when a lookup timed out, instead of remembering no track", async () => {
+		const isrc = nextIsrc();
+		const id = nextId();
+		// A real timeout marks the id, through the same path a slow TIDAL takes
+		vi.useFakeTimers();
+		try {
+			const timedOut = MediaItem.fromId(id);
+			await vi.advanceTimersByTimeAsync(5000);
+			await timedOut;
+		} finally {
+			vi.useRealTimers();
+		}
+
+		const isrcLookup = vi.spyOn(TidalApi, "isrc").mockImplementation(async function* () {
+			yield { id, attributes: { mediaTags: [] } } as never;
+		});
+		// fromId answers as the timeout did, with the id still marked
+		vi.spyOn(MediaItem, "fromId").mockImplementation((async () => undefined) as never);
+
+		await expect(MediaItem.fromIsrc(isrc)).resolves.toBeUndefined();
+		await expect(MediaItem.fromIsrc(isrc)).resolves.toBeUndefined();
+		// Twice, because a timeout says nothing about whether the track exists
+		expect(isrcLookup).toHaveBeenCalledTimes(2);
+
+		// The same answer from a track that did not time out is an answer, and is remembered: that is the difference the
+		// timeout case rests on. The spy is the same object, so its count is cleared rather than replaced
+		const remembered = nextIsrc();
+		isrcLookup.mockClear();
+		isrcLookup.mockImplementation(async function* () {
+			yield { id: nextId(), attributes: { mediaTags: [] } } as never;
+		});
+		await expect(MediaItem.fromIsrc(remembered)).resolves.toBeUndefined();
+		await expect(MediaItem.fromIsrc(remembered)).resolves.toBeUndefined();
+		expect(isrcLookup).toHaveBeenCalledTimes(1);
 	});
 });
