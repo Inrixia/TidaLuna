@@ -8,6 +8,8 @@ import { fileUrlPlugin } from "./plugins/fileUrl";
 import { lunaNativePlugin } from "./plugins/lunaNativePlugin";
 import { writeBundlePlugin } from "./plugins/writeBundlePlugin";
 
+export { fileUrlPlugin } from "./plugins/fileUrl";
+
 export const defaultBuildOptions: BuildOptions = {
 	sourcemap: true,
 	bundle: true,
