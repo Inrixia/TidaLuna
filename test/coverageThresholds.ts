@@ -8,8 +8,8 @@
 export const coverageThresholds = {
 	lines: 80,
 	statements: 78,
-	branches: 69,
-	functions: 77,
+	branches: 70,
+	functions: 78,
 } as const;
 
 export type CoverageMetric = keyof typeof coverageThresholds;
