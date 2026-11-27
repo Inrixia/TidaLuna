@@ -57,7 +57,9 @@ jobs:
        # "ahead": BASE_SHA is ahead of the run's commit, so the run's commit is an ancestor
        status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...$BASE_SHA" -q .status) || continue
        if [ "$status" = identical ] || [ "$status" = ahead ]; then
-        gh run download "$id" -R "$GITHUB_REPOSITORY" -n coverage-summary -D coverage/base || break
+        # An expired or missing artifact is one run to skip, not the end of the search: `break` here gave up on older
+        # runs that may still have theirs
+        gh run download "$id" -R "$GITHUB_REPOSITORY" -n coverage-summary -D coverage/base || { rm -rf coverage/base; continue; }
         echo "COVERAGE_BASE_SHA=$sha" >> "$GITHUB_ENV"
         echo "Comparing with run $id on $BASE_REF @ $sha"
         exit 0
@@ -84,13 +86,22 @@ jobs:
       if-no-files-found: ignore
       retention-days: 7
 
-   # What pull requests against this branch compare their coverage with (Find base coverage, above)
+   # What pull requests against this branch compare their coverage with (Find base coverage, above).
+   # The keys are made repo relative here, because the pull request run cannot know which workspace root this run used:
+   # a different one turns every area into ".." and invents removed and new files.
+   - name: Normalise the coverage summary
+     if: github.event_name == 'push'
+     run: |
+      mkdir -p coverage/upload
+      jq --arg root "$GITHUB_WORKSPACE/" 'with_entries(if .key == "total" then . else .key |= ltrimstr($root) end)' \
+       coverage/coverage-summary.json > coverage/upload/coverage-summary.json
+
    - name: Upload the coverage summary
      if: github.event_name == 'push'
      uses: actions/upload-artifact@v7
      with:
       name: coverage-summary
-      path: coverage/coverage-summary.json
+      path: coverage/upload/coverage-summary.json
       retention-days: 90
 
    # Another workflow (nix-hashes) also commits to master, so a run can check out a head that moves before it finishes

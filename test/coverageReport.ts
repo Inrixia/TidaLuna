@@ -57,11 +57,26 @@ const emptyCounts = (): Totals => ({
 	functions: { covered: 0, total: 0 },
 });
 
+/** A path the run wrote itself, which starts at the filesystem root rather than at the repo */
+const absolutePath = /^(\/|[A-Za-z]:[\\/])/;
+
+/**
+ * Repo relative, with `/` separators.
+ *
+ * A run's own summary holds absolute paths, which are stripped against `root`. A summary uploaded by an earlier run holds
+ * repo relative ones, already stripped there, so stripping them again would corrupt them. Both are accepted because
+ * artifacts written before that normalisation existed are still inside their retention window.
+ */
+const repoRelative = (file: string, root: string) => {
+	const normalised = file.split(path.sep).join("/");
+	return absolutePath.test(normalised) ? path.relative(root, normalised).split(path.sep).join("/") : normalised;
+};
+
 /** File entries keyed by repo relative path with `/` separators, without the `total` entry */
 const byFile = (summary: Summary, root: string) => {
 	const files = new Map<string, Totals>();
 	for (const [file, coverage] of Object.entries(summary)) {
-		if (file !== "total") files.set(path.relative(root, file).split(path.sep).join("/"), coverage);
+		if (file !== "total") files.set(repoRelative(file, root), coverage);
 	}
 	return files;
 };
@@ -78,11 +93,21 @@ const byArea = (summary: Summary, root: string) => {
 	return new Map([...areas.entries()].sort(([a], [b]) => a.localeCompare(b)));
 };
 
-/** Change in percentage points, rounded the way it is shown so a change that prints as 0 counts as none */
-const change = (head: Counts, base: Counts) => Number((percentage(head) - percentage(base)).toFixed(1)) || 0;
+/**
+ * Change in percentage points, rounded the way it is shown so a change that prints as 0 counts as none.
+ *
+ * Undefined when the counts cannot produce a number. Coercing that to 0, which is what `|| 0` did, rendered unreadable
+ * data as "nothing changed", which is the one answer it is not.
+ */
+export const change = (head: Counts, base: Counts): number | undefined => {
+	const delta = Number((percentage(head) - percentage(base)).toFixed(1));
+	if (!Number.isFinite(delta)) return undefined;
+	// A rounded negative zero would otherwise read as a change
+	return Object.is(delta, -0) ? 0 : delta;
+};
 
-/** ` +0.4%`, ` -0.2% 🔻`, or nothing when it didn't move */
-const formatChange = (delta: number) => (delta > 0 ? ` +${delta}%` : delta < 0 ? ` ${delta}% 🔻` : "");
+/** ` +0.4%`, ` -0.2% 🔻`, or nothing when it didn't move, or could not be worked out */
+const formatChange = (delta: number | undefined) => (delta === undefined || delta === 0 ? "" : delta > 0 ? ` +${delta}%` : ` ${delta}% 🔻`);
 
 /**
  * Cell text comes from file paths, which a pull request author controls. Escape what would end the cell or start markup,
@@ -128,12 +153,13 @@ const changedFiles = (summary: Summary, base: Summary, root: string) => {
 			continue;
 		}
 		const deltas = coverageMetrics.map((metric) => change(coverage[metric], old[metric]));
-		if (deltas.every((delta) => delta === 0)) continue;
+		// A metric that could not be compared is not a change either, so a file is skipped only when nothing moved
+		if (deltas.every((delta) => delta === undefined || delta === 0)) continue;
 		changes.push({
 			file,
-			kind: deltas.some((delta) => delta < 0) ? "down" : "up",
+			kind: deltas.some((delta) => delta !== undefined && delta < 0) ? "down" : "up",
 			cells: coverageMetrics.map((metric, index) => `${format(percentage(coverage[metric]))}${formatChange(deltas[index])}`),
-			sortKey: deltas[0],
+			sortKey: deltas[0] ?? 0,
 		});
 	}
 	for (const file of before.keys()) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildComment, commentMarker, isSummary, maxFileRows, type Summary, type Totals } from "./coverageReport";
+import { buildComment, change, commentMarker, isSummary, maxFileRows, type Counts, type Summary, type Totals } from "./coverageReport";
 import { coverageThresholds } from "./coverageThresholds";
 
 const root = "/repo";
@@ -145,5 +145,43 @@ describe("buildComment", () => {
 		const comment = buildComment(summary({ "native/a|<img src=x>`.ts": totals(1, 2) }), { root, base: summary({}) });
 		expect(comment).toContain("| native/a\\|\\<img src=x\\>\\`.ts (new) |");
 		expect(comment).not.toMatch(/(?<!\\)<img/);
+	});
+});
+
+describe("base summary keys", () => {
+	it("matches a base whose keys were made repo relative when it was uploaded", () => {
+		const head = summary({ "native/a.ts": totals(90, 100) });
+		// What the Normalise step uploads: the workspace root is gone from the key
+		const base: Summary = { total: totals(80, 100), "native/a.ts": totals(80, 100) };
+
+		const comment = buildComment(head, { root, base, baseRef: "master" });
+
+		expect(tableRow(comment, "native") ?? "").toContain("+10%");
+		// Anchored at the repo, so the workspace prefix is not mistaken for an area that was removed
+		expect(comment).not.toContain("| .. |");
+	});
+
+	it("reports no change for a comparison it cannot work out, rather than zero", () => {
+		const unreadable: Counts = { covered: Number.NaN, total: 100 };
+
+		// Undefined, not 0: a zero would say the number held still, which is the one thing unknown data cannot claim
+		expect(change(unreadable, { covered: 10, total: 100 })).toBeUndefined();
+		expect(change({ covered: 40, total: 100 }, unreadable)).toBeUndefined();
+		// The comparisons it can make are unaffected
+		expect(change({ covered: 40, total: 100 }, { covered: 10, total: 100 })).toBe(30);
+		expect(change({ covered: 40, total: 100 }, { covered: 40, total: 100 })).toBe(0);
+	});
+
+	it("leaves the file list out when nothing could be compared", () => {
+		const head = summary({ "native/a.ts": totals(90, 100) });
+		const unreadable = (): Totals => {
+			const counts = { covered: Number.NaN, total: 100 };
+			return { lines: counts, statements: counts, branches: counts, functions: counts };
+		};
+
+		const comment = buildComment(head, { root, base: { total: unreadable(), "native/a.ts": unreadable() }, baseRef: "master" });
+
+		expect(comment).not.toContain("NaN");
+		expect(comment).not.toContain("Files with changed coverage");
 	});
 });
