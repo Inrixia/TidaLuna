@@ -82,23 +82,19 @@ export class ReactiveStore {
 		}
 	}
 
-	public del(key: string) {
-		return idbDel(key, this.idbStore);
-	}
-
 	/**
 	 * Deletes a key and stops persisting the reactive object behind it.
 	 *
 	 * A change made just before this queues a write that would otherwise land after the delete and put the key back (an
 	 * uninstalled plugin resurrecting itself), so stop the listener, let that write finish, then delete.
 	 */
-	public async delete(key: string) {
+	public async del(key: string) {
 		this.unloads[key]?.();
 		delete this.unloads[key];
 		await this.pendingWrites[key]?.catch(() => undefined);
 		delete this.pendingWrites[key];
 		delete this.reactiveCache[key];
-		await this.del(key);
+		await idbDel(key, this.idbStore);
 	}
 
 	public keys(): Promise<string[]> {
@@ -119,6 +115,6 @@ export class ReactiveStore {
 	{
 		const allKeys = await this.keys();
 		for (const key of allKeys)
-			await this.delete(key);
+			await this.del(key);
 	}
 }

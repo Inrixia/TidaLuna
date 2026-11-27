@@ -221,7 +221,7 @@ describe("ReactiveStore", () => {
 		expect(storage.enabled).toBe(false);
 	});
 
-	test("delete removes the key even with a write for it still in flight", async () => {
+	test("del removes the key even with a write for it still in flight", async () => {
 		const store = newStore();
 		const reactive = await store.getReactive("key", { a: 1 });
 
@@ -230,7 +230,7 @@ describe("ReactiveStore", () => {
 		idb.beforeSet = () => new Promise<void>((resolve) => (releaseWrite = resolve));
 		reactive.a = 2;
 
-		const deleted = store.delete("key");
+		const deleted = store.del("key");
 		idb.beforeSet = undefined;
 		releaseWrite();
 		await deleted;
