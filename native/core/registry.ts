@@ -7,6 +7,7 @@
 //
 // Kept apart from Electron (its IO comes in as RegistryDeps) so it can be tested.
 import { createHash } from "crypto";
+import { shortHash } from "../../plugins/lib/src/helpers/shortHash";
 
 import type { ConfirmLine, ConfirmLink, ConfirmRequest, ConfirmWarning } from "./confirmPage";
 import { parseBundle, worldFilePrefix } from "../worldBundle";
@@ -129,9 +130,6 @@ export type RegistryDeps = {
 // #endregion
 
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
-/** First 12 hex digits, enough to tell versions apart and compare with a published hash */
-const shortHash = (hash: string) => hash.slice(0, 12);
-
 const isWorldNative = (fileName: string) => fileName.startsWith(worldFilePrefix);
 const isNative = (version: Version) => version.natives.length !== 0;
 /**
