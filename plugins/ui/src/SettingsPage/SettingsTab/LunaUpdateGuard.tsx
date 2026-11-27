@@ -10,14 +10,14 @@ import { LunaSetting, LunaSettings } from "../../components";
 import type { RecoveryStatus } from "../../../../../native/updateRecovery";
 import type { UpdateGuardStatus } from "../../../../../native/autoUpdateStatus";
 
-const actions = {
+const actions: Record<string, string> = {
 	installed: "text.primary",
 	none: "text.secondary",
 	refused: "warning.main",
 	failed: "error.main",
-} as const;
+};
 
-const actionColor = (action: string) => actions[action as keyof typeof actions] ?? "text.secondary";
+const actionColor = (action: string) => actions[action] ?? "text.secondary";
 
 const mechanismText = (mechanism?: string) => {
 	switch (mechanism) {
@@ -59,6 +59,9 @@ export const LunaUpdateGuard = React.memo(() => {
 			setBusy(true);
 			try {
 				await ipcRenderer.invoke("__Luna.setUpdateRecovery", decision);
+			} catch {
+				// Nothing to report here: the refresh below reads what the main process actually stored, so a refused write
+				// shows as the switch springing back rather than as an error on a card that cannot retry
 			} finally {
 				setBusy(false);
 				await refresh();

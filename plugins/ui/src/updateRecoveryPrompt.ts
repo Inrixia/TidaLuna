@@ -16,8 +16,9 @@ import { confirm, whenConfirmReady } from "./helpers/confirm";
 export type RecoveryStatus = { decision?: "enabled" | "declined"; mechanism?: string };
 
 export const askAboutUpdateRecovery = async (): Promise<void> => {
-	const status = await ipcRenderer.invoke("__Luna.getUpdateRecovery").catch(() => undefined as RecoveryStatus | undefined);
-	// Undefined means the main process could not answer; silence is not consent either way, so nothing is asked or sent
+	// Undefined means the main process could not answer, either by failing or by having nothing to say
+	const status: RecoveryStatus | undefined = await ipcRenderer.invoke("__Luna.getUpdateRecovery").catch(() => undefined);
+	// Silence is not consent either way, so nothing is asked or sent
 	if (status === undefined || status.decision !== undefined) return;
 
 	// The provider that backs confirm() mounts as its own page, so wait rather than racing it
