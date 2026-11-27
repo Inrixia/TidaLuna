@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildComment, commentMarker, maxFileRows, type Summary, type Totals } from "./coverageReport";
+import { buildComment, commentMarker, isSummary, maxFileRows, type Summary, type Totals } from "./coverageReport";
+import { coverageThresholds } from "./coverageThresholds";
 
 const root = "/repo";
 
@@ -26,7 +27,27 @@ const summary = (files: Record<string, Totals>): Summary => {
 
 const tableRow = (comment: string, label: string) => comment.split("\n").find((line) => line.startsWith(`| ${label} |`));
 
+describe("isSummary", () => {
+	it("accepts a vitest summary and rejects anything else that parsed", () => {
+		expect(isSummary(summary({ "native/a.ts": totals(1, 2) }))).toBe(true);
+		expect(isSummary(undefined)).toBe(false);
+		expect(isSummary({})).toBe(false);
+		expect(isSummary({ total: { lines: { covered: 1, total: 2 } } })).toBe(false);
+		expect(isSummary([1, 2])).toBe(false);
+	});
+});
+
 describe("buildComment", () => {
+	it("warns when a metric is under its floor, and still reports the table", () => {
+		const below = coverageThresholds.branches - 5;
+		const files = summary({ "native/a.ts": totals(99, 100) });
+		files.total.branches = { covered: below, total: 100 };
+		const comment = buildComment(files, { root });
+		expect(comment).toContain(`> Below the configured floors: branches ${below}% (floor ${coverageThresholds.branches}%).`);
+		expect(comment).not.toContain("lines 99% (floor");
+		expect(tableRow(comment, "**All**")).toBeDefined();
+	});
+
 	it("warns when there is no summary", () => {
 		const comment = buildComment(undefined, { root, unavailableBecause: "nope" });
 		expect(comment).toContain(commentMarker);

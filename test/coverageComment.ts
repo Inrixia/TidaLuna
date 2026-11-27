@@ -13,26 +13,34 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { buildComment, commentMarker, missed, type Summary } from "./coverageReport";
+import { buildComment, commentMarker, isSummary, missed } from "./coverageReport";
 
 const root = process.cwd();
 const summaryPath = path.join(root, "coverage", "coverage-summary.json");
 const baseSummaryPath = path.join(root, "coverage", "base", "coverage-summary.json");
 const commentPath = path.join(root, "coverage", "comment.md");
 
-let summary: Summary | undefined;
-let unavailableBecause: string | undefined;
-try {
-	summary = JSON.parse(await readFile(summaryPath, "utf8"));
-} catch {
-	unavailableBecause = `${path.relative(root, summaryPath)} was not written (the test step failed before coverage)`;
-}
+const readJson = async (file: string): Promise<unknown> => {
+	try {
+		return JSON.parse(await readFile(file, "utf8"));
+	} catch {
+		return undefined;
+	}
+};
+
+const parsed = await readJson(summaryPath);
+const summary = isSummary(parsed) ? parsed : undefined;
+// A file that parsed but is not a summary is a different problem from one that is missing, so say which
+const unavailableBecause =
+	parsed === undefined
+		? `${path.relative(root, summaryPath)} was not written (the test step failed before coverage)`
+		: `${path.relative(root, summaryPath)} is not a coverage summary`;
 
 // Only there on a pull request run that found a base run with a summary to compare against
-let base: Summary | undefined;
-try {
-	base = JSON.parse(await readFile(baseSummaryPath, "utf8"));
-} catch {}
+const parsedBase = await readJson(baseSummaryPath);
+const base = isSummary(parsedBase) ? parsedBase : undefined;
+if (parsedBase !== undefined && base === undefined)
+	console.warn(`${path.relative(root, baseSummaryPath)} is not a coverage summary, reporting without a change`);
 
 const comment = buildComment(summary, {
 	root,

@@ -26,6 +26,12 @@ export type CommentOptions = {
 	baseSha?: string;
 };
 
+/** Whether a parsed file is the summary vitest wrote, rather than anything else that happened to parse */
+export const isSummary = (value: unknown): value is Summary => {
+	const total = (value as Summary | undefined)?.total;
+	return total !== undefined && coverageMetrics.every((metric) => typeof total[metric]?.covered === "number");
+};
+
 /** How many changed files the comment lists before cutting off */
 export const maxFileRows = 20;
 
