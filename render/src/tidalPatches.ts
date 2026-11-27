@@ -1,9 +1,10 @@
 // Fixes for performance bugs in TIDAL's bundled code, applied to each module's source as it loads (tidalTransform.ts).
 // Patterns are tied to library source shapes, not minified names. A patch that stops matching after a TIDAL update is skipped.
 
-type Patch ={ name: string; marker: string; find: RegExp; replace: string };
+export type Patch = { name: string; marker: string; find: RegExp; replace: string };
 
-const patches: Patch[] = [
+// Exported so a check can ask which of these still match the code TIDAL ships (see tidalPatchCheck.ts)
+export const tidalPatches: Patch[] = [
 	{
 		// react-dnd: a ref callback that changes every render calls the drag source hook with null and then the same node.
 		// The null disconnects (draggable="false") and the node reconnects (draggable="true"), so every re-rendered card invalidates style.
@@ -33,6 +34,6 @@ const patches: Patch[] = [
 
 // Per module, no state, so the same source always gives the same output
 export const applyTidalPatches = (code: string) => {
-	for (const patch of patches) if (code.includes(patch.marker)) code = code.replace(patch.find, patch.replace);
+	for (const patch of tidalPatches) if (code.includes(patch.marker)) code = code.replace(patch.find, patch.replace);
 	return code;
 };
