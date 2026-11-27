@@ -6,7 +6,7 @@ import { store as obyStore } from "oby";
 
 import { type LunaUnload } from "@luna/core";
 import * as ftch from "./helpers/fetch";
-import { allowedForAllVersions, codeToImport, isDevUrl, sha256Hex, updateLinks, updateWaitsForUser } from "./helpers/pluginUpdates";
+import { codeToImport, isDevUrl, sha256Hex, updateWaitsForUser } from "./helpers/pluginUpdates";
 import { modules } from "./modules";
 import { coreTrace, Tracer } from "./trace";
 
@@ -394,7 +394,7 @@ export class LunaPlugin {
 	public get url(): string {
 		return this.store.url;
 	}
-	public get package(): PluginPackage | undefined {
+	public get package(): Readonly<PluginPackage> | undefined {
 		return this.store.package;
 	}
 	public get code(): string | undefined {
@@ -497,15 +497,11 @@ export class LunaPlugin {
 	 * @returns The package it replaced, to put back if the update fails to load
 	 */
 	private applyUpdate(update: PluginPackage): PluginPackage | undefined {
-		const previous = this.package;
+		const previous = this.store.package;
 		this.package = update;
 		if (this.pendingUpdate._?.hash === update.hash) this.pendingUpdate._ = undefined;
 		return previous;
 	}
-	/** Links to the source of an update and what it changes, for display (see helpers/pluginUpdates) */
-	public static readonly updateLinks = updateLinks;
-	/** The plugin's native permission answers that hold for all versions (see helpers/pluginUpdates) */
-	public static readonly allowedForAllVersions = allowedForAllVersions;
 
 	private static readonly announcedUpdates: Set<string> = new Set();
 	private static announceTimeout?: ReturnType<typeof setTimeout>;
@@ -525,8 +521,8 @@ export class LunaPlugin {
 	public async install() {
 		this.loading._ = true;
 		// Uninstall can leave the old package, code included, in storage: install what the url serves now instead of offering it as an update
-		if (!this.installed && this.store.package?.code !== undefined)
-			this.store.package = { ...this.store.package, code: undefined, codeSha256: undefined };
+		const pkg = this.store.package;
+		if (!this.installed && pkg?.code !== undefined) pkg.code = pkg.codeSha256 = undefined;
 
 		// Uninstall other versions of the same plugin (e.g., switching from GitHub to DEV)
 		const otherVersions = LunaPlugin.getAllByName(this.name).filter((p) => p !== this && p.installed);

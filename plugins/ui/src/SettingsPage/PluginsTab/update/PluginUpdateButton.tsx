@@ -1,0 +1,78 @@
+import React from "react";
+
+import { type LunaPlugin, type PluginPackage } from "@luna/core";
+import { GitUrl, ipcRenderer } from "@luna/lib";
+import { useConfirm } from "material-ui-confirm";
+
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
+import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
+import { green } from "@mui/material/colors";
+
+import { UpdateDetails } from "../../../components";
+import { PluginUpdatePermissionWarning } from "./PluginUpdatePermissionWarning";
+
+export const PluginUpdateButton = React.memo(({ plugin }: { plugin: LunaPlugin }) => {
+	const subscribe = React.useCallback((notify: () => void) => plugin.pendingUpdate.onValue(notify), [plugin]);
+	const update = React.useSyncExternalStore(subscribe, () => plugin.pendingUpdate._);
+	const [updating, setUpdating] = React.useState(false);
+	const confirm = useConfirm();
+
+	const onClick = React.useCallback(async () => {
+		if (update === undefined) return;
+		const current: Readonly<Partial<PluginPackage>> = plugin.package ?? {};
+		const source = GitUrl.from(plugin.url);
+		// Only a release asset url says where the code comes from; any other plugin url is a store path, not a repository
+		const release = source?.kind === "release" ? source : undefined;
+		const git = release ?? GitUrl.fromRepository(current.repository) ?? GitUrl.fromRepository(update.repository);
+		// Answers the user chose to revoke in the dialog ("Ask again"), revoked only if they update
+		let permissionKeys: string[] = [];
+		const { confirmed } = await confirm({
+			title: `Update ${plugin.name}?`,
+			description: (
+				<UpdateDetails
+					from={{ version: current.version, commit: current.commit, sha256: current.codeSha256 }}
+					to={{ version: update.version, commit: update.commit, sha256: update.codeSha256 }}
+					git={git}
+					releaseTag={release?.tag}
+					trustUrl={plugin.url}
+					trustHref={`${plugin.url}.json`}
+				>
+					<PluginUpdatePermissionWarning url={plugin.url} onRevokePermissions={(keys) => (permissionKeys = keys)} />
+				</UpdateDetails>
+			),
+			confirmationText: "Update",
+			cancellationText: "Not now",
+		});
+		if (!confirmed) return;
+		setUpdating(true);
+		// Right before the update is applied: an update that doesn't go ahead leaves the answers, and the running version
+		// keeps its native code. The first that can't be revoked stops the update (its code would run without asking);
+		// those revoked before it stay revoked, so they ask again: the safe side
+		const revokePermissions = async () => {
+			for (const key of permissionKeys)
+				await ipcRenderer
+					.invoke("__Luna.nativePermissions.revoke", key)
+					.catch(plugin.trace.msg.err.withContext(`Not updating ${plugin.name}: couldn't revoke its native permissions for all versions`).throw);
+		};
+		try {
+			// The update the user was shown, even if a newer one arrived meanwhile
+			await plugin.acceptUpdate(update, permissionKeys.length === 0 ? undefined : revokePermissions);
+		} catch {
+			// Said already: a load error on the plugin's card, a refused update or a failed revoke as an error message
+		} finally {
+			setUpdating(false);
+		}
+	}, [plugin, update, confirm]);
+
+	if (update === undefined) return null;
+	return (
+		<Tooltip title={`Update plugin${update.version === undefined ? "" : ` to ${update.version}`}`}>
+			<span>
+				<IconButton aria-label={`Update ${plugin.name}`} disabled={updating} onClick={onClick} sx={{ color: green[400] }}>
+					<SystemUpdateAltIcon />
+				</IconButton>
+			</span>
+		</Tooltip>
+	);
+});
