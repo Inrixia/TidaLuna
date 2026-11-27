@@ -15,8 +15,8 @@ const maxExtractedBytes = 512 * 1024 * 1024;
  * The check is on the entry names before anything is written, so a zip carrying `../` (or an absolute path) is rejected
  * whole rather than partly extracted. Used by both the manual update and the automatic one.
  *
- * The archive comes from a url, so its size is not trusted either: an entry count is checked here and the unpacked bytes
- * while extracting, because one entry can unpack to any size and the count alone cannot say how much disk it takes.
+ * An archive from a url has no trusted size: the entry count is checked here, the unpacked bytes while extracting, since
+ * one entry can unpack to any size and the count alone says nothing about the disk it takes.
  */
 export const validateZipEntries = async (zipBuffer: Buffer | Uint8Array, destFolder: string) => {
 	const zip = await JSZip.loadAsync(zipBuffer);

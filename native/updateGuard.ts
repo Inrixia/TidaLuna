@@ -13,13 +13,12 @@ import type { ReleaseInfo } from "./releaseGate";
 /**
  * The run that puts Luna back after TIDAL updated.
  *
- * It only ever does work when Luna has a record of being installed and that record says the install is not current, so a
- * machine that never had Luna is left alone and a current install costs nothing. Everything it needs from outside — the
- * file system roots, the network, whether TIDAL is running — is passed in, so the whole decision and its order can be
- * tested without a TIDAL, a release or an archive.
+ * It does work only when Luna has a record of being installed and that record is not current, so a machine that never had
+ * Luna is left alone and a current install costs nothing. The roots, the network and the process check are passed in, so
+ * the decision and its order are testable without TIDAL, a release or an archive.
  *
- * Nothing is written into TIDAL's tree until the archive has been verified and unpacked somewhere else: a bad download
- * costs a failed run, not a broken client.
+ * Nothing is written into TIDAL's tree until the archive is verified and unpacked elsewhere. A bad download costs a
+ * failed run, not a broken client.
  */
 
 export type GuardDeps = {
@@ -35,12 +34,11 @@ export type GuardDeps = {
 	 * by the caller, which owns the platform detail the schedule needs
 	 */
 	unregisterSchedule?: () => Promise<unknown>;
-	/** TIDAL writing while it runs would corrupt a live install, so a run refuses rather than racing */
+	/** A run refuses while TIDAL is open: writing into a live install corrupts it */
 	isTidalRunning?: () => Promise<boolean>;
 	/**
-	 * Whether the Luna that is running found TIDAL's code no longer matches its patches (see render/src/patchReport.ts).
-	 * A stale patch is the difference between "an update removed Luna" and "Luna is here but written for another TIDAL":
-	 * the first is repaired by the same version, the second needs a newer one.
+	 * Whether the running Luna found TIDAL's code no longer matches its patches (see render/src/patchReport.ts). It
+	 * decides whether the same version repairs the install or a newer one is needed.
 	 */
 	patchesStale?: () => Promise<boolean>;
 	/** Whether the user opted into prereleases */

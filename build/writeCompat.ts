@@ -8,8 +8,8 @@ import { buildCompat, type CompatFile, type TidalCompat } from "../native/compat
 /**
  * Writes the `compat.json` a release publishes beside `luna.zip`.
  *
- * It exists as its own asset because a file cannot carry the digest of the archive it is packed in: the agent that decides
- * whether to install a release reads this before downloading anything, and checks the archive against it afterwards.
+ * The digest cannot live inside the archive it describes, so it ships as its own asset. The agent deciding whether to
+ * install reads it before downloading, then checks the archive against it.
  *
  * Run from the release workflow, after the zip is made: `tsx build/writeCompat.ts luna.zip package.json compat.json`
  */

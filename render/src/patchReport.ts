@@ -4,11 +4,11 @@ import { tidalPatches, type Patch, type PatchOutcome } from "./tidalPatches";
  * Whether TIDAL's code still matches the patches Luna carries, learned as TIDAL's modules load.
  *
  * `applyTidalPatches` skips a patch whose marker is present but whose pattern no longer matches, and says nothing, so a
- * TIDAL update can quietly remove a fix. This keeps the answer instead: every module TIDAL loads is a chance to see
- * whether each patch still applies, so no dump of TIDAL's sources is needed to tell.
+ * TIDAL update can quietly remove a fix. Every module TIDAL loads is a chance to record whether each patch still
+ * applies, which saves dumping TIDAL's sources to find out.
  *
- * It is what a repair decision reads afterwards: `stale` means this Luna was written for a different TIDAL, which is the
- * case where the next update should move to a newer Luna rather than reinstall the same one.
+ * The repair decision reads the result: `stale` means this Luna was written for a different TIDAL, so the fix is a newer
+ * Luna, not the same one again.
  */
 
 export type PatchState = "applied" | "noop" | "stale" | "unseen";

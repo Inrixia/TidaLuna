@@ -11,15 +11,14 @@ import { defaultTidalRoots, type TidalRoot } from "./tidalInstall";
 /**
  * The unattended run, wired to the real world.
  *
- * Everything it touches — where Luna keeps its own files, GitHub, whether TIDAL is running — is a plain function here, so
- * the wiring is testable without a network or a client, and `updateGuard`'s decision stays separate from it.
+ * The file system, GitHub and the process list are plain functions here, so the wiring is testable without a network or a
+ * client, and `updateGuard` keeps the decision.
  *
- * It runs when TIDAL is not, which means nobody is watching: every run writes its outcome to a log under Luna's own
- * folder, so "it did nothing" is answerable afterwards.
+ * The run happens with TIDAL closed and nobody watching, so every run appends its outcome to a log under Luna's folder.
  */
 
 const RELEASES_URL = "https://api.github.com/repos/Inrixia/TidaLuna/releases";
-/** A release zip is a few MB; this is the point past which a download is not a Luna build but a mistake */
+/** A release zip is a few MB. Past this, the download is not a Luna build */
 const MAX_ZIP_BYTES = 128 * 1024 ** 2;
 
 export type Platform = {
@@ -29,10 +28,10 @@ export type Platform = {
 };
 
 /**
- * Luna's own folder, deliberately outside TIDAL's tree.
+ * Luna's own folder, outside TIDAL's tree.
  *
- * TIDAL's uninstall and its updater may clear anything under its own profile, and this folder is what says Luna was
- * installed here at all — losing it would make a repair impossible to justify.
+ * TIDAL's uninstall and updater may clear its profile, and the record that Luna was installed lives here. Without it a
+ * repair cannot be justified.
  *
  * @param override what a caller wants instead, e.g. a test or a portable install
  */
