@@ -448,4 +448,11 @@ describe("cacheFileName", () => {
 		// The id and extension are what keep two tracks with the same artist and title apart, so they survive
 		expect(cacheFileName("a/b", "t", 42, "m4a")).toContain("[42].m4a");
 	});
+
+	test("a name Windows refuses is not the download's problem", () => {
+		// A title holds these: `Chapter 1: Intro`, `Why?`, `"Heroes"`. Windows rejects each in a name, so the download
+		// failed rather than the cache holding it
+		expect(cacheFileName("a", 'Chapter 1: "Intro"?', 7, "flac")).toBe("a - Chapter 1- -Intro-- [7].flac");
+		expect(cacheFileName("a|b", "t*c<d>e", 8, "flac")).toBe("a-b - t-c-d-e [8].flac");
+	});
 });

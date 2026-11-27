@@ -35,15 +35,18 @@ const fitBytes = (text: string, maxBytes: number): string => {
 };
 
 /**
- * The name a cached track is stored under: one path segment, so an artist like AC/DC cannot turn into a folder.
+ * The name a cached track is stored under: one path segment a filesystem will take, on both platforms.
  *
  * A name is an `Artist - Title [id].ext`, and the cache folder is flat: `MediaItem.download` joins the folder with this
  * name, so a `/` in either part used to make a folder inside the cache. The startup scan then met a directory where it
  * expects files, failed to remove it, and gave up on the whole folder: every cached track stopped playing until it was
  * deleted by hand (see native/audioCache.ts).
+ *
+ * Windows also refuses `: * ? " < > |` in a name, and titles hold them: `Chapter 1: Intro`, `Why?`, `"Heroes"`. A track
+ * whose name the filesystem rejects fails its download, so they are replaced here rather than at each write.
  */
 export const cacheFileName = (artist: string, title: string, trackId: redux.ItemId, ext: string) =>
-	`${fitBytes(`${artist} - ${title}`, 200).replace(/[\\/]/g, "-")} [${trackId}].${ext}`;
+	`${fitBytes(`${artist} - ${title}`, 200).replace(/[\\/:*?"<>|]/g, "-")} [${trackId}].${ext}`;
 
 /**
  * The cache TIDAL's native player plays audio from, see native/audioCache.ts. It holds the audio of tracks played, hovered, next and previous
