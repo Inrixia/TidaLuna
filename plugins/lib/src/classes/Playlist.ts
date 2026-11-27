@@ -46,7 +46,10 @@ export class Playlist extends ContentBase implements MediaCollection {
 		const uuid = await TidalApi.createPlaylist(title, { description, accessType });
 		try {
 			const items = mediaItems.map(({ id, contentType }) => ({ id: String(id), type: contentType === "video" ? "videos" : "tracks" }) as const);
-			for (const chunk of chunkArray(items, TidalApi.maxPlaylistItemsPerRequest)) await TidalApi.addPlaylistItems(uuid, chunk);
+			// chunkArray gives one empty chunk for no items, and TIDAL rejects an add request with an empty list
+			if (items.length !== 0) {
+				for (const chunk of chunkArray(items, TidalApi.maxPlaylistItemsPerRequest)) await TidalApi.addPlaylistItems(uuid, chunk);
+			}
 		} finally {
 			// Show the new playlist in TIDAL's playlist lists, as TIDAL does after creating one
 			redux.actions["folders/LOAD_FOLDER_ITEMS"]({ context: "page", reset: true });
