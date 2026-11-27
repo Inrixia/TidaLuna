@@ -492,7 +492,7 @@ describe("fromId", () => {
 	});
 
 	test("resolves undefined when TIDAL answers the load with a failure that carries no payload", async () => {
-		// The case that differs from before: destructuring the undefined payload threw a TypeError
+		// A failed load with no payload: the destructuring in fetchMediaItem must not throw a TypeError
 		answerLoads(failed());
 
 		await expect(MediaItem.fromId(nextId())).resolves.toBeUndefined();
