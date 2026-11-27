@@ -69,16 +69,23 @@ describe("Theme.rawUrlOf", () => {
 			"https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/main/base-windows.css",
 		);
 		expect(Theme.rawUrlOf("https://github.com/aya-zzz-zzz/cottoncandynights/raw/refs/heads/main/fonts/techroundpack.css")).toBe(
-			"https://raw.githubusercontent.com/aya-zzz-zzz/cottoncandynights/refs/heads/main/fonts/techroundpack.css",
+			"https://raw.githubusercontent.com/aya-zzz-zzz/cottoncandynights/main/fonts/techroundpack.css",
 		);
 		expect(Theme.rawUrlOf("https://github.com/aya-zzz-zzz/cotton-candy-colorways/blob/main/pride%20collection/sourrainbowstrips.css")).toBe(
 			"https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/main/pride%20collection/sourrainbowstrips.css",
 		);
 	});
 
-	test("leaves an already raw url, another host, and a github url that is not a file alone", () => {
-		const raw = "https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/refs/heads/main/base-windows.css";
-		expect(Theme.rawUrlOf(raw)).toBe(raw);
+	test("converts a page url on the other forges too", () => {
+		expect(Theme.rawUrlOf("https://gitlab.com/group/sub/repo/-/blob/main/theme.css")).toBe("https://gitlab.com/group/sub/repo/-/raw/main/theme.css");
+		expect(Theme.rawUrlOf("https://codeberg.org/o/r/src/branch/main/theme.css")).toBe("https://codeberg.org/o/r/raw/branch/main/theme.css");
+	});
+
+	test("leaves an already raw url, another host, and a url that is not a file alone", () => {
+		// The ref is normalised whichever way it was written, so one file has one url
+		expect(Theme.rawUrlOf("https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/refs/heads/main/base-windows.css")).toBe(
+			"https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/main/base-windows.css",
+		);
 		expect(Theme.rawUrlOf("https://tidaluna.dev/nightwave.css")).toBe("https://tidaluna.dev/nightwave.css");
 		const repo = "https://github.com/aya-zzz-zzz/cotton-candy-colorways";
 		expect(Theme.rawUrlOf(repo)).toBe(repo);
@@ -101,9 +108,12 @@ describe("Theme.validateStored", () => {
 		expect(() => Theme.validateStored("https://t.example.com/a.js", data())).toThrow("A theme url must point at a .css file");
 	});
 
-	test("refuses a stored github page url, which would store html as css", () => {
+	test("refuses a stored page url, which would store html as css", () => {
 		expect(() => Theme.validateStored("https://github.com/aya-zzz-zzz/cotton-candy-colorways/blob/main/base-windows.css", data())).toThrow(
-			"That theme is stored as a github page, not the file behind it",
+			"That theme is stored as a page, not the file behind it",
+		);
+		expect(() => Theme.validateStored("https://gitlab.com/group/repo/-/blob/main/theme.css", data())).toThrow(
+			"That theme is stored as a page, not the file behind it",
 		);
 	});
 
@@ -169,13 +179,18 @@ describe("Theme.install", () => {
 		await expect(install("https://t.example.com/a.css")).rejects.toThrow("That theme is already installed");
 	});
 
+	test("refuses a page url and its raw url, which are one file written two ways", async () => {
+		// Both forms normalise to the same url, so the second is the theme already on the page
+		stubFetch(() => reply("body{color:red}"));
+		await install("https://github.com/o/r/blob/main/base.css");
+		await expect(install("https://raw.githubusercontent.com/o/r/refs/heads/main/base.css")).rejects.toThrow("That theme is already installed");
+	});
+
 	test("refuses the same css under a different url, which is one theme served two ways", async () => {
-		// The same file is served at both of these, so installing one after the other applied 158KB of css twice
+		// A fork or a mirror serves the same bytes: the url differs but the theme is the one already on the page
 		stubFetch(() => reply("\n body{color:red}\n"));
-		await install("https://raw.githubusercontent.com/o/r/refs/heads/main/base.css");
-		await expect(install("https://raw.githubusercontent.com/o/r/main/base.css")).rejects.toThrow(
-			"That theme is already installed as raw.githubusercontent.com/base.css",
-		);
+		await install("https://t.example.com/a.css");
+		await expect(install("https://cdn.example.com/b.css")).rejects.toThrow("That theme is already installed as t.example.com/a.css");
 	});
 
 	test("refuses a url that does not answer with css", async () => {

@@ -1,4 +1,4 @@
-import { memoize } from "@inrixia/helpers";
+import { GitUrl } from "@luna/lib";
 
 /**
  * What a theme's row says about the theme: its name, who made it, what it does, where it came from and the page its
@@ -25,20 +25,6 @@ import { memoize } from "@inrixia/helpers";
 
 /** What a theme file is, as shown on its row */
 export type ThemeKind = "Base" | "Colorway" | "Fonts" | "Theme";
-/**
- * A github url taken apart.
- *
- * Themes are shared as files in a repo, and github writes the same file three ways (`/<owner>/<repo>/blob/<ref>/<path>`,
- * `.../raw/<ref>/<path>` and `raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>`). This is the one place a github url
- * is taken apart, so the conversions and the author lookup cannot disagree about what the owner and the path are.
- */
-export type GithubPath = {
-	host: "github.com" | "raw.githubusercontent.com";
-	owner: string;
-	repo: string;
-	/** The path after the repo: `["blob", "main", "dir", "theme.css"]` on a page url, `["main", "dir", "theme.css"]` on a raw one */
-	rest: string[];
-};
 
 export class ThemeManifest {
 	/** What the row's title says: the manifest's name, or the file name made readable */
@@ -176,38 +162,29 @@ export class ThemeManifest {
 	/**
 	 * The owner of the repository a theme is hosted in, which is the author when the theme does not name one.
 	 *
-	 * Only github is read, because that is the one case where a path segment is reliably the owner; anywhere else this
-	 * returns undefined rather than guessing.
+	 * Read from the url rather than inferred from a path segment, so a host that is not a forge gives no author instead of
+	 * a wrong one.
 	 */
 	static repoOwnerOf(url: string): string | undefined {
-		const path = ThemeManifest.githubPath(url);
-		if (path === undefined) return undefined;
-		return path.owner === "" ? undefined : path.owner;
+		const owner = ThemeManifest.gitFileOf(url)?.owner;
+		if (owner === undefined) return undefined;
+		// GitUrl keeps the path segment as the url wrote it, and a name is shown decoded
+		try {
+			return decodeURIComponent(owner);
+		} catch {
+			return owner;
+		}
 	}
 
 	/**
 	 * The page someone can read a theme's source on, or undefined when that cannot be worked out.
 	 *
 	 * A theme is stored by its raw url, because that is what fetch needs. The raw url is not somewhere to send a person: it
-	 * serves the file as plain text with no syntax highlighting and no history. On github the readable page is
-	 * `/<owner>/<repo>/blob/<ref>/<path>`, which is the conversion here.
-	 *
-	 * A raw url writes the ref two ways: `/refs/heads/main/…`, and `/main/…`. Only the first is unambiguous, because a
-	 * branch name can contain slashes; where the second is used the first path segment after the repo is taken as the ref.
+	 * serves the file as plain text with no syntax highlighting and no history. GitUrl gives the page for the file, which is
+	 * `/<owner>/<repo>/blob/<ref>/<path>` on github and the same idea on the other forges.
 	 */
 	static codeUrlOf(url: string): string | undefined {
-		const path = ThemeManifest.githubPath(url);
-		if (path === undefined) return undefined;
-		const [owner, repo] = [path.owner, path.repo];
-		if (owner === "" || repo === "") return undefined;
-
-		// Already the page
-		if (path.host === "github.com") return path.rest[0] === "blob" ? url : undefined;
-
-		// `/refs/heads/<ref>/<path>` and `/<ref>/<path>` both leave `<ref>/<path>`
-		const rest = path.rest[0] === "refs" && path.rest[1] === "heads" ? path.rest.slice(2) : path.rest;
-		if (rest.length < 2) return undefined;
-		return `https://github.com/${owner}/${repo}/blob/${rest.join("/")}`;
+		return ThemeManifest.gitFileOf(url)?.browseUrl;
 	}
 
 	/**
@@ -234,23 +211,18 @@ export class ThemeManifest {
 	}
 
 	/**
-	 * A github url taken apart, or undefined when the url is not github's or has no owner and repo.
+	 * The url as a file in a git repository, or undefined when it is not one.
 	 *
-	 * Memoized because a row asks for it more than once: once for the raw file, once for the source page and once for the
-	 * author, and a tab full of themes would otherwise parse the same url several times.
+	 * Themes are shared as files in a repo, and every forge writes the same file several ways: a page url, a raw url, and
+	 * `raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>` on github. GitUrl reads all of them, memoized per url, so this
+	 * is the one place a theme url is taken apart and the conversions and the author lookup cannot disagree.
+	 *
+	 * Only a file url counts. `themes.example.com/cotton-candy.css` reads like a repository one folder deep on a host that is
+	 * not a forge, and an author guessed from that is worse than none.
 	 */
-	static githubPath = memoize((url: string): GithubPath | undefined => {
-		let parsed: URL;
-		try {
-			parsed = new URL(url);
-		} catch {
-			return undefined;
-		}
-		const host = parsed.hostname;
-		if (host !== "github.com" && host !== "raw.githubusercontent.com") return undefined;
-		const segments = parsed.pathname.split("/").filter(Boolean);
-		const [owner, repo, ...rest] = segments;
-		if (owner === undefined || repo === undefined) return undefined;
-		return { host, owner: decodeURIComponent(owner), repo: decodeURIComponent(repo), rest };
-	});
+	static gitFileOf(url: string): GitUrl | undefined {
+		const git = GitUrl.from(url);
+		if (git === undefined) return undefined;
+		return git.kind === "blob" || git.kind === "raw" ? git : undefined;
+	}
 }

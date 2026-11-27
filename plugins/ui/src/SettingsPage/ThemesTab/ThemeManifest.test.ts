@@ -127,12 +127,13 @@ describe("ThemeManifest.hostOf", () => {
 
 describe("ThemeManifest.repoOwnerOf", () => {
 	// Themes are shared as files in a repo, so the owner identifies the author when the css names none
-	test("reads the owner from a raw url, a page url and a bare repo url", () => {
+	test("reads the owner from a raw url and a page url", () => {
 		expect(
 			ThemeManifest.repoOwnerOf("https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/refs/heads/main/base-windows.css"),
 		).toBe("aya-zzz-zzz");
 		expect(ThemeManifest.repoOwnerOf("https://github.com/aya-zzz-zzz/cottoncandynights/blob/main/fonts/techroundpack.css")).toBe("aya-zzz-zzz");
-		expect(ThemeManifest.repoOwnerOf("https://github.com/Inrixia/TidaLuna")).toBe("Inrixia");
+		// The other forges name the owner the same way, and gitlab keeps a subgroup in it
+		expect(ThemeManifest.repoOwnerOf("https://gitlab.com/group/sub/repo/-/raw/main/theme.css")).toBe("group/sub");
 	});
 
 	test("decodes an encoded owner", () => {
@@ -142,12 +143,14 @@ describe("ThemeManifest.repoOwnerOf", () => {
 	test("is undefined on a host where a path segment is not an owner", () => {
 		// Guessing an author for a generic host would be worse than showing none
 		expect(ThemeManifest.repoOwnerOf("https://tidaluna.dev/nightwave.css")).toBeUndefined();
+		expect(ThemeManifest.repoOwnerOf("https://themes.example.com/packs/nightwave.css")).toBeUndefined();
 	});
 
-	test("is undefined for an unparseable url or a path with no repo", () => {
+	test("is undefined for an unparseable url, a path with no repo, or a repository with no file in it", () => {
 		expect(ThemeManifest.repoOwnerOf("not a url")).toBeUndefined();
 		expect(ThemeManifest.repoOwnerOf("https://github.com/")).toBeUndefined();
 		expect(ThemeManifest.repoOwnerOf("https://github.com/only-owner")).toBeUndefined();
+		expect(ThemeManifest.repoOwnerOf("https://github.com/Inrixia/TidaLuna")).toBeUndefined();
 	});
 });
 
@@ -261,16 +264,27 @@ describe("ThemeManifest.of", () => {
 	});
 });
 
-describe("ThemeManifest.githubPath", () => {
+describe("ThemeManifest.gitFileOf", () => {
+	// Every forge writes the same file several ways, so the url is taken apart once by GitUrl and read from there
 	test("is taken apart once per url, since a row asks for it three times", () => {
 		const url = "https://raw.githubusercontent.com/aya-zzz-zzz/cotton-candy-colorways/refs/heads/main/base-windows.css";
-		expect(ThemeManifest.githubPath(url)).toBe(ThemeManifest.githubPath(url));
-		expect(ThemeManifest.githubPath(url)).toMatchObject({ owner: "aya-zzz-zzz", repo: "cotton-candy-colorways" });
+		expect(ThemeManifest.gitFileOf(url)).toBe(ThemeManifest.gitFileOf(url));
+		expect(ThemeManifest.gitFileOf(url)).toMatchObject({ owner: "aya-zzz-zzz", repo: "cotton-candy-colorways", ref: "main", path: "base-windows.css" });
 	});
 
-	test("is undefined for a url that is not github's, and for one with no repo", () => {
-		expect(ThemeManifest.githubPath("https://tidaluna.dev/nightwave.css")).toBeUndefined();
-		expect(ThemeManifest.githubPath("not a url")).toBeUndefined();
-		expect(ThemeManifest.githubPath("https://github.com/only-owner")).toBeUndefined();
+	test("reads the forges GitUrl reads, not only github", () => {
+		const gitlab = ThemeManifest.gitFileOf("https://gitlab.com/group/sub/repo/-/blob/main/theme.css");
+		expect(gitlab).toMatchObject({ owner: "group/sub", repo: "repo", ref: "main", path: "theme.css" });
+		const codeberg = ThemeManifest.gitFileOf("https://codeberg.org/o/r/src/branch/main/theme.css");
+		expect(codeberg).toMatchObject({ owner: "o", repo: "r", ref: "main", path: "theme.css" });
+	});
+
+	test("is undefined for a url that is not a file in a repository", () => {
+		// A plain host with a file name is not a forge, and the path holds no owner to read
+		expect(ThemeManifest.gitFileOf("https://tidaluna.dev/nightwave.css")).toBeUndefined();
+		expect(ThemeManifest.gitFileOf("not a url")).toBeUndefined();
+		expect(ThemeManifest.gitFileOf("https://github.com/only-owner")).toBeUndefined();
+		// A repository names no file, so there is no page for one and no author to show
+		expect(ThemeManifest.gitFileOf("https://github.com/o/r")).toBeUndefined();
 	});
 });

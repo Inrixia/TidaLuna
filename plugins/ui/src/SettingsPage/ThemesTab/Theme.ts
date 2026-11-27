@@ -75,21 +75,18 @@ export class Theme extends StyleTag {
 	// #region Url rules. Every url a theme is judged by goes through these three, so they cannot disagree.
 
 	/**
-	 * The url to fetch a theme from, converting a github page url to the file behind it.
+	 * The url to fetch a theme from, converting a page url to the file behind it.
 	 *
 	 * `github.com/<owner>/<repo>/blob/<ref>/<path>.css` is the page a browser shows for a file: it ends in `.css` but serves
-	 * HTML. The file itself is served from `raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>.css`. Pasting the page url
-	 * is the obvious thing to do, so it is converted rather than rejected, and `/raw/` links (what the blob page's Raw
-	 * button gives) are converted the same way.
+	 * HTML. The file itself is served from elsewhere (`raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>.css` on github,
+	 * `/-/raw/…` on gitlab, `/raw/branch/…` on gitea), which is what GitUrl converts to. Pasting the page url is the obvious
+	 * thing to do, so it is converted rather than rejected.
+	 *
+	 * Anything that is not a file in a repository is left exactly as it is: a theme served from a plain host has no page to
+	 * convert, and a repository or folder url names no file.
 	 */
 	static rawUrlOf(raw: string): string {
-		const path = ThemeManifest.githubPath(raw);
-		if (path === undefined || path.host !== "github.com") return raw;
-		const [kind] = path.rest;
-		if (kind !== "blob" && kind !== "raw") return raw;
-		const rest = path.rest.slice(1).join("/");
-		if (rest === "") return raw;
-		return `https://raw.githubusercontent.com/${path.owner}/${path.repo}/${rest}`;
+		return ThemeManifest.gitFileOf(raw)?.rawUrl ?? raw;
 	}
 
 	/**
@@ -113,9 +110,9 @@ export class Theme extends StyleTag {
 	 * the limit is refused wherever it came from.
 	 */
 	static validateStored(url: string, data: ThemeData): void {
-		// A stored github page url means it arrived from an imported backup. Fetching it would store an HTML page as css, so
-		// it is refused rather than silently normalised mid-startup.
-		if (Theme.rawUrlOf(url) !== url) throw new Error("That theme is stored as a github page, not the file behind it");
+		// A stored page url means it arrived from an imported backup. Fetching it would store an HTML page as css, so it is
+		// refused rather than silently normalised mid-startup.
+		if (ThemeManifest.gitFileOf(url)?.kind === "blob") throw new Error("That theme is stored as a page, not the file behind it");
 		Theme.validateUrl(url);
 		if (data.css !== undefined && data.css.length > Theme.maxCssBytes) {
 			throw new Error(`That theme has ${data.css.length} bytes of css stored, over the ${Theme.maxCssBytes} limit`);
