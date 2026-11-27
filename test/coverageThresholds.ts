@@ -6,9 +6,9 @@
  * one. They only ever go up: raise them by adding tests, never by lowering the number to make a build pass.
  */
 export const coverageThresholds = {
-	lines: 80,
-	statements: 78,
-	branches: 70,
+	lines: 81,
+	statements: 79,
+	branches: 71,
 	functions: 78,
 } as const;
 
