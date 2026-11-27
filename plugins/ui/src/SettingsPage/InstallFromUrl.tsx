@@ -4,6 +4,7 @@ import TextField from "@mui/material/TextField";
 
 import { debounce } from "@inrixia/helpers";
 import { LunaPlugin, Messager } from "@luna/core";
+import { safeTimeout } from "@luna/lib";
 
 import { unloads } from "../index.safe";
 import { addToStores } from "./PluginStoreTab";
@@ -62,12 +63,11 @@ export const InstallFromUrl = React.memo(() => {
 			setValue(""); // Reset input on success
 			setErr(null);
 			setSuccess(successMessage);
-			// TODO: Clean up this mess
 			Messager.Info(successMessage);
-			// Clear success message after a delay
-			setTimeout(() => setSuccess(null), 2000);
-		} catch (e: any) {
-			setErr(e.message ?? "Invalid URL or failed to load plugin");
+			// Clear the success message after a delay, tied to the plugin so it cannot fire into an unloaded page
+			safeTimeout(unloads, () => setSuccess(null), 2000);
+		} catch (e) {
+			setErr(e instanceof Error ? e.message : "Invalid URL or failed to load plugin");
 			setSuccess(null); // Clear success on error
 		}
 	}, []); // Dependencies: none, as it uses the passed urlValue

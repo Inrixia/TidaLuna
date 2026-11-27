@@ -32,10 +32,11 @@ export const ThemeRow = React.memo(({ theme: data, url, uninstall }: { theme: Th
 	React.useEffect(() => setEnabled(data.enabled), [data.enabled]);
 	const [css, setCSS] = React.useState(data.css);
 	const [loading, setLoading] = React.useState(false);
-	// Manifest support: most themes have none, so the row falls back to a name from the file and the host it came from.
-	// What the file is and what it pulls in are read from the one manifest the theme already holds
+	// Manifest support: most themes have none, so the row falls back to a name from the file and the host it came from
 	const manifest = theme?.manifest ?? ThemeManifest.from(url, css);
-	const loads = React.useMemo(() => ThemeResources.from(css ?? "", url).describe(), [css, url]);
+	// What it pulls in, so a theme loading 13 files from github.com says so on its row. Read from the theme when it has one,
+	// since that copy is the current stylesheet rather than whatever the row last rendered
+	const loads = React.useMemo(() => theme?.resources.describe() ?? ThemeResources.from(css ?? "", url).describe(), [theme, css, url]);
 	// Checking every file takes a moment on a font pack, so the row says so rather than looking finished
 	const [progress, setProgress] = React.useState(() => resourceProgress._[url]);
 	React.useEffect(() => {
@@ -46,12 +47,14 @@ export const ThemeRow = React.memo(({ theme: data, url, uninstall }: { theme: Th
 	}, [url]);
 
 	const toggleEnabled = React.useCallback(
-		(_: unknown, checked: boolean) => {
+		async (_: unknown, checked: boolean) => {
 			setEnabled(checked);
 			if (theme === undefined) return;
-			// enable() fetches and re-applies when the theme has no css yet, and never rejects: a failed fetch turns it off
-			if (checked) theme.enable();
-			else theme.disable();
+			if (!checked) return theme.disable();
+			// enable() fetches the css when the theme has never been applied, and never rejects: a failed fetch turns it off.
+			// The row keeps the css it last rendered, so it has to be told what came back
+			await theme.enable();
+			setCSS(theme.data.css);
 		},
 		[theme],
 	);

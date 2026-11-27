@@ -32,7 +32,8 @@ Page.register(
 
 export const confirm = (options: ConfirmOptions) =>
 	confirmImpl({
-		// Every confirm sits above Luna's own pages: the settings panel is a sibling and painted over the dialog
-		dialogProps: { sx: { zIndex: 100000 }, ...options.dialogProps },
 		...options,
+		// Every confirm sits above Luna's own pages: the settings panel is a sibling and painted over the dialog. Spread after
+		// the caller's options, or a caller that passes its own `dialogProps` drops this z-index with it
+		dialogProps: { sx: { zIndex: 100000 }, ...options.dialogProps },
 	});
