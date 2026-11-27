@@ -10,6 +10,7 @@ import { Messager } from "@luna/core";
 import type { LunaThemeStorage } from "./ThemesTab/LunaTheme";
 import { unloads } from "../index.safe";
 import { addToStores } from "./PluginStoreTab";
+import { applyThemeOnStartup } from "./themeStartup";
 
 const lunaStorage = ReactiveStore.getStore("@luna/storage");
 
@@ -36,14 +37,7 @@ for (const [url, theme] of Object.entries(themes)) {
 	if (!theme.enabled) continue;
 	console.log("[Themes] Applying theme on startup:", url);
 	const styleTag = (themeStyles[url] = new StyleTag(url, unloads));
-	if (theme.css) {
-		styleTag.css = theme.css;
-	} else {
-		ftch.text(url).then((css) => {
-			theme.css = css;
-			styleTag.css = css;
-		}).catch((e) => console.error("[Themes] Failed to load theme:", url, e));
-	}
+	applyThemeOnStartup(url, theme, styleTag, ftch.text, () => themes[url]?.enabled === true);
 }
 
 // Emergency shortcut to disable all themes (Ctrl+Shift+T)

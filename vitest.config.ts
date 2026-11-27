@@ -98,6 +98,7 @@ export default defineConfig({
 				"render/src/**",
 				"plugins/ui/src/SettingsPage/tabs.ts",
 				"plugins/ui/src/SettingsPage/PluginsTab/installedPlugins.ts",
+				"plugins/ui/src/SettingsPage/themeStartup.ts",
 			],
 			exclude: untestable,
 			// Floors live in test/coverageThresholds.ts so the PR comment reports the same numbers CI enforces
