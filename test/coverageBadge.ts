@@ -9,8 +9,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-type Percentages = Record<"lines" | "statements" | "branches" | "functions", { pct: number }>;
-type Summary = { total: Percentages };
+import { byArea, percentagesOf, type Summary } from "./coverageFormat";
 
 const root = process.cwd();
 const summaryPath = path.join(root, "coverage", "coverage-summary.json");
@@ -58,6 +57,15 @@ const lines = summary.total.lines.pct;
 await write("coverage.json", badge("coverage", lines));
 // A second, stricter view: branch coverage is where a suite is usually weakest
 await write("coverage-branches.json", badge("branches", summary.total.branches.pct));
+
+// Percentages only, so a pull request can diff against them to say what moved rather than only what is. Committed on
+// master with the badges above, which is what makes it the baseline for the next pull request.
+const areas = byArea(summary);
+await write("coverage-baseline.json", {
+	// Areas the same way the comment groups them, so a row and its change always come from the same key
+	total: percentagesOf(summary.total),
+	areas: Object.fromEntries(areas.map(([area, counts]) => [area, percentagesOf(counts)])),
+});
 
 // Present when the run wrote a json test report (vitest --reporter=json --outputFile=coverage/test-results.json)
 const resultsPath = path.join(root, "coverage", "test-results.json");

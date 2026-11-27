@@ -1,0 +1,40 @@
+{
+	"total": {
+		"lines": 82.9,
+		"statements": 81,
+		"branches": 72.9,
+		"functions": 80.2
+	},
+	"areas": {
+		"build": {
+			"lines": 73.6,
+			"statements": 74.3,
+			"branches": 86.8,
+			"functions": 65.7
+		},
+		"native": {
+			"lines": 65.2,
+			"statements": 63.1,
+			"branches": 57.5,
+			"functions": 56.3
+		},
+		"plugins/lib": {
+			"lines": 88.7,
+			"statements": 86.8,
+			"branches": 76.6,
+			"functions": 88.1
+		},
+		"plugins/ui": {
+			"lines": 100,
+			"statements": 100,
+			"branches": 100,
+			"functions": 100
+		},
+		"render": {
+			"lines": 95.8,
+			"statements": 93.8,
+			"branches": 86.5,
+			"functions": 93.6
+		}
+	}
+}

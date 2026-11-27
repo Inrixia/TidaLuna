@@ -36,9 +36,24 @@ jobs:
    - name: Test
      run: pnpm run coverage:ci
 
+   # What the comment diffs against: the percentages committed on the base branch. Fetched rather than read from the
+   # checkout, because a pull request's own copy is whatever its branch last committed, which is not the target. Absent
+   # on the first run after this lands, and the comment then reports the numbers without a change.
+   - name: Fetch the coverage baseline
+     if: github.event_name == 'pull_request'
+     continue-on-error: true
+     env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     run: |
+      mkdir -p coverage
+      gh api "repos/${{ github.repository }}/contents/.github/badges/coverage-baseline.json?ref=${{ github.base_ref }}" \
+       --jq .content | tr -d '\n' | base64 -d > coverage/baseline.json
+
    # Always, so a failing run still reports the coverage it managed. Writes coverage/comment.md and the run page summary.
    - name: Coverage comment
      if: always()
+     env:
+      COVERAGE_BASELINE_LABEL: ${{ github.base_ref }}
      run: pnpm run coverage:comment
      continue-on-error: true
 
