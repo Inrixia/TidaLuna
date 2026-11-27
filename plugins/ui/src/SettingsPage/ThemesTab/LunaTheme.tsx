@@ -8,33 +8,35 @@ import Typography from "@mui/material/Typography";
 import { LunaLink, LunaSwitch, LunaTrashButton, SpinningButton } from "../../components";
 
 import type { VoidFn } from "@inrixia/helpers";
-import { ftch } from "@luna/core";
-import { StyleTag } from "@luna/lib";
 import { unloads } from "../../index.safe";
-import { resourceProgress, themes, themeStyles } from "../Storage";
-import { parseThemeManifest, themeCodeUrl, themeDisplay, themeKind } from "./themeManifest";
-import { describeResources, parseThemeResources } from "./themeResources";
+import { resourceProgress, Theme, type ThemeData } from "./Theme";
+import { ThemeManifest } from "./ThemeManifest";
+import { ThemeResources } from "./ThemeResources";
 
-export type LunaThemeStorage = {
-	enabled: boolean;
-	css?: string;
-};
+export const LunaTheme = React.memo(({ theme: data, url, uninstall }: { theme: ThemeData; url: string; uninstall: VoidFn }) => {
+	// The theme itself: the startup applied every stored one, and one that arrived since (an imported backup) is taken over
+	// here so its row can be switched. A record that should never have been written has no theme, and its row still shows.
+	const theme = React.useMemo(() => {
+		const known = Theme.get(url);
+		if (known !== undefined) return known;
+		try {
+			return Theme.resume(url, data, unloads);
+		} catch {
+			return undefined;
+		}
+	}, [url]);
 
-export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThemeStorage; url: string; uninstall: VoidFn }) => {
-	const [enabled, setEnabled] = React.useState(theme.enabled);
-	// Sync enabled state when prop changes (e.g., emergency disable shortcut)
-	React.useEffect(() => setEnabled(theme.enabled), [theme.enabled]);
-	const [css, setCSS] = React.useState(theme.css);
+	const [enabled, setEnabled] = React.useState(data.enabled);
+	// Sync enabled state when the prop changes (e.g., emergency disable shortcut)
+	React.useEffect(() => setEnabled(data.enabled), [data.enabled]);
+	const [css, setCSS] = React.useState(data.css);
 	const [loading, setLoading] = React.useState(false);
-	const [themeStyle] = React.useState(() => themeStyles[url] ?? (themeStyles[url] = new StyleTag(url, unloads)));
-	// Manifest support: most themes have none, so the card falls back to a name from the file and the host it came from
-	const [manifest, setManifest] = React.useState(() => parseThemeManifest(theme.css));
-	const display = themeDisplay(url, manifest);
-	const name = display.name;
+	// Manifest support: most themes have none, so the row falls back to a name from the file and the host it came from
+	const manifest = theme?.manifest ?? ThemeManifest.of(url, css);
 	// What the file is, from what it contains: a base reworks layout, a colorway is a palette, a font pack has faces
-	const kind = themeKind(css);
+	const kind = ThemeManifest.kindOf(css);
 	// What it pulls in, so a theme loading 13 files from github.com says so on its row
-	const loads = React.useMemo(() => describeResources(parseThemeResources(css ?? "", url)), [css, url]);
+	const loads = React.useMemo(() => ThemeResources.of(css ?? "", url).describe(), [css, url]);
 	// Checking every file takes a moment on a font pack, so the row says so rather than looking finished
 	const [progress, setProgress] = React.useState(() => resourceProgress._[url]);
 	React.useEffect(() => {
@@ -43,32 +45,25 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 			void stop();
 		};
 	}, [url]);
-	// The readable page for the file on github: the raw url only ever shows the css as plain text
-	const codeUrl = React.useMemo(() => themeCodeUrl(url), [url]);
 
-	const toggleEnabled = React.useCallback((_: unknown, checked: boolean) => {
-		setEnabled((themes[url].enabled = checked));
-		themeStyle.css = checked ? themes[url].css : undefined;
-	}, []);
-	const loadCSS = React.useCallback(async () => {
+	const toggleEnabled = React.useCallback(
+		(_: unknown, checked: boolean) => {
+			setEnabled(checked);
+			if (theme === undefined) return;
+			void (checked ? theme.enable() : Promise.resolve(theme.disable()));
+		},
+		[theme],
+	);
+	const reload = React.useCallback(async () => {
+		if (theme === undefined) return;
 		setLoading(true);
 		try {
-			const css = (themes[url].css = await ftch.text(url));
-			setCSS(css);
-			// Reloading an enabled theme has to restyle the page, not only update what is stored
-			if (themes[url]?.enabled) themeStyle.css = css;
-			setManifest(parseThemeManifest(css));
+			await theme.reload();
 		} finally {
+			setCSS(theme.data.css);
 			setLoading(false);
 		}
-	}, []);
-
-	React.useEffect(() => {
-		if (themes[url]?.enabled) {
-			if (css === undefined) loadCSS();
-			else themeStyle.css = css;
-		}
-	}, []);
+	}, [theme]);
 
 	return (
 		<Stack
@@ -87,7 +82,7 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 				{/* Line height pinned: a theme restyles h6 with a tight one, which clipped the ascenders on its own row */}
 				<Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", marginBottom: 0.5 }}>
 					<Typography variant="h6" sx={{ lineHeight: 1.35 }}>
-						<LunaLink href={url}>{name}</LunaLink>
+						<LunaLink href={url}>{manifest.name}</LunaLink>
 					</Typography>
 					{/* What the file is. The base carries the theme's own name, shared by every colourway, so without this
 					    the base read as if it were the colour file */}
@@ -110,10 +105,12 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 				</Stack>
 				{/* Weight pinned with !important: a theme can set `[class*="body"] { font-weight: 800 !important }`, which matched
 				    MuiTypography-body2 and made Luna's own settings read as headings */}
-				{display.description && <Typography variant="body2" sx={{ lineHeight: 1.5, fontWeight: "400 !important" }} children={display.description} />}
-				{display.author && (
+				{manifest.description && (
+					<Typography variant="body2" sx={{ lineHeight: 1.5, fontWeight: "400 !important" }} children={manifest.description} />
+				)}
+				{manifest.author && (
 					<Typography variant="body2" sx={{ color: "inherit", lineHeight: 1.5, fontWeight: "400 !important" }}>
-						by {display.author}
+						by {manifest.author}
 					</Typography>
 				)}
 				<Typography
@@ -127,7 +124,7 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 						overflowWrap: "anywhere",
 					}}
 				>
-					{codeUrl !== undefined ? <LunaLink href={codeUrl}>{display.source}</LunaLink> : display.source}
+					{manifest.codeUrl !== undefined ? <LunaLink href={manifest.codeUrl}>{manifest.source}</LunaLink> : manifest.source}
 				</Typography>
 				{(loads !== undefined || progress !== undefined) && (
 					<Typography variant="body2" sx={{ color: "inherit", lineHeight: 1.5, fontWeight: "400 !important", opacity: 0.9 }}>
@@ -138,10 +135,10 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 			{/* Controls on the right, in their own row so they never shift with the text */}
 			<Stack direction="row" spacing={1} sx={{ alignItems: "center", flexShrink: 0 }}>
 				<Tooltip
-					title={enabled ? `Disable ${name}` : `Enable ${name}`}
+					title={enabled ? `Disable ${manifest.name}` : `Enable ${manifest.name}`}
 					children={<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />}
 				/>
-				<SpinningButton title="Reload theme" spin={loading} disabled={loading} onClick={loadCSS} />
+				<SpinningButton title="Reload theme" spin={loading} disabled={loading || theme === undefined} onClick={reload} />
 				<LunaTrashButton title="Uninstall theme" onClick={uninstall} />
 			</Stack>
 		</Stack>

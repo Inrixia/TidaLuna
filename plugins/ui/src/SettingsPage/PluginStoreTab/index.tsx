@@ -7,7 +7,7 @@ import { LunaPlugin, ReactiveStore } from "@luna/core";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 
-import { InstallFromUrl } from "./InstallFromUrl";
+import { InstallFromUrl } from "../InstallFromUrl";
 import { LunaStore } from "./LunaStore";
 
 const pluginStores = ReactiveStore.getStore("@luna/pluginStores");

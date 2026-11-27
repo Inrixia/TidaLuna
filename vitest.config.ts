@@ -99,9 +99,10 @@ export default defineConfig({
 				"plugins/ui/src/SettingsPage/tabs.ts",
 				"plugins/ui/src/SettingsPage/PluginsTab/installedPlugins.ts",
 				// Pure theme logic, every branch of it covered by the tests beside it
-				"plugins/ui/src/SettingsPage/themesRefresh.ts",
-				"plugins/ui/src/SettingsPage/ThemesTab/themeManifest.ts",
-				"plugins/ui/src/SettingsPage/ThemesTab/themeResources.ts",
+				"plugins/ui/src/SettingsPage/ThemesTab/Theme.ts",
+				"plugins/ui/src/SettingsPage/ThemesTab/ThemeManifest.ts",
+				"plugins/ui/src/SettingsPage/ThemesTab/ThemeResources.ts",
+				"plugins/ui/src/helpers/appReady.ts",
 			],
 			exclude: untestable,
 			// Floors live in test/coverageThresholds.ts so the PR comment reports the same numbers CI enforces

@@ -4,7 +4,9 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { InstallFromUrl, startupNotice, themes, themeStyles } from "../Storage";
+import { InstallFromUrl } from "../InstallFromUrl";
+import { Theme } from "./Theme";
+import { startupNotice, themes } from "./themes";
 import { LunaTheme } from "./LunaTheme";
 
 import { store as obyStore } from "oby";
@@ -63,12 +65,8 @@ export const ThemesTab = React.memo(() => {
 					key={url}
 					url={url}
 					uninstall={() => {
-						// Remove StyleTag
-						if (themeStyles[url]) {
-							themeStyles[url].remove();
-							delete themeStyles[url];
-						}
-						// Remove from reactive store
+						// Remove the stylesheet and forget the theme
+						Theme.get(url)?.remove();
 						delete themes[url];
 					}}
 				/>
