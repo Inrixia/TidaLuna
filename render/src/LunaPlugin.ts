@@ -289,17 +289,13 @@ export class LunaPlugin {
 	/**
 	 * Dump all plugin storage entries
 	 */
-	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>>
-	{
+	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>> {
 		const data = await this.pluginStorage.dump();
-		if (!stripCode) 
-			return data;
+		if (!stripCode) return data;
 
 		const stripped = structuredClone(data);
-		for (const value of Object.values(stripped))
-		{
-			if (value && typeof value === "object")
-				delete (value as any).package?.code;
+		for (const value of Object.values(stripped)) {
+			if (value && typeof value === "object") delete (value as any).package?.code;
 		}
 
 		return stripped;
@@ -442,7 +438,7 @@ export class LunaPlugin {
 	public get url(): string {
 		return this.store.url;
 	}
-	public get package(): PluginPackage | undefined {
+	public get package(): Readonly<PluginPackage> | undefined {
 		return this.store.package;
 	}
 	public get code(): string | undefined {
