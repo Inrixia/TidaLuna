@@ -19,12 +19,15 @@ let dir: string;
 let log: MockInstance;
 
 beforeEach(async () => {
+	// A CI run sets these and the build writes them into the json (buildSource.ts): pin them so the result doesn't depend on where the tests run
+	for (const name of ["GITHUB_SHA", "GITHUB_EVENT_NAME", "GITHUB_SERVER_URL", "GITHUB_REPOSITORY"]) vi.stubEnv(name, "");
 	dir = await mkdtemp(path.join(os.tmpdir(), "luna-writebundle-"));
 	// The plugin logs a line per output file, which tests do not need in the output
 	log = vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
 afterEach(async () => {
+	vi.unstubAllEnvs();
 	log.mockRestore();
 	await rm(dir, { recursive: true, force: true });
 });
@@ -74,6 +77,22 @@ describe("writeBundlePlugin", () => {
 		// And it is the hash esbuild reported for the bundle, not some other value
 		expect(loggedHashes()).toEqual([written.hash]);
 		expect(log).toHaveBeenCalledWith(expect.stringContaining("testplugin.mjs"));
+	});
+
+	test("a CI build adds the commit and the repository it came from to the json", async () => {
+		const sha = "0123456789abcdef0123456789abcdef01234567";
+		vi.stubEnv("GITHUB_SHA", sha);
+		vi.stubEnv("GITHUB_SERVER_URL", "https://github.com");
+		vi.stubEnv("GITHUB_REPOSITORY", "owner/repo");
+		const { pkgPath, entry, outfile } = await pluginFiles();
+		await buildBundle(entry, outfile, pkgPath);
+
+		expect(await readJson(outfile)).toEqual({
+			...pkg,
+			hash: expect.any(String),
+			commit: sha,
+			repository: { type: "git", url: "https://github.com/owner/repo" },
+		});
 	});
 
 	test("the hash follows the bundled contents", async () => {

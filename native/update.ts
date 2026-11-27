@@ -1,14 +1,14 @@
 import { access, mkdir, rename, rm, unlink, writeFile } from "fs/promises";
 import { constants } from "fs";
 import { execFile } from "child_process";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { tmpdir } from "os";
-import JSZip from "jszip";
 import path from "path";
 
 import { app } from "electron";
 
-import { isInside } from "./isInside";
+import { DIGEST_MISMATCH_EXIT, SYMLINK_EXIT, elevatedInstallScript } from "./core/elevatedInstallScript";
+import { validateZipEntries } from "./core/validateZipEntries";
 
 import type { PackageJson } from "type-fest";
 
@@ -51,6 +51,8 @@ const runElevated = (tool: string, args: string[]) =>
 		child.on("close", (code) => {
 			if (code === 0) return resolve();
 			if (code === 126) return reject(new Error("ELEVATION_CANCELLED"));
+			if (code === DIGEST_MISMATCH_EXIT) return reject(new Error("UPDATE_DIGEST_MISMATCH"));
+			if (code === SYMLINK_EXIT) return reject(new Error("UPDATE_CONTAINS_SYMLINK"));
 			reject(new Error(`${tool} exited with code ${code}`));
 		});
 		child.on("error", reject);
@@ -58,34 +60,23 @@ const runElevated = (tool: string, args: string[]) =>
 
 const elevationTools = ["pkexec", "kdesudo"] as const;
 
-const validateZipEntries = async (zipBuffer: Buffer, destFolder: string) => {
-	const zip = await JSZip.loadAsync(zipBuffer);
-	for (const filename of Object.keys(zip.files)) {
-		const destPath = path.join(destFolder, filename);
-		if (!isInside(destFolder, destPath)) {
-			throw new Error(`[UPDATER] Zip Slip blocked: unsafe entry "${filename}"`);
-		}
-	}
-	return zip;
-};
-
 const elevatedUpdate = async (zipBuffer: Buffer) => {
 	validateAppFolder(appFolder);
 	await validateZipEntries(zipBuffer, appFolder);
 	const tmpZip = path.join(tmpdir(), `luna-update-${randomBytes(16).toString("hex")}.zip`);
 	try {
 		await writeFile(tmpZip, zipBuffer);
-		// Use positional parameters to avoid shell injection — $1 and $2 are never interpreted as shell code
-		// Unzip next to the app folder first, so a failed unzip leaves the current install untouched
-		const shScript = 'rm -rf -- "$1.new" && mkdir -p -- "$1.new" && unzip -o "$2" -d "$1.new" && rm -rf -- "$1" && mv -- "$1.new" "$1"';
+		// Use positional parameters to avoid shell injection — $1, $2 and $3 are never interpreted as shell code
+		const shScript = elevatedInstallScript;
+		const digest = createHash("sha256").update(zipBuffer).digest("hex");
 		const shellEscape = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 		for (const tool of elevationTools) {
 			try {
 				const args =
 					tool === "kdesudo"
-						? ["-c", `sh -c ${shellEscape(shScript)} _ ${shellEscape(appFolder)} ${shellEscape(tmpZip)}`]
-						: ["sh", "-c", shScript, "_", appFolder, tmpZip];
+						? ["-c", `sh -c ${shellEscape(shScript)} _ ${shellEscape(appFolder)} ${shellEscape(tmpZip)} ${shellEscape(digest)}`]
+						: ["sh", "-c", shScript, "_", appFolder, tmpZip, digest];
 				await runElevated(tool, args);
 				return;
 			} catch (err: any) {
@@ -104,6 +95,8 @@ let pendingZipBuffer: Buffer | null = null;
 export const update = async (version: string): Promise<string> => {
 	// Callable from the renderer: a version with "/" or ".." would point the download at another repo
 	if (!/^[\w.-]+$/.test(version) || version.includes("..")) throw new Error(`[UPDATER] Invalid version "${version}"`);
+	// Runs only once the user confirmed this version. It replaces what an earlier confirmed update left for runElevatedInstall
+	pendingZipBuffer = null;
 	const zipUrl = `https://github.com/Inrixia/TidaLuna/releases/download/${version}/luna.zip`;
 	const res = await fetch(zipUrl);
 	if (!res.ok) throw new Error(`Failed to download ${zipUrl}\n${res.statusText}`);

@@ -43,7 +43,6 @@ const untestable = [
 	"render/src/tidalPatches.ts",
 	"render/src/tidalTransform.ts",
 	"native/injector.ts",
-	"native/preload.ts",
 	"native/expose.ts",
 	"native/ipc.ts",
 	"native/update.ts",

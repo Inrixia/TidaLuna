@@ -37,6 +37,7 @@
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/semver": "7.8.0",
     "@vitest/coverage-v8": "5.1.1",
     "fake-indexeddb": "^6.2.8",
     "happy-dom": "^21.0.4",
@@ -54,6 +55,7 @@
     "@types/node": "^26.6.6",
     "clean-css": "^5.3.3",
     "esbuild": "^0.28.2",
-    "html-minifier-terser": "^7.2.0"
+    "html-minifier-terser": "^7.2.0",
+    "semver": "7.8.6"
   }
 }
