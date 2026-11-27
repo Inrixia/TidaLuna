@@ -73,6 +73,11 @@ export { ReactiveStore } from "../../render/src/ReactiveStore";
 // (nativeScrollbars.ts and friends). Its own test mocks that import.
 export type { ExportData } from "../../render/src/SettingsTransfer";
 
+/** The real one needs the page's plugin url and Luna's main process (tests of what calls it stub it) */
+export const lunaFetch = async (): Promise<Response> => {
+	throw new Error("[test] luna.fetch has no main process here");
+};
+
 // Fakes. `reduxStore` is a real redux store shaped like TIDAL's, `modules` is what TIDAL's chunks would register
 export { reduxStore, setTidalState, resetTidalState, createTidalStore, defaultTidalState, tidalStore } from "./tidalStore";
 export { LunaPlugin } from "./lunaPlugin";

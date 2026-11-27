@@ -17,9 +17,19 @@ export const networkBaseline = [
 	"data:",
 	"tidal.com",
 	"*.tidal.com",
+	// Chromium doesn't count a source without a scheme for wss: TIDAL's push socket (wss://pushkin-v2.tidal.com)
+	"wss://tidal.com",
+	"wss://*.tidal.com",
+	// @luna/lib's own MusicBrainz lookups (Album, MediaItem)
+	"musicbrainz.org",
+	// Luna's Supporters tab (plugins/ui GitHubSponsors)
+	"sponsors.hug.rip",
 	"*.gstatic.com",
 	"*.stripe.com",
 	"*.cookielaw.org",
+	// OneTrust's consent banner (from *.cookielaw.org) looks up the region; Stripe's checkout calls its own network
+	"*.onetrust.com",
+	"*.stripe.network",
 	"*.squarecdn.com",
 	"*.squareup.com",
 	"github.com",
@@ -41,6 +51,35 @@ const decodeAttribute = (value: string) =>
 		.replace(/&lt;/g, "<")
 		.replace(/&gt;/g, ">")
 		.replace(/&amp;/g, "&");
+
+// The GitHub hosts plugins, stores and releases are served from: host entries refuse `*.githubusercontent.com` (a
+// public suffix: anyone's pages), which the CSP itself lists
+const githubContent = [
+	"raw.githubusercontent.com",
+	"objects.githubusercontent.com",
+	"release-assets.githubusercontent.com",
+	"media.githubusercontent.com",
+];
+/**
+ * The baseline's hosts as host entries (core/hosts.ts), for page code that checks a url before it sends it
+ * (render/src/pageNet.ts) and for the store gate (core/stores.ts). `'self'` is the TIDAL shell, under tidal.com;
+ * `https://luna` is Luna's own origin, which pageNet lets through by itself
+ */
+export const baselineEntries = [
+	...networkBaseline.filter((source) => /^(\*\.)?[a-z0-9.-]+\.[a-z]+$/.test(source) && source !== "*.githubusercontent.com"),
+	...githubContent,
+];
+
+/**
+ * The enforced policy sent with the TIDAL shell, next to the report-only one: page code (TIDAL, Luna and every page
+ * plugin) reaches with fetch, XMLHttpRequest, WebSocket, EventSource and sendBeacon only TIDAL, Luna's own and the
+ * plugins' accepted hosts. Images and media stay open to any https: loading one runs no code, and the url it could
+ * leak data through is the one risk left (Inrixia: not worth the cost of holding them to the same hosts).
+ *
+ * @param pluginSources CSP sources of the hosts enabled plugins may reach (core/hosts.ts cspSources of registry pageHosts)
+ */
+export const enforcedPolicy = (pluginSources: string[]): string =>
+	`connect-src ${[...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))].join(" ")}`;
 
 const metaMarker = 'http-equiv="Content-Security-Policy"';
 
@@ -68,12 +107,18 @@ const withSources = (directive: string, sources: string[]) => {
 	return missing.length === 0 ? directive : `${directive} ${missing.join(" ")}`;
 };
 
+// Where a plugin's declared hosts (core/hosts.ts) are listed: what it fetches, and the images and media it shows
+const pluginDirectives = new Set(["connect-src", "img-src", "media-src"]);
+
 /**
  * The report-only policy for a TIDAL policy (from tidalMetaPolicy). TIDAL's directives are kept as they are, in their
  * order: only header-only ones are left out, script-src gets Luna's sources, and network directives TIDAL leaves open get
  * the baseline
+ *
+ * @param pluginSources CSP sources for the hosts enabled plugins declare (core/hosts.ts cspSources): only what no plugin
+ * declared is reported. Shared by every plugin: the page's realm doesn't tell plugins apart, luna.fetch does (core/net.ts)
  */
-export const reportOnlyPolicy = (tidalPolicy: string): string => {
+export const reportOnlyPolicy = (tidalPolicy: string, pluginSources: string[] = []): string => {
 	const kept: string[] = [];
 	const names = new Set<string>();
 	for (const part of tidalPolicy.split(";")) {
@@ -86,16 +131,24 @@ export const reportOnlyPolicy = (tidalPolicy: string): string => {
 		kept.push(name === "script-src" ? withSources(directive, lunaScriptSources) : directive);
 	}
 	// With default-src set the network directives already fall back to it; only fill what is open
-	if (!names.has("default-src")) for (const name of networkDirectives) if (!names.has(name)) kept.push(`${name} ${networkBaseline.join(" ")}`);
+	if (!names.has("default-src"))
+		for (const name of networkDirectives) {
+			if (names.has(name)) continue;
+			const sources = pluginDirectives.has(name)
+				? [...networkBaseline, ...pluginSources.filter((s) => !networkBaseline.includes(s))]
+				: networkBaseline;
+			kept.push(`${name} ${sources.join(" ")}`);
+		}
 	return kept.join("; ");
 };
 
-let lastHeader: { tidalPolicy: string; header: string } | undefined;
+let lastHeader: { key: string; header: string } | undefined;
 /**
- * reportOnlyPolicy, built again only when TIDAL's policy changes (each shell load asks for it). The key is everything the
- * policy is built from: a new input to reportOnlyPolicy has to be part of it
+ * reportOnlyPolicy, built again only when TIDAL's policy or the plugins' sources change (each shell load asks for it). The
+ * key is everything the policy is built from: a new input to reportOnlyPolicy has to be part of it
  */
-export const reportOnlyHeader = (tidalPolicy: string): string => {
-	if (lastHeader?.tidalPolicy !== tidalPolicy) lastHeader = { tidalPolicy, header: reportOnlyPolicy(tidalPolicy) };
+export const reportOnlyHeader = (tidalPolicy: string, pluginSources: string[] = []): string => {
+	const key = JSON.stringify([tidalPolicy, pluginSources]);
+	if (lastHeader?.key !== key) lastHeader = { key, header: reportOnlyPolicy(tidalPolicy, pluginSources) };
 	return lastHeader.header;
 };

@@ -2,9 +2,12 @@ import { effect } from "oby";
 
 const byName = new Intl.Collator(undefined, { sensitivity: "base" });
 
-export function installedPlugins<T extends { installed: boolean; name: string }>(plugins: T[], core: ReadonlySet<string>, descending: boolean) {
+/** A plugin is core by its url and name together (LunaPlugin.isCore): a plugin only named like one is listed */
+type Listed = { installed: boolean; name: string; isCore: boolean };
+
+export function installedPlugins<T extends Listed>(plugins: T[], descending: boolean) {
 	return plugins
-		.filter((plugin) => plugin.installed && !core.has(plugin.name))
+		.filter((plugin) => plugin.installed && !plugin.isCore)
 		.sort((a, b) => (descending ? byName.compare(b.name, a.name) : byName.compare(a.name, b.name)));
 }
 
@@ -13,12 +16,7 @@ export function matchingPluginNames<T extends { name: string }>(plugins: T[], qu
 	return new Set(plugins.filter((plugin) => plugin.name.toLocaleLowerCase().includes(search)));
 }
 
-export function watchInstalledPlugins<T extends { installed: boolean; name: string }>(
-	registry: Record<string, T>,
-	core: ReadonlySet<string>,
-	descending: boolean,
-	update: (plugins: T[]) => void,
-) {
+export function watchInstalledPlugins<T extends Listed>(registry: Record<string, T>, descending: boolean, update: (plugins: T[]) => void) {
 	// Track registry membership as well as install flags, including when the tab first opens empty.
-	return effect(() => update(installedPlugins(Object.values(registry), core, descending)), { sync: true });
+	return effect(() => update(installedPlugins(Object.values(registry), descending)), { sync: true });
 }

@@ -19,7 +19,11 @@ import type { MetaTags } from "./MediaItem.tags";
  * reports progress by item id while it runs, and hands DASH/HLS downloads to the remuxer once the bytes are on disk.
  * The stream fetcher and the remuxer are the neighbouring native modules, replaced here; the filesystem is real, in a
  * temporary directory.
+ *
+ * `luna.assertDownloadPath` (native/downloadFolders.ts) is the check that the path is where the user picked in a Luna
+ * dialog. It is stubbed to allow everything, and the cases that matter for it say so.
  */
+const assertDownloadPath = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../../lib.native/src/index.native", () => ({ fetchMediaItemStream: vi.fn() }));
 vi.mock("./MediaItem.finalizeDash.native", () => ({ finalizeDashDownload: vi.fn(), finalizeHlsDownload: vi.fn() }));
@@ -36,9 +40,11 @@ const nextId = () => ++itemSeq;
 beforeEach(async () => {
 	// The fetcher mock's call history must not carry over: several tests assert it was or was not called
 	vi.clearAllMocks();
+	vi.stubGlobal("luna", { assertDownloadPath });
 	dir = await mkdtemp(join(tmpdir(), "luna-download-"));
 });
 afterEach(async () => {
+	vi.unstubAllGlobals();
 	await rm(dir, { recursive: true, force: true });
 });
 
@@ -77,6 +83,19 @@ const serve = (chunks: string[], total: number, gate?: Promise<void>) => {
 };
 
 describe("download", () => {
+	test("writes nothing where the user did not pick: the sanitized path and the one asked for are checked first", async () => {
+		const trackId = nextId();
+		assertDownloadPath.mockImplementationOnce(() => {
+			throw new Error("not a download folder");
+		});
+
+		await expect(download(btsInfo(trackId), join(dir, "bad:name.flac"))).rejects.toThrow("not a download folder");
+
+		expect(assertDownloadPath).toHaveBeenCalledWith(join(dir, "badname.flac"), join(dir, "bad:name.flac"));
+		expect(fetchStream).not.toHaveBeenCalled();
+		expect(await readdir(dir)).toEqual([]);
+	});
+
 	test("streams the file to disk, reporting progress by item id while it runs", async () => {
 		const trackId = nextId();
 		let release!: () => void;
@@ -107,7 +126,7 @@ describe("download", () => {
 		expect(options).toMatchObject({ tags });
 		expect(await readFile(path, "utf8")).toBe("fragment");
 		// The raw fragments are left untouched by the (stubbed) remuxer: it is handed the file that was written
-		expect(finalizeDash).toHaveBeenCalledWith(path, tags);
+		expect(finalizeDash).toHaveBeenCalledWith(path, tags, path);
 		expect(finalizeHls).not.toHaveBeenCalled();
 	});
 
@@ -124,7 +143,7 @@ describe("download", () => {
 		release();
 		await expect(pending).resolves.toBe(path);
 
-		expect(finalizeHls).toHaveBeenCalledWith(path, undefined);
+		expect(finalizeHls).toHaveBeenCalledWith(path, undefined, path);
 		expect(finalizeDash).not.toHaveBeenCalled();
 		expect(await downloadProgress(videoId)).toBeUndefined();
 		// It is not tracked under the nonexistent track id

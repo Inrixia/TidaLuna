@@ -20,6 +20,11 @@ vi.mock("../core/confirmWindow", () => ({ askerFor: mocks.askerFor }));
 vi.mock("./secureLoad", () => ({ secureLoad: mocks.secureLoad }));
 vi.mock("./coreNatives", () => ({ isCoreNative: mocks.isCoreNative }));
 vi.mock("../expose", () => ({}));
+vi.mock("../core/legacyListMain", () => ({ legacyListReady: async () => {} }));
+// A plugin's native file is owned by an enabled plugin whose accepted code holds it (core/registry.ts)
+vi.mock("../core/registryMain", () => ({
+	registry: () => ({ nativeOwner: () => "https://plugin.example/p", legacyRefusal: () => undefined, ownsNative: () => true }),
+}));
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 /** Taken when index.ts is imported and again at every registration: a mock reset between tests would drop the calls */

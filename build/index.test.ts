@@ -138,7 +138,7 @@ describe("pluginBuildOptions", () => {
 			format: "esm",
 		});
 		// No extra opts: just the plugins every Luna plugin build needs
-		expect(pluginNames(opts)).toEqual(["dynamicExternals", "fileUrl", "lunaNativePlugin", "writeBundlePlugin"]);
+		expect(pluginNames(opts)).toEqual(["dynamicExternals", "fileUrl", "lunaNativePlugin", "lunaWorldPlugin", "writeBundlePlugin"]);
 	});
 
 	test("marks TIDAL's modules external, after any the caller adds", async () => {
@@ -154,7 +154,7 @@ describe("pluginBuildOptions", () => {
 
 		expect(opts).toMatchObject({ platform: "node", minify: false, bundle: true, format: "esm", target: TidalChromeVersion });
 		// A caller plugin comes first, the Luna plugins still come after it
-		expect(pluginNames(opts)).toEqual(["fileUrl", "dynamicExternals", "fileUrl", "lunaNativePlugin", "writeBundlePlugin"]);
+		expect(pluginNames(opts)).toEqual(["fileUrl", "dynamicExternals", "fileUrl", "lunaNativePlugin", "lunaWorldPlugin", "writeBundlePlugin"]);
 	});
 
 	test("opts are spread last, so a caller can turn the write back on", async () => {

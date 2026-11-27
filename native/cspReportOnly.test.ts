@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { networkBaseline, reportOnlyHeader, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
+import { hostAllowed, parseHostEntry } from "./core/hosts";
+import { baselineEntries, enforcedPolicy, networkBaseline, reportOnlyHeader, reportOnlyPolicy, tidalMetaPolicy } from "./cspReportOnly";
 
 // TIDAL 2.48.0's meta policy, copied from desktop.tidal.com on 2026-11-23. Kept here rather than fetched so the tests
 // run offline and give the same result every time: a change on TIDAL's side shouldn't fail CI. The code reads whatever
@@ -48,6 +49,16 @@ describe("reportOnlyPolicy", () => {
 		expect(parse(reportOnlyPolicy("connect-src 'self'")).get("connect-src")).toEqual(["'self'"]);
 		expect([...parse(reportOnlyPolicy("default-src 'self'")).keys()]).toEqual(["default-src"]);
 	});
+	it("lists the hosts plugins declare where plugins fetch and show media, not in frame-src", () => {
+		const withPlugins = parse(reportOnlyPolicy(tidal, ["https://api.last.fm", "wss://api.last.fm", "https://luna"]));
+		for (const directive of ["connect-src", "img-src", "media-src"]) {
+			const sources = withPlugins.get(directive)!;
+			expect(sources.includes("https://api.last.fm") && sources.includes("wss://api.last.fm"), directive).toBeTruthy();
+			expect(sources.filter((s) => s === "https://luna").length).toBe(1);
+		}
+		expect(withPlugins.get("frame-src")).toEqual(networkBaseline);
+		expect(parse(reportOnlyPolicy("connect-src 'self'", ["https://a.com"])).get("connect-src")).toEqual(["'self'"]);
+	});
 	it("keeps the first of repeated directives, as browsers do", () => {
 		expect(parse(reportOnlyPolicy("object-src 'none'; object-src *")).get("object-src")).toEqual(["'none'"]);
 	});
@@ -76,5 +87,36 @@ describe("reportOnlyPolicy", () => {
 		expect(first).toBe(reportOnlyPolicy(tidal));
 		expect(reportOnlyHeader(tidal)).toBe(first);
 		expect(reportOnlyHeader("object-src 'none'")).toBe(reportOnlyPolicy("object-src 'none'"));
+		// Another set of plugin sources is another header, not the cached one
+		const withPlugin = reportOnlyHeader("object-src 'none'", ["https://api.example.com"]);
+		expect(withPlugin).toBe(reportOnlyPolicy("object-src 'none'", ["https://api.example.com"]));
+		expect(withPlugin.includes("https://api.example.com")).toBeTruthy();
+		expect(reportOnlyHeader("object-src 'none'")).toBe(reportOnlyPolicy("object-src 'none'"));
+	});
+});
+
+describe("enforcedPolicy", () => {
+	it("limits connect-src to the baseline and the plugins' hosts, and leaves media open by default", () => {
+		const policy = enforcedPolicy(["https://api.example.com", "*.tidal.com"]);
+		expect(policy).toBe(`connect-src ${[...networkBaseline, "https://api.example.com"].join(" ")}`);
+		expect(policy.includes("img-src")).toBe(false);
+	});
+	it("gives page code the baseline's host entries only", () => {
+		expect(baselineEntries.includes("*.tidal.com")).toBeTruthy();
+		expect(baselineEntries.includes("api.github.com")).toBeTruthy();
+		// Luna's own Supporters tab
+		expect(baselineEntries.includes("sponsors.hug.rip")).toBeTruthy();
+		expect(baselineEntries.includes("'self'")).toBe(false);
+		expect(baselineEntries.includes("blob:")).toBe(false);
+		expect(baselineEntries.includes("https://luna")).toBe(false);
+		expect(baselineEntries.includes("wss://*.tidal.com")).toBe(false);
+		// Every one is a host entry Luna takes: a public-suffix wildcard would match nothing
+		for (const entry of baselineEntries) expect(parseHostEntry(entry), entry).toBeTruthy();
+		expect(hostAllowed(baselineEntries, new URL("https://raw.githubusercontent.com/a/b/main/store.json"))).toBeTruthy();
+	});
+	it("lets TIDAL's push socket and Luna's MusicBrainz lookups through (seen blocked on a live slot)", () => {
+		const sources = enforcedPolicy([]).split(" ");
+		expect(sources.includes("wss://*.tidal.com")).toBeTruthy();
+		expect(sources.includes("musicbrainz.org")).toBeTruthy();
 	});
 });

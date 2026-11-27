@@ -3,6 +3,7 @@ import * as ftch from "./fetch";
 import { LunaPlugin, type LunaPluginStorage } from "../LunaPlugin";
 import { ReactiveStore } from "../ReactiveStore";
 import { coreTrace } from "../trace";
+import { userInTidal } from "./userInTidal";
 
 const { trace } = coreTrace.withSource(".applySeedSettings");
 
@@ -65,22 +66,31 @@ export async function applySeedSettings(): Promise<void> {
 }
 
 /**
- * Remove every stored plugin that isn't declared (core plugins are kept).
+ * Remove every installed plugin that isn't declared (core plugins are kept), from Luna core and from the page's copy.
  * Returns the declared ids (lowercase → as written) that aren't installed yet.
  */
 async function removeUndeclaredPlugins(declaredIds: string[]): Promise<Map<string, string>> {
 	const missing = new Map(declaredIds.map((id) => [id.toLowerCase(), id]));
 	const declared = new Set(missing.keys());
+	const idsOf = (name: string, url?: string) => [name, urlName(url)].filter((id) => id !== undefined).map((id) => id.toLowerCase());
+	// Luna core holds what is installed (the page's storage is only a copy): hand over what the page had first
+	await LunaPlugin.migrateToCore();
+	// The core lists no plugin of Luna's own (https://luna/): a plugin only named like one is removed like any other
+	for (const { url, name } of await __LunaCore.list()) {
+		const ids = idsOf(name, url);
+		if (ids.some((id) => declared.has(id))) {
+			for (const id of ids) missing.delete(id);
+			continue;
+		}
+		await __LunaCore.uninstall(url);
+		trace.log(`Removed plugin ${name}, it is not declared in luna-settings.json`);
+	}
+	// The page's copies of plugins that aren't declared
 	for (const name of await LunaPlugin.pluginStorage.keys()) {
 		if (LunaPlugin.corePlugins.has(name)) continue;
 		const stored = await LunaPlugin.pluginStorage.get<LunaPluginStorage>(name);
-		const ids = [name, urlName(stored?.url)].filter((id) => id !== undefined).map((id) => id.toLowerCase());
-		if (ids.some((id) => declared.has(id))) {
-			if (stored?.installed) for (const id of ids) missing.delete(id);
-			continue;
-		}
+		if (idsOf(name, stored?.url).some((id) => declared.has(id))) continue;
 		await LunaPlugin.pluginStorage.del(name);
-		trace.log(`Removed plugin ${name}, it is not declared in luna-settings.json`);
 	}
 	return missing;
 }
@@ -90,10 +100,15 @@ async function removeUndeclaredPlugins(declaredIds: string[]): Promise<Map<strin
  * Store entry names are matched first, package.json files are only fetched for ids that are still not found.
  */
 async function installPlugins(missing: Map<string, string>, storeUrls: string[]): Promise<void> {
+	let userIn: Promise<void> | undefined;
 	const install = async (id: string, url: string, pkg?: LunaPluginStorage["package"]) => {
 		missing.delete(id);
 		const plugin = await LunaPlugin.fromStorage({ url, package: pkg });
-		if (!plugin.installed) await plugin.install();
+		if (plugin.installed) return;
+		// The core asks the user before each install and refuses while TIDAL is not in use. Once they answer, the next
+		// confirmation follows without waiting (see confirmGate)
+		await (userIn ??= userInTidal());
+		await plugin.install();
 	};
 
 	const failedStores: string[] = [];

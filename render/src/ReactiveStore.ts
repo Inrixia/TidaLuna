@@ -31,6 +31,7 @@ export class ReactiveStore {
 		return (this.reactiveLoading[key] ??= this.loadReactive(key, defaultValue).finally(() => delete this.reactiveLoading[key]));
 	}
 	private readonly reactiveLoading: Record<string, Promise<any>> = {};
+	private readonly reactiveListeners: Record<string, () => void> = {};
 	private async loadReactive<T extends StoreReconcileable>(key: string, defaultValue: T): Promise<T> {
 		// Create the oby reactive object
 		const reactiveObj = obyStore(defaultValue);
@@ -38,7 +39,7 @@ export class ReactiveStore {
 		obyStore.reconcile(reactiveObj, (await idbGet<T>(key, this.idbStore)) ?? defaultValue);
 
 		// Set up a listener to write to the idb store when the object changes
-		obyStore.on(reactiveObj, () =>
+		this.reactiveListeners[key] = obyStore.on(reactiveObj, () =>
 			idbSet(key, obyStore.unwrap(reactiveObj), this.idbStore).catch(this.trace.err.withContext(`Failed to set`, key, reactiveObj)),
 		);
 
@@ -61,6 +62,12 @@ export class ReactiveStore {
 	public get<T>(key: string): Promise<T | undefined> {
 		return idbGet<T>(key, this.idbStore);
 	}
+	/** The live value: the reactive object when one is loaded (its writes reach idb a moment later), else as stored */
+	public async current<T>(key: string): Promise<T | undefined> {
+		if (key in this.reactiveLoading) await this.reactiveLoading[key].catch(() => {});
+		if (key in this.reactiveCache) return obyStore.unwrap(this.reactiveCache[key]) as T;
+		return this.get<T>(key);
+	}
 
 	public async set<T>(key: string, value: T) {
 		try {
@@ -80,24 +87,31 @@ export class ReactiveStore {
 		return idbDel(key, this.idbStore);
 	}
 
+	/**
+	 * Deletes a key whose reactive object is done with (an uninstalled plugin): the object stops writing, so a change still
+	 * on its way can't store it again, and the next getReactive starts fresh
+	 */
+	public forget(key: string) {
+		this.reactiveListeners[key]?.();
+		delete this.reactiveListeners[key];
+		delete this.reactiveCache[key];
+		return this.del(key);
+	}
+
 	public keys(): Promise<string[]> {
 		return idbKeys(this.idbStore);
 	}
 
-	public async dump(): Promise<Record<string, unknown>>
-	{
+	public async dump(): Promise<Record<string, unknown>> {
 		const allKeys = await this.keys();
 		const data: Record<string, unknown> = {};
-		for (const key of allKeys)
-			data[key] = await this.get(key);
+		for (const key of allKeys) data[key] = await this.get(key);
 
 		return data;
 	}
 
-	public async clear()
-	{
+	public async clear() {
 		const allKeys = await this.keys();
-		for (const key of allKeys)
-			await this.del(key);
+		for (const key of allKeys) await this.del(key);
 	}
 }

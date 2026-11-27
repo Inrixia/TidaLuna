@@ -11,6 +11,7 @@ import { StyleTag } from "@luna/lib";
 import { unloads } from "../../index.safe";
 import { LunaPluginHeader } from "../PluginsTab/LunaPluginHeader";
 import { themes, themeStyles } from "../Storage";
+import { allowSource, reloadToRead } from "../allowSource";
 
 export type LunaThemeStorage = {
 	enabled: boolean;
@@ -43,10 +44,23 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 		setEnabled((themes[url].enabled = checked));
 		themeStyle.css = checked ? themes[url].css : undefined;
 	}, []);
-	const loadCSS = React.useCallback(async () => {
+	const [error, setError] = React.useState<string>();
+	/** `ask`: the user clicked Reload, so a theme from an origin the page can't read yet (added before Luna checked origins) may ask to allow it */
+	const loadCSS = React.useCallback(async (ask = false) => {
 		setLoading(true);
+		setError(undefined);
 		try {
-			const css = (themes[url].css = await ftch.text(url));
+			let text: string;
+			try {
+				text = await ftch.text(url);
+			} catch (err) {
+				if (!ask || (await __LunaCore.pageStores()).includes(new URL(url).origin)) throw err;
+				const access = await allowSource(url);
+				if (access === "denied") return setError(`Not allowed: ${new URL(url).origin}`);
+				if (access === "reload") return setError(reloadToRead(url));
+				text = await ftch.text(url);
+			}
+			const css = (themes[url].css = text);
 			setCSS(css);
 			// Reloading an enabled theme has to restyle the page, not only update what is stored
 			if (themes[url]?.enabled) themeStyle.css = css;
@@ -76,7 +90,7 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 		>
 			<LunaPluginHeader
 				name={name}
-				desc={manifest?.description}
+				desc={error ?? manifest?.description}
 				author={manifest?.author}
 				link={url}
 				children={
@@ -85,7 +99,7 @@ export const LunaTheme = React.memo(({ theme, url, uninstall }: { theme: LunaThe
 							title={enabled ? `Disable ${name}` : `Enable ${name}`}
 							children={<LunaSwitch checked={enabled} loading={loading} onChange={toggleEnabled} />}
 						/>
-						<SpinningButton title="Reload theme" spin={loading} disabled={loading} onClick={loadCSS} />
+						<SpinningButton title="Reload theme" spin={loading} disabled={loading} onClick={() => loadCSS(true)} />
 						<LunaTrashButton title="Uninstall plugin" onClick={uninstall} />
 					</>
 				}

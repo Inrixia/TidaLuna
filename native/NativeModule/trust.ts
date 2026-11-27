@@ -1,5 +1,6 @@
 import { BrowserWindow } from "electron";
 
+import { allVersionsEntries } from "../core/policy";
 import { ipcHandle } from "../ipc";
 import { getStore, recordKey, saveStore, type NativeRecord, type PermissionAnswer } from "./permissions/store";
 import { verifySource } from "./permissions/verifySource";
@@ -113,6 +114,7 @@ export class NativeTrust {
 		const record: NativeRecord | undefined = getStore().natives[recordKey(fileName, hash, this.verifiedUrl)];
 		if (record?.answer !== "allowUpdates" || record.hashes.includes(hash)) return;
 		record.hashes.push(hash);
+		if (this.info.world !== undefined) (record.nativeHashes ??= []).push(this.info.world.nativeHash);
 		record.modules = [...this.modules];
 		saveStore();
 	}
@@ -125,8 +127,10 @@ export class NativeTrust {
 	}
 
 	private async verify(): Promise<void> {
-		const { url, fileName, hash } = this.info;
-		if (url !== undefined && (await verifySource(url, fileName, hash))) this.verifiedUrl = url;
+		const { url, fileName, hash, world } = this.info;
+		// A world's code comes from the plugin's accepted world, fetched from its url by the main process (see native/worlds.ts)
+		if (url !== undefined && world !== undefined) this.verifiedUrl = url;
+		else if (url !== undefined && (await verifySource(url, fileName, hash))) this.verifiedUrl = url;
 	}
 
 	private async ask(): Promise<void> {
@@ -149,7 +153,7 @@ export class NativeTrust {
 	}
 
 	private save(answer: PermissionAnswer) {
-		const { fileName, hash, url: claimedUrl } = this.info;
+		const { fileName, hash, url: claimedUrl, world } = this.info;
 		const url = this.verifiedUrl;
 		// Replaces an answer for an earlier build of the url: that build is asked again if it ever loads
 		getStore().natives[recordKey(fileName, hash, url, claimedUrl)] = {
@@ -159,6 +163,7 @@ export class NativeTrust {
 			answer,
 			hashes: [hash],
 			modules: [...this.modules],
+			...(world !== undefined ? { nativeHashes: [world.nativeHash] } : {}),
 		};
 		saveStore();
 		// Another load of this file (e.g. a reload while this window was open) must not keep an older answer
@@ -197,7 +202,14 @@ export const loadWithPermissions = async <T>(trust: NativeTrust, load: () => T):
 export type NativePermissionEntry = Pick<NativeRecord, "fileName" | "url" | "claimedUrl" | "answer" | "modules"> & { key: string };
 
 ipcHandle("__Luna.nativePermissions.list", (): NativePermissionEntry[] =>
-	Object.entries(getStore().natives).map(([key, { fileName, url, claimedUrl, answer, modules }]) => ({ key, fileName, url, claimedUrl, answer, modules })),
+	Object.entries(getStore().natives).map(([key, { fileName, url, claimedUrl, answer, modules }]) => ({
+		key,
+		fileName,
+		url,
+		claimedUrl,
+		answer,
+		modules,
+	})),
 );
 
 /** The plugin an entry is of: its url, checked or as named (none for code without a url) */
@@ -206,7 +218,7 @@ const pluginOf = (record: NativeRecord) => record.url ?? record.claimedUrl;
 // Revoking never grants anything, so the renderer may ask for it: the file is asked again the next time it loads, and
 // code of it that runs is denied Node modules until then. (A revoked denial is asked again too; any plugin can already
 // open permission windows with native code of its own.)
-ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => {
+const revoke = (key: string) => {
 	const { natives } = getStore();
 	const record: NativeRecord | undefined = natives[key];
 	if (record === undefined) return;
@@ -219,12 +231,29 @@ ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => {
 	}
 	saveStore();
 	resetLive();
-});
+};
+ipcHandle("__Luna.nativePermissions.revoke", (_, key: string) => revoke(key));
 
-// Uninstalling a plugin forgets its answers, so a reinstall asks again
-ipcHandle("__Luna.nativePermissions.forget", (_, url: unknown) => {
-	// Not undefined: that would match every entry without a url
-	if (typeof url !== "string") return;
+/** The plugin's native files allowed for all versions: an update's code for them runs without asking (native/core/registry.ts) */
+export const allVersionsAnswers = (url: string): string[] => [
+	...new Set(allVersionsEntries(getStore().natives, url).map(([, fileName]) => fileName)),
+];
+
+/** Revokes the plugin's answers for all versions, so its native files ask again the next time they load. Tries each, throws if one failed */
+export const revokeAllVersions = (url: string) => {
+	let failed: unknown;
+	for (const [key] of allVersionsEntries(getStore().natives, url)) {
+		try {
+			revoke(key);
+		} catch (err) {
+			failed ??= err;
+		}
+	}
+	if (failed !== undefined) throw failed;
+};
+
+/** Uninstalling a plugin forgets its answers, so a reinstall asks again (native/core/registry.ts) */
+export const forgetAnswers = (url: string) => {
 	const { natives } = getStore();
 	let changed = false;
 	for (const [key, record] of Object.entries(natives)) {
@@ -236,5 +265,5 @@ ipcHandle("__Luna.nativePermissions.forget", (_, url: unknown) => {
 	resetLive();
 	// Code of the uninstalled plugin that still runs must not be allowed by another entry, or ask again
 	for (const ref of live) ref.deref()?.uninstalled(url);
-});
+};
 // #endregion

@@ -35,6 +35,8 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 		const parsedPath = parse(path);
 		// The file is written under its sanitized name, so that is the path to check
 		const filePath = assertMediaFile(join(parsedPath.dir, sanitize(parsedPath.base)));
+		// Only where the user picked in a Luna dialog (native/downloadFolders.ts): page code can call download with any path
+		luna.assertDownloadPath(filePath, path);
 		if (downloads[itemId] !== undefined) {
 			await downloads[itemId]!.promise;
 			return filePath;
@@ -62,9 +64,9 @@ export const download = async (playbackInfo: PlaybackInfo | VideoPlaybackInfo, p
 
 			// FLAC streams are tagged in-flight, but DASH streams are written as raw
 			// fragmented MP4: remux to a standard MP4 and write the tags post-download
-			if (playbackInfo.manifestMimeType === "application/dash+xml") await finalizeDashDownload(filePath, tags);
+			if (playbackInfo.manifestMimeType === "application/dash+xml") await finalizeDashDownload(filePath, tags, path);
 			// HLS video streams are MPEG-TS segments: remux to a standard MP4 and write the tags post-download
-			if (playbackInfo.manifestMimeType === "application/vnd.tidal.emu") await finalizeHlsDownload(filePath, tags);
+			if (playbackInfo.manifestMimeType === "application/vnd.tidal.emu") await finalizeHlsDownload(filePath, tags, path);
 			return filePath;
 		} finally {
 			delete downloads[itemId];

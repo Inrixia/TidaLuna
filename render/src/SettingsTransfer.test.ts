@@ -6,8 +6,11 @@ import { SettingsTransfer, type ExportData } from "./SettingsTransfer";
  * SettingsTransfer reaches the plugin storage through `LunaPlugin`, and render/src/LunaPlugin.ts loads boot code, so it
  * is mocked with the two statics SettingsTransfer uses: a plugin storage and `dumpStorage` (the real one strips each
  * plugin's `package.code`). The other two exportable stores are the real ReactiveStore on fake-indexeddb.
+ *
+ * What is installed lives in Luna core (`__LunaCore`, main process), faked with an in-memory list (`installedInCore`).
+ * Its `install` answers from `installAnswers`, as the user would in the core's confirmation window.
  */
-const { pluginStorage, pluginStorageData, dumpStorage } = vi.hoisted(() => {
+const { pluginStorage, pluginStorageData, dumpStorage, migrateToCore, core, installedInCore, installAnswers } = vi.hoisted(() => {
 	const stripPackageCode = (value: unknown) => {
 		const stripped = { ...(value as Record<string, any>) };
 		if (stripped.package !== undefined) stripped.package = { ...stripped.package };
@@ -15,9 +18,30 @@ const { pluginStorage, pluginStorageData, dumpStorage } = vi.hoisted(() => {
 		return stripped;
 	};
 	const pluginStorageData = new Map<string, any>();
+	const installedInCore = new Map<string, { url: string; name: string; enabled: boolean }>();
+	const installAnswers = new Map<string, boolean | Error>();
+	const core = {
+		list: vi.fn(async () => [...installedInCore.values()]),
+		info: vi.fn(async (url: string) => installedInCore.get(url)),
+		uninstall: vi.fn(async (url: string) => void installedInCore.delete(url)),
+		disable: vi.fn(async (url: string) => {
+			const entry = installedInCore.get(url);
+			if (entry) entry.enabled = false;
+		}),
+		install: vi.fn(async (url: string) => {
+			const answer = installAnswers.get(url) ?? true;
+			if (answer instanceof Error) throw answer;
+			if (answer) installedInCore.set(url, { url, name: url, enabled: true });
+			return answer;
+		}),
+	};
 
 	return {
 		pluginStorageData,
+		installedInCore,
+		installAnswers,
+		core,
+		migrateToCore: vi.fn(async () => {}),
 		pluginStorage: {
 			idbName: "@luna/plugins",
 			clear: async () => pluginStorageData.clear(),
@@ -37,7 +61,7 @@ const { pluginStorage, pluginStorageData, dumpStorage } = vi.hoisted(() => {
 	};
 });
 
-vi.mock("./LunaPlugin", () => ({ LunaPlugin: { pluginStorage, dumpStorage } }));
+vi.mock("./LunaPlugin", () => ({ LunaPlugin: { pluginStorage, dumpStorage, migrateToCore } }));
 
 const pluginStorageStore = ReactiveStore.getStore("@luna/pluginStorage");
 const lunaStorageStore = ReactiveStore.getStore("@luna/storage");
@@ -49,6 +73,10 @@ const libPlugin = () => ({ enabled: true, package: { name: "@luna/lib", code: "c
 describe("SettingsTransfer", () => {
 	beforeEach(async () => {
 		pluginStorageData.clear();
+		installedInCore.clear();
+		installAnswers.clear();
+		vi.clearAllMocks();
+		(globalThis as any).__LunaCore = core;
 		dumpStorage.mockClear();
 		await pluginStorageStore.clear();
 		await lunaStorageStore.clear();
@@ -150,6 +178,16 @@ describe("SettingsTransfer", () => {
 			const dumped = await SettingsTransfer.dump();
 
 			expect(dumped.stores).toEqual({ "@luna/pluginStorage": {}, "@luna/plugins": {}, "@luna/storage": {} });
+			expect(dumped.installed).toEqual([]);
+		});
+
+		test("lists what Luna core has installed, after handing the page's plugins over to it", async () => {
+			installedInCore.set("https://store.example/one", { url: "https://store.example/one", name: "one", enabled: false, extra: 1 } as any);
+
+			const dumped = await SettingsTransfer.dump();
+
+			expect(migrateToCore).toHaveBeenCalledTimes(1);
+			expect(dumped.installed).toEqual([{ url: "https://store.example/one", name: "one", enabled: false }]);
 		});
 	});
 
@@ -173,6 +211,75 @@ describe("SettingsTransfer", () => {
 
 			expect([...pluginStorageData.keys()].sort()).toEqual(["@luna/lib", "@luna/ui"]);
 			expect(pluginStorageData.get("@luna/ui")).toEqual({ enabled: false });
+		});
+
+		const exported = (installed: unknown): ExportData => ({ ...validExport(), installed }) as ExportData;
+
+		test("installs the exported plugins through Luna core and uninstalls the others", async () => {
+			installedInCore.set("https://store.example/old", { url: "https://store.example/old", name: "old", enabled: true });
+
+			const notInstalled = await SettingsTransfer.restore(
+				exported([
+					{ url: "https://store.example/new", name: "new", enabled: true },
+					// A core plugin is never installed through the list, the url is only trusted from Luna
+					{ url: "https://luna/luna.lib", name: "lib", enabled: true },
+					{ url: "javascript:alert(1)", name: "bad", enabled: true },
+				]),
+			);
+
+			expect(notInstalled).toEqual([]);
+			expect(core.uninstall).toHaveBeenCalledWith("https://store.example/old");
+			expect(core.install.mock.calls).toEqual([["https://store.example/new"]]);
+			expect([...installedInCore.keys()]).toEqual(["https://store.example/new"]);
+		});
+
+		test("names the plugins that were declined or could not be installed", async () => {
+			vi.spyOn(console, "warn").mockImplementation(() => {});
+			installAnswers.set("https://store.example/declined", false);
+			installAnswers.set("https://store.example/broken", new Error("core cannot ask"));
+
+			const notInstalled = await SettingsTransfer.restore(
+				exported([
+					{ url: "https://store.example/declined", name: "declined" },
+					{ url: "https://store.example/broken", name: "broken" },
+					{ url: "https://store.example/fine", name: "fine" },
+				]),
+			);
+
+			expect(notInstalled).toEqual(["declined", "broken"]);
+			expect([...installedInCore.keys()]).toEqual(["https://store.example/fine"]);
+		});
+
+		test("a plugin exported disabled is turned off, without asking again when it is installed already", async () => {
+			installedInCore.set("https://store.example/here", { url: "https://store.example/here", name: "here", enabled: true });
+
+			await SettingsTransfer.restore(
+				exported([
+					{ url: "https://store.example/here", name: "here", enabled: false },
+					{ url: "https://store.example/there", name: "there", enabled: false },
+				]),
+			);
+
+			expect(core.install.mock.calls).toEqual([["https://store.example/there"]]);
+			expect(installedInCore.get("https://store.example/here")!.enabled).toBe(false);
+			expect(installedInCore.get("https://store.example/there")!.enabled).toBe(false);
+		});
+
+		test("an export from before Luna core is read from the page's plugin copies", async () => {
+			const entry = (installed: boolean, enabled?: boolean) => ({
+				installed,
+				enabled,
+				url: "https://store.example/old-export",
+				package: { name: "from-copy" },
+			});
+
+			await SettingsTransfer.restore({
+				...validExport(),
+				stores: { "@luna/plugins": { copy: entry(true), "@luna/lib": { installed: true, enabled: true }, off: { installed: false } } },
+			});
+
+			expect(migrateToCore).toHaveBeenCalledTimes(1);
+			expect(core.install.mock.calls).toEqual([["https://store.example/old-export"]]);
 		});
 
 		test("leaves stores the payload doesn't mention alone", async () => {

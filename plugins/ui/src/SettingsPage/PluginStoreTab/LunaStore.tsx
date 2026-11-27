@@ -2,11 +2,16 @@ import React from "react";
 
 import { LunaPlugin, type PluginPackage } from "@luna/core";
 
+import { hostAllowed } from "../../../../../native/core/hosts";
+
 import Grid from "@mui/material/Grid";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
+import Button from "@mui/material/Button";
+
 import { LunaTrashButton, SpinningButton } from "../../components";
+import { allowSource, reloadToRead } from "../allowSource";
 import { LunaPluginHeader } from "../PluginsTab/LunaPluginHeader";
 import { LunaStorePlugin } from "./LunaStorePlugin";
 
@@ -20,10 +25,13 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	const [pkg, setPackage] = React.useState<StorePackage | undefined>(undefined);
 
 	const disabled = loading; // Disable controls while loading
+	// The page can't read the store's origin yet (strict network): the user may allow it
+	const [blocked, setBlocked] = React.useState(false);
 
 	const fetchPackage = React.useCallback(async () => {
 		setLoading(true);
 		setLoadError(undefined);
+		setBlocked(false);
 		try {
 			const response = await fetch(`${url}/store.json`);
 			if (!response.ok) throw new Error(`Failed to fetch package: ${response.statusText}`);
@@ -33,6 +41,16 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 			// The local dev store is only up while developing plugins
 			if (url !== "http://127.0.0.1:3000") console.error("Error fetching package:", error);
 			setLoadError(error.message || "Unknown error occurred");
+			// A network error, not an answer: maybe the page's connect-src doesn't list the store. GitHub and the other
+			// baseline hosts are in it without being a store origin: for them it's the network
+			if (error instanceof TypeError)
+				Promise.all([__LunaCore.pageStores(), __LunaCore.pageConnect()]).then(
+					([origins, connect]) => {
+						const at = new URL(url);
+						setBlocked(!origins.includes(at.origin) && !hostAllowed(connect, at));
+					},
+					() => {},
+				);
 			setPackage(undefined); // Clear package on error
 		} finally {
 			setLoading(false);
@@ -42,6 +60,16 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 	React.useEffect(() => {
 		fetchPackage();
 	}, [fetchPackage]); // Depend on the memoized fetch function
+
+	const allow = React.useCallback(async () => {
+		// Refused unasked (confirmations cooling down, others waiting): shown like a load error
+		const access = await allowSource(`${url}/store.json`).catch((err) => (setLoadError(String(err?.message ?? err)), "denied" as const));
+		if (access === "denied") return;
+		setBlocked(false);
+		// "ready": the page can read it now (GitHub, or allowed earlier), so read it
+		if (access === "reload") setLoadError(reloadToRead(url));
+		else fetchPackage();
+	}, [url, fetchPackage]);
 
 	const isLocalDevStore = url === "http://127.0.0.1:3000";
 
@@ -81,6 +109,7 @@ export const LunaStore = React.memo(({ url, onRemove, searchQuery }: { url: stri
 				desc={desc}
 				children={
 					<>
+						{blocked && <Button size="small" variant="outlined" onClick={allow} children="Allow store" />}
 						<SpinningButton title="Reload store" spin={loading} disabled={disabled} onClick={fetchPackage} />
 						<LunaTrashButton disabled={isLocalDevStore} title="Remove store" onClick={onRemove} />
 					</>

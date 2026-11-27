@@ -74,7 +74,7 @@ describe("preload", () => {
 		it("refuses the channel only the preload may send, for invoke and send", async () => {
 			await loadPreload("https://listen.tidal.com/");
 			const bridge = page.__ipcRenderer!;
-			expect(() => bridge.invoke("__Luna.userInput", true)).toThrow("Channel __Luna.userInput is not available to the page");
+			await expect(bridge.invoke("__Luna.userInput", true)).rejects.toThrow("Channel __Luna.userInput is not available to the page");
 			expect(() => bridge.send("__Luna.userInput", true)).toThrow("Channel __Luna.userInput is not available to the page");
 			expect(electron.ipcRenderer.invoke).not.toHaveBeenCalledWith("__Luna.userInput", expect.anything());
 			expect(userInputSent()).toEqual([]);
@@ -83,10 +83,10 @@ describe("preload", () => {
 		it("passes every other channel through", async () => {
 			await loadPreload("https://listen.tidal.com/");
 			const bridge = page.__ipcRenderer!;
-			await bridge.invoke("__Luna.renderJs", 1);
-			bridge.send("__Luna.something", 2);
-			expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("__Luna.renderJs", 1);
-			expect(electron.ipcRenderer.send).toHaveBeenCalledWith("__Luna.something", 2);
+			await bridge.invoke("__Luna.getSeedSettings", 1);
+			bridge.send("update-info", 2);
+			expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("__Luna.getSeedSettings", 1);
+			expect(electron.ipcRenderer.send).toHaveBeenCalledWith("update-info", 2);
 		});
 
 		it("is exposed through contextBridge when the page is isolated, and on the window when it is not", async () => {

@@ -60,7 +60,8 @@ const buildHtml = ({ fileName, url, claimedUrl, modules }: PermissionRequest) =>
 
 	// What the source names, by category. For information: the answer is for the file as a whole
 	const groups = groupModules(modules);
-	const namesSummary = modules.length === 0 ? "Its code names no Node modules" : `Its code names ${modules.length} module${modules.length === 1 ? "" : "s"}`;
+	const namesSummary =
+		modules.length === 0 ? "Its code names no Node modules" : `Its code names ${modules.length} module${modules.length === 1 ? "" : "s"}`;
 	const namesHtml = `<details class="names"><summary>${icon(icons.list)}<span>${namesSummary}<span class="muted"> · for information, not a limit</span></span>${icon(icons.chevron, "icon chevron")}</summary>
 	<div class="note">Read from the text of the file. This list does not limit the plugin: native code that runs in the main process can do more than it shows.</div>
 	<ul>${groups
@@ -74,8 +75,12 @@ const buildHtml = ({ fileName, url, claimedUrl, modules }: PermissionRequest) =>
 	// How long an answer holds. Answers of a file without a url are kept for its code, an uninstall can't find them
 	const help = [
 		"This version: until an update changes this file.",
-		url !== undefined ? "All versions: also later updates from this source. Deny: this and later versions from this source." : "Deny: this version.",
-		url !== undefined || claimedUrl !== undefined ? "Until the plugin is reinstalled; revoke any time in Luna Settings." : "Revoke any time in Luna Settings.",
+		url !== undefined
+			? "All versions: also later updates from this source. Deny: this and later versions from this source."
+			: "Deny: this version.",
+		url !== undefined || claimedUrl !== undefined
+			? "Until the plugin is reinstalled; revoke any time in Luna Settings."
+			: "Revoke any time in Luna Settings.",
 	].join(" ");
 
 	return promptPage({

@@ -12,12 +12,16 @@ import { transformTidalModule } from "../render/src/tidalTransform";
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
-import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
+import { pluginPageHosts, pluginStoreOrigins, setPageConnect, setPageStores } from "./core/registryMain";
+import { cspSources } from "./core/hosts";
+import { baselineEntries, enforcedPolicy, reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
+import { recordIsolation } from "./isolatedContents";
 import { tidalMainHosts } from "./tidalHosts";
 
+let warnedOwnCsp = false;
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 
 /** tidal-hifi's settings (Linux), read synchronously so they can be used before the app is ready */
@@ -157,10 +161,28 @@ const httpsHandler = async (req: Request): Promise<Response> => {
 		if (!body.includes('<meta http-equiv="Content-Security-Policy"')) return new Response(body, res);
 		// Report, don't enforce, TIDAL's policy (see cspReportOnly.ts). A response that already has a report-only policy keeps it
 		const headers = new Headers(res.headers);
+		// The hosts enabled plugins may reach are listed too: what is still reported is what no plugin declared
+		const pluginHosts = pluginPageHosts();
+		// Plus the store origins, for Luna's own reads of store.json and plugin packages (core/stores.ts). Page plugins'
+		// own requests to them still go through luna.fetch and their hosts (pageConnect doesn't list them)
+		const storeOrigins = pluginStoreOrigins();
+		const pluginSources = [...cspSources(pluginHosts), ...storeOrigins];
 		if (!headers.has("Content-Security-Policy-Report-Only")) {
 			const tidalPolicy = tidalMetaPolicy(body);
-			if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyHeader(tidalPolicy));
+			if (tidalPolicy !== undefined) headers.set("Content-Security-Policy-Report-Only", reportOnlyHeader(tidalPolicy, pluginSources));
 		}
+		// Strict network: page code reaches only TIDAL, Luna and the plugins' accepted hosts (cspReportOnly.ts enforcedPolicy).
+		// A host allowed later reaches the page from its next load; until then render/src/pageNet.ts sends page plugins'
+		// fetches to it through luna.fetch
+		// Appended: a policy TIDAL's own response sends stays enforced next to Luna's (each one applies), and pageAllows only
+		// knows Luna's connect list: say so
+		if (headers.has("Content-Security-Policy") && !warnedOwnCsp) {
+			warnedOwnCsp = true;
+			console.warn("[Luna.core] TIDAL sends a Content-Security-Policy header of its own: page requests it blocks are not reported as Luna's");
+		}
+		headers.append("Content-Security-Policy", enforcedPolicy(pluginSources));
+		setPageConnect([...baselineEntries, ...pluginHosts]);
+		setPageStores(storeOrigins);
 		body = body.replace(
 			/(<meta http-equiv="Content-Security-Policy")|(<script type="module" crossorigin src="(.*?)">)/g,
 			(match, cspMatch, scriptMatch, src) => {
@@ -313,6 +335,8 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 		}
 
 		const window = new target(options);
+		// Plugin worlds need it (see worlds.ts)
+		recordIsolation(window.webContents, options.webPreferences);
 
 		// Open dev tools with F12 or Ctrl+Shift+I (Cmd+Alt+I on macOS), overriding TIDAL's own use of them
 		window.webContents.on("before-input-event", (event, input) => {
@@ -507,6 +531,8 @@ require(startPath);
 
 // #region LunaNative
 import "./NativeModule";
+import "./core/registryMain";
+import "./worlds";
 // #endregion
 
 // Literally just to log if preload fails

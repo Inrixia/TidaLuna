@@ -8,6 +8,7 @@ import { LunaPluginSettings } from "../PluginsTab/LunaPluginSettings";
 import { LunaCacheSettings } from "./LunaCacheSettings";
 import { LunaFeatureFlags } from "./LunaFeatureFlags";
 import { LunaNativePermissions } from "./LunaNativePermissions";
+import { LunaNetwork } from "./LunaNetwork";
 import { LunaSettingsTransfer } from "./LunaSettingsTransfer";
 import { LunaShortcuts } from "./LunaShortcuts";
 import { LunaVersionInfo } from "./LunaVersionInfo";
@@ -15,7 +16,7 @@ import { LunaVersionInfo } from "./LunaVersionInfo";
 export const SettingsTab = React.memo(() => {
 	const corePlugins = [];
 	for (const plugin of Object.values(LunaPlugin.plugins)) {
-		if (!LunaPlugin.corePlugins.has(plugin.name)) continue;
+		if (!plugin.isCore) continue;
 		corePlugins.push(<LunaPluginSettings key={plugin.url} plugin={plugin} />);
 	}
 	return (
@@ -25,6 +26,7 @@ export const SettingsTab = React.memo(() => {
 			<LunaCacheSettings />
 			<LunaShortcuts />
 			<LunaNativePermissions />
+			<LunaNetwork />
 			<LunaFeatureFlags />
 			<LunaSettings title="Luna core plugins" desc="Plugins providing core luna functionality">
 				{corePlugins}

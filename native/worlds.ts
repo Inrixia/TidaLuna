@@ -1,0 +1,185 @@
+// Plugin worlds: a plugin's native-facing code runs in its own isolated world, and only that world can call its natives.
+//
+// Page code (every plugin's render code, and anything injected into the page) shares one JS realm, so a native channel
+// open to the page is open to all of it. A plugin that names a `"lunaWorld"` entry gets instead:
+// - its world code and natives from `${url}.world.json` (built by build/plugins/lunaWorldPlugin.ts), fetched by the main
+//   process with the plugin's code and accepted with it (core/registry.ts): only an enabled plugin's world loads, and
+//   only the version the user accepted. The page only names the url, it never hands over code;
+// - its natives asked for and kept like any native file, under "world:<file>" and only for world loads (worldNatives.ts),
+//   so page code can't register the same code again to get a channel of its own;
+// - a bridge in its world only (core/coreWorld.ts), whose plugin url is fixed by the preload: with contextIsolation,
+//   renderer code can send IPC only through what the preload exposes, and the page's `__ipcRenderer` refuses the
+//   "__LunaWorld.*" channels, so main trusts the url the preload puts in front of "__LunaWorld.invoke".
+import { BrowserWindow } from "electron";
+
+import { createHash } from "crypto";
+
+import { hostAskerFor, lunaNet, onPluginChanged, registry } from "./core/registryMain";
+import { ipcHandle } from "./ipc";
+import { isIsolated } from "./isolatedContents";
+import { secureLoad } from "./NativeModule/secureLoad";
+import { markWorldNative, moduleOwners, worldFilePrefix } from "./NativeModule/worldNatives";
+import { parseBundle } from "./worldBundle";
+
+const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+
+// A new isolated world for each load (see core/coreWorld.ts). 999 is Electron's preload world
+let nextWorldId = 1001;
+
+/** `${url}\n${fileName}` -> exports, and the accepted world text they were loaded for */
+const owned = new Map<string, { exports: Record<string, unknown>; world: string }>();
+
+const ownedKey = (url: string, fileName: string) => `${url}\n${fileName}`;
+/** url -> the accepted world text of its last finished load (luna.fetch from a world checks it, as invoke checks `owned`) */
+const loadedWorlds = new Map<string, string>();
+// Loads of each url still running: a url's names are freed only once none of them is
+const loadsInFlight = new Map<string, number>();
+// The latest load of each url: an older one still waiting on the user fills nothing (see release)
+const generations = new Map<string, number>();
+const nextGeneration = (url: string) => {
+	const generation = (generations.get(url) ?? 0) + 1;
+	generations.set(url, generation);
+	return generation;
+};
+
+/** The accepted world text whose natives a url's loads last put in `luna.modules` (set at each fill) */
+const filledFrom = new Map<string, string>();
+/** Takes a url's world natives out of `luna.modules` (other natives import them by name). `keep`: names its new load still has */
+const releaseModules = (url: string, keep: ReadonlySet<string> = new Set()) => {
+	for (const [fileName, owner] of moduleOwners) {
+		if (owner !== url || keep.has(fileName)) continue;
+		moduleOwners.delete(fileName);
+		delete globalThis.luna.modules[fileName];
+	}
+	if (keep.size === 0) filledFrom.delete(url);
+};
+// Disabled, uninstalled, updated or moved away: nothing of a world that isn't the accepted one stays reachable, and a
+// load of it still running fills nothing
+onPluginChanged((url) => {
+	const accepted = registry().acceptedWorld(url);
+	const filled = filledFrom.get(url);
+	// Not enabled any more: everything of it goes, also what a load still running filled so far
+	if (accepted === undefined) nextGeneration(url);
+	// Still the world it filled from, or none filled since the last change: a load still running checks the accepted
+	// world itself before each fill
+	else if (filled === undefined || filled === accepted) return;
+	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
+	loadedWorlds.delete(url);
+	releaseModules(url);
+});
+
+/**
+ * Without contextIsolation the page shares the preload's realm and could send these channels itself, with any url:
+ * worlds need it (the preload refuses them there too, see core/coreWorld.ts)
+ */
+const checkIsolated = (sender: Electron.WebContents) => {
+	if (!isIsolated(sender)) throw new Error("[🛑Security🛑] Plugin worlds need contextIsolation");
+};
+
+ipcHandle("__LunaWorld.load", async (event, url: unknown) => {
+	checkIsolated(event.sender);
+	if (typeof url !== "string" || !/^https?:\/\//.test(url)) throw new Error(`[Luna.worlds] Not a plugin url: ${String(url)}`);
+	const accepted = registry().acceptedWorld(url);
+	if (accepted === undefined) throw new Error(`[🛑Security🛑] ${url} is not an enabled plugin with a world`);
+	const bundle = parseBundle(accepted);
+	// A world's natives can't take a native module name Luna or another plugin registered (others import them by name)
+	// A name another world reserved counts too, though its load may still be waiting on the user
+	for (const fileName of Object.keys(bundle.natives)) {
+		const owner = moduleOwners.get(fileName);
+		if (owner !== undefined ? owner !== url : globalThis.luna.modules[fileName] !== undefined)
+			throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} is already registered by Luna or another plugin`);
+	}
+	// Reserved now, before any wait: a page native or another world taking the same name meanwhile is refused
+	for (const fileName of Object.keys(bundle.natives)) moduleOwners.set(fileName, url);
+	loadsInFlight.set(url, (loadsInFlight.get(url) ?? 0) + 1);
+	const generation = nextGeneration(url);
+
+	// Natives of an earlier load of this url can't be called any more, whatever happens below
+	for (const key of owned.keys()) if (key.startsWith(`${url}\n`)) owned.delete(key);
+	loadedWorlds.delete(url);
+
+	// The answer for a native covers the world code too: the world decides what its natives are called with
+	const worldHash = sha256(bundle.code);
+	const parent = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+	// What this load filled: a load that fails halfway takes it back (a disable meanwhile finds nothing filled yet)
+	const filled = new Map<string, Record<string, unknown>>();
+	try {
+		for (const [fileName, code] of Object.entries(bundle.natives)) {
+			const nativeHash = sha256(code);
+			markWorldNative(nativeHash);
+			const exports = await secureLoad(
+				{ fileName: worldFilePrefix + fileName, code, hash: sha256(`${code}\0${worldHash}`), url, isCore: false, world: { nativeHash } },
+				parent,
+			);
+			if ((moduleOwners.get(fileName) ?? url) !== url)
+				throw new Error(`[🛑Security🛑] ${url}: native module ${fileName} was taken by another plugin while loading`);
+			// A newer load of this url, or a disable, came while the user was asked: the newer state wins
+			if (generations.get(url) !== generation || registry().acceptedWorld(url) !== accepted)
+				throw new Error(`[Luna.worlds] ${url}: a newer load or a disable replaced this load`);
+			moduleOwners.set(fileName, url);
+			owned.set(ownedKey(url, fileName), { exports, world: accepted });
+			// Other plugins' natives may import it, as they can any native module (see build/plugins/lunaNativePlugin.ts)
+			globalThis.luna.modules[fileName] = exports;
+			filled.set(fileName, exports);
+			filledFrom.set(url, accepted);
+		}
+		// Natives an earlier version had and this one dropped
+		releaseModules(url, new Set(Object.keys(bundle.natives)));
+		filledFrom.set(url, accepted);
+	} catch (err) {
+		// Natives this load filled before it failed (or went stale) stop: a newer load's fills of the same names stay
+		for (const [fileName, exports] of filled) {
+			const key = ownedKey(url, fileName);
+			if (owned.get(key)?.exports === exports) owned.delete(key);
+			if (globalThis.luna.modules[fileName] !== exports) continue;
+			delete globalThis.luna.modules[fileName];
+			if (moduleOwners.get(fileName) === url) moduleOwners.delete(fileName);
+		}
+		// The latest load failed: natives of an earlier one don't stay importable (their channels already closed above)
+		if (generations.get(url) === generation) releaseModules(url);
+		throw err;
+	} finally {
+		const left = (loadsInFlight.get(url) ?? 1) - 1;
+		if (left > 0) loadsInFlight.set(url, left);
+		else {
+			loadsInFlight.delete(url);
+			// The last load of this url frees its names never filled (refused or failed natives, of any of its bundles)
+			for (const [fileName, owner] of moduleOwners)
+				if (owner === url && globalThis.luna.modules[fileName] === undefined) moduleOwners.delete(fileName);
+		}
+	}
+
+	// The newest load of this url, still accepted (a world without natives waits on nothing above)
+	if (generations.get(url) === generation && registry().acceptedWorld(url) === accepted) loadedWorlds.set(url, accepted);
+	return { worldId: nextWorldId++, code: bundle.code };
+});
+
+// luna.fetch from a plugin world: the url is the one the preload fixed in the world's bridge, so the plugin's accepted
+// hosts hold for its world code (core/net.ts). Disabled, or an update accepted since its world loaded: refused until the
+// new world loads, as invoke is. A host outside them is asked in Luna's window over TIDAL's (the world runs in its page).
+// `{setting:<key>}` entries need the page's settings, which a world doesn't send: those hosts are asked too
+ipcHandle("__LunaWorld.fetch", async (event, url: unknown, request: unknown) => {
+	checkIsolated(event.sender);
+	const loaded = typeof url === "string" ? loadedWorlds.get(url) : undefined;
+	if (loaded === undefined || registry().acceptedWorld(url as string) !== loaded)
+		throw new Error(`[🛑Security🛑] ${String(url)} has no world loaded at its accepted version`);
+	return lunaNet.fetch(url, "world", request, hostAskerFor(event.sender));
+});
+
+ipcHandle("__LunaWorld.invoke", async (event, url: unknown, fileName: unknown, exportName: unknown, ...args: unknown[]) => {
+	checkIsolated(event.sender);
+	const entry = typeof url === "string" && typeof fileName === "string" ? owned.get(ownedKey(url, fileName)) : undefined;
+	if (entry === undefined) throw new Error(`[🛑Security🛑] ${String(url)} has no native file ${String(fileName)}`);
+	// Disabled, or an update accepted since its world loaded: the old world's natives stop until the new one loads
+	if (registry().acceptedWorld(url as string) !== entry.world)
+		throw new Error(`[🛑Security🛑] ${String(url)} is not enabled at the version its world loaded`);
+	const { exports } = entry;
+	const fn = typeof exportName === "string" && Object.hasOwn(exports, exportName) ? exports[exportName] : undefined;
+	if (typeof fn !== "function") throw new Error(`[Luna.worlds] ${fileName} has no export ${String(exportName)}`);
+	try {
+		return await fn(...args);
+	} catch (err) {
+		if (typeof err === "object" && err !== null) (err as { cause?: unknown }).cause = `[Luna.worlds] (${fileName}).${exportName}`;
+		throw err;
+	}
+});
