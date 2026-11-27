@@ -38,7 +38,11 @@ export class StyleTag {
 		this._css = css?.trim();
 		if (this._css === undefined || this._css === "") this.remove();
 		else {
-			this.styleTag.innerHTML = this._css;
+			// textContent, not innerHTML. Theme CSS is remote content, and innerHTML on this tag does parse markup: a payload
+			// of `</style><img src=x onerror=...>` produced an <img> element in happy-dom, whose fragment parser does not
+			// apply the rawtext rule for <style> that Chromium does. Whether that reaches HTML injection depends on the
+			// engine, which is exactly why remote CSS is assigned as text and never parsed
+			this.styleTag.textContent = this._css;
 			if (!this.styleTag.isConnected) this.add();
 		}
 	}

@@ -118,6 +118,40 @@ describe("css", () => {
 	});
 });
 
+describe("remote css is text, never markup", () => {
+	/**
+	 * A theme is remote CSS injected into TIDAL's own page, so what it can produce matters. `<style>` is a rawtext
+	 * element, so markup in its content should stay text; these tests pin that down rather than trusting the parser to
+	 * keep being right.
+	 */
+	const payload = 'body{color:red}</style><img src=x onerror="window.__pwned=1"><script>window.__pwned=1<\/script>';
+
+	test("does not create elements from the css", () => {
+		const style = new StyleTag("remote", unloads);
+		style.css = payload;
+
+		expect(document.querySelector("img")).toBeNull();
+		expect(document.querySelector("script")).toBeNull();
+		expect(style.styleTag.children.length).toBe(0);
+	});
+
+	test("keeps the payload as the tag's text, so the stylesheet rule is unchanged", () => {
+		const style = new StyleTag("remote", unloads);
+		style.css = payload;
+
+		expect(style.styleTag.textContent).toBe(payload);
+		expect(style.css).toBe(payload);
+	});
+
+	test("does not execute anything from the css", () => {
+		(window as unknown as { __pwned?: number }).__pwned = undefined;
+		const style = new StyleTag("remote", unloads);
+		style.css = payload;
+
+		expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+	});
+});
+
 describe("add and remove", () => {
 	test("add() puts the tag in the document head", () => {
 		const tag = new StyleTag("luna-style-i", unloads, "a { color: blue; }");
