@@ -22,14 +22,43 @@ expose("__platform", process.platform);
 // Only TIDAL's own pages, the ones Luna loads into, get the IPC bridge: it reaches every handler in the main process
 const isTidalPage = location.protocol === "https:" && tidalMainHosts.has(location.hostname);
 
+// Sent only by the preload below, from trusted events: page code sending it would fake the user's input
+const preloadOnly = new Set(["__Luna.userInput"]);
+const pageChannel = (channel: string) => {
+	if (preloadOnly.has(channel)) throw new Error(`[🛑Security🛑] Channel ${channel} is not available to the page`);
+	return channel;
+};
+
 // Allow render side to execute invoke
 if (isTidalPage)
 	expose("__ipcRenderer", {
-		invoke: ipcRenderer.invoke,
-		send: ipcRenderer.send,
+		invoke: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(pageChannel(channel), ...args),
+		send: (channel: string, ...args: unknown[]) => ipcRenderer.send(pageChannel(channel), ...args),
 		on: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onU(null, channel, (_, ...args) => listener(...args)),
 		once: (channel: string, listener: AnyFn) => ipcRendererUnloadable.onceU(null, channel, (_, ...args) => listener(...args)),
 	});
+
+// Luna's confirmation window opens only while TIDAL is in use (see native/core/confirmPage.ts confirmGate). Focus alone is
+// not reported by every Linux window manager, so a trusted click or key in TIDAL counts too: page code can't make one.
+// Leaving TIDAL ends it
+if (isTidalPage) {
+	let lastSent = -Infinity;
+	const sawUserInput = (event: Event) => {
+		if (!event.isTrusted || performance.now() - lastSent < 1000) return;
+		lastSent = performance.now();
+		ipcRenderer.send("__Luna.userInput", true);
+	};
+	for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, sawUserInput, { capture: true, passive: true });
+	window.addEventListener(
+		"blur",
+		(event) => {
+			if (!event.isTrusted || event.target !== window) return;
+			lastSent = -Infinity;
+			ipcRenderer.send("__Luna.userInput", false);
+		},
+		{ capture: true, passive: true },
+	);
+}
 
 type ConsoleMethodName = {
 	[K in keyof Console]: Console[K] extends (...args: any[]) => any ? K : never;
