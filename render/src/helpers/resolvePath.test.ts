@@ -40,13 +40,13 @@ describe("resolveAbsolutePath", () => {
 	});
 
 	/**
-	 * The result is a URL pathname, so a query string or fragment on the requested path is dropped.
-	 * TIDAL module paths never carry one, but it is worth pinning: callers only get the path back.
+	 * A query string or fragment can name the resource (a versioned plugin url, a hashed module), so resolving has to
+	 * keep it: dropping it would hand back the path of a different resource.
 	 */
-	test("drops query strings and fragments, returning only the pathname", () => {
-		expect(resolveAbsolutePath("/dir/page.js", "a.js?v=1")).toBe("/dir/a.js");
-		expect(resolveAbsolutePath("/dir/page.js", "a.js#hash")).toBe("/dir/a.js");
-		expect(resolveAbsolutePath("/dir/page.js", "/x.js?v=1")).toBe("/x.js");
+	test("keeps query strings and fragments", () => {
+		expect(resolveAbsolutePath("/dir/page.js", "a.js?v=1")).toBe("/dir/a.js?v=1");
+		expect(resolveAbsolutePath("/dir/page.js", "a.js#hash")).toBe("/dir/a.js#hash");
+		expect(resolveAbsolutePath("/dir/page.js", "/x.js?v=1")).toBe("/x.js?v=1");
 	});
 
 	test("empty inputs are handed back unchanged and reported", () => {
