@@ -1,4 +1,5 @@
 // Run: pnpm exec vitest run --project dom render/src/LunaPlugin.test.ts
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { isCoreUrl, isDevUrl } from "../../native/core/policy";
@@ -205,10 +206,17 @@ const lunaCore = {
 				hold.started();
 				await hold.promise;
 			}
+			const code = `${served.code}
+//# sourceURL=${url}.mjs`;
 			return {
-				package: { hash: "hash-1", ...served.package, ...(served.hash === undefined ? {} : { hash: served.hash }) },
-				code: `${served.code}
-//# sourceURL=${url}.mjs`,
+				// The core hashes the code it hands over
+				package: {
+					hash: "hash-1",
+					...served.package,
+					...(served.hash === undefined ? {} : { hash: served.hash }),
+					codeSha256: createHash("sha256").update(code, "utf8").digest("hex"),
+				},
+				code,
 				pending: lunaCore.pendingOf(url),
 			};
 		}),
@@ -400,6 +408,16 @@ describe("install / uninstall", () => {
 		expect(persisted?.installed).toBe(true);
 		expect(persisted?.enabled).toBe(true);
 		expect(persisted?.package?.hash).toBe("hash-1");
+	});
+
+	test("a package with nested objects persists with the sha256 of its code from Luna core", async () => {
+		const author = { name: "Someone", url: "https://example.com" };
+		const { plugin } = await createPlugin("nestedP", { installed: false, enabled: false, package: { author, dependencies: { a: "1" } } });
+		await plugin.install();
+		await settle();
+		const persisted = await LunaPlugin.pluginStorage.get<LunaPluginStorage>("nestedP");
+		expect(persisted?.package?.codeSha256).toMatch(/^[0-9a-f]{64}$/);
+		expect(persisted?.package?.author).toStrictEqual(author);
 	});
 
 	test("installing another version of a plugin uninstalls the one that was installed", async () => {

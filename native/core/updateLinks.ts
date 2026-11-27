@@ -1,95 +1,19 @@
-// Links an update confirmation shows (registry.ts acceptUpdate): each version's source and what changed between them.
-
-/** An http(s) url as given, or undefined for anything else */
-const httpUrl = (text: unknown): URL | undefined => {
-	if (typeof text !== "string") return undefined;
-	try {
-		const url = new URL(text);
-		return url.protocol === "https:" || url.protocol === "http:" ? url : undefined;
-	} catch {
-		return undefined;
-	}
-};
-
-/**
- * `https://host/owner/repo` of a url whose path starts with /owner/repo, `.git` dropped. Only two path parts: a GitLab
- * subgroup repository (`group/sub/repo`) gets no links.
- */
-const repoBase = (url: URL | undefined): string | undefined => {
-	const [owner, repo] = url?.pathname.split("/").filter(Boolean) ?? [];
-	if (url === undefined || owner === undefined || repo === undefined) return undefined;
-	return `${url.origin}/${owner}/${repo.replace(/\.git$/, "")}`;
-};
-
-/** A package.json `repository`: `{ url }`, a url, or the `github:owner/repo` and `owner/repo` shorthands */
-const declaredRepo = (repository: unknown): string | undefined => {
-	const text = typeof repository === "string" ? repository : (repository as { url?: unknown } | undefined)?.url;
-	if (typeof text !== "string") return undefined;
-	const shorthand = text.match(/^(?:github:)?([\w.-]+)\/([\w.-]+)$/);
-	if (shorthand !== null) return repoBase(httpUrl(`https://github.com/${shorthand[1]}/${shorthand[2]}`));
-	return repoBase(httpUrl(text.replace(/^git\+/, "")));
-};
-
-/**
- * A GitHub or Gitea/Forgejo release asset url: `https://host/owner/repo/releases/download/<tag>/<file>`. A tag may
- * hold `/` (`plugin/v1.2`): it is everything up to the file name.
- */
-const releaseAsset = (url: string): { repo: string; tag: string } | undefined => {
-	const parsed = httpUrl(url);
-	const match = parsed?.pathname.match(/^\/([^/]+)\/([^/]+)\/releases\/download\/(.+)\/[^/]+$/);
-	if (parsed === undefined || match === null || match === undefined) return undefined;
-	try {
-		return { repo: `${parsed.origin}/${match[1]}/${match[2]}`, tag: decodeURIComponent(match[3]) };
-	} catch {
-		// A malformed escape (%E0): no release link
-		return undefined;
-	}
-};
+// Links an update confirmation shows (registry.ts updateQuestion): each version's source and what changed between them.
+// The link building is the shared GitUrl (plugins/lib) and the update links of plugins/ui; this only finds the repository.
+import { pluginUpdateSource } from "../../plugins/ui/src/SettingsPage/PluginsTab/update/pluginUpdateSource";
+import { updateLinks as linksBetween, type UpdateLinks } from "../../plugins/ui/src/components/updateLinks";
 
 type SourceInfo = { repository?: unknown; version?: string; commit?: unknown };
 
-/**
- * The web page of the repository a plugin is built from: the repository of the release its url downloads from (where
- * the code really comes from), else the `repository` its package names
- */
-export const sourceRepo = (pkg: SourceInfo, url: string): string | undefined => releaseAsset(url)?.repo ?? declaredRepo(pkg.repository);
-
-/** The release a plugin url downloads from (GitHub, Gitea and Forgejo use the same paths) */
-export const releaseOf = (url: string): { tag: string; page: string } | undefined => {
-	const asset = releaseAsset(url);
-	return asset === undefined ? undefined : { tag: asset.tag, page: `${asset.repo}/releases/tag/${encodeURIComponent(asset.tag)}` };
-};
-
-const isCommit = (commit: unknown): commit is string => typeof commit === "string" && /^[0-9a-f]{7,40}$/i.test(commit);
-
-/** The page of a commit, when the package names the commit it was built from (`/commit/<sha>` on GitHub, Gitea and Forgejo) */
-export const commitPage = (repo: string | undefined, commit: unknown): string | undefined =>
-	repo !== undefined && isCommit(commit) ? `${repo}/commit/${commit}` : undefined;
-
-/** What changed between the commits two builds were made from (`/compare/a...b` on GitHub, Gitea and Forgejo) */
-export const comparePage = (repo: string | undefined, from: unknown, to: unknown): string | undefined =>
-	repo !== undefined && isCommit(from) && isCommit(to) && from !== to ? `${repo}/compare/${from}...${to}` : undefined;
+const side = ({ version, commit }: SourceInfo) => ({ version, commit: typeof commit === "string" ? commit : undefined });
 
 /**
- * Links for an update of the plugin at `url`. The repository is the release's, else the one the installed version
- * named, else the update's (a package's commit and repository are what its build says, not checked against the code):
- * - from / to: each version's commit, else for the update the release when its tag is that version
- * - release: the release the url downloads from when its tag is not the update's version (`latest`, `dev`: it moves on)
- * - compare: the two builds' commits
+ * Links for an update of the plugin at `url`. The repository is the release's the url downloads from (where the code
+ * really comes from), else the one the installed version named, else the update's (a package's commit and repository
+ * are what its build says, not checked against the code). The release is linked when its tag is not the update's version
+ * (`latest`, `dev`: it moves on); see updateLinks in plugins/ui.
  */
-export const updateLinks = (
-	url: string,
-	current: SourceInfo,
-	update: SourceInfo,
-): { from?: string; to?: string; compare?: string; release?: { tag: string; page: string } } => {
-	const repo = sourceRepo(current, url) ?? sourceRepo(update, url);
-	const release = releaseOf(url);
-	const isVersionTag =
-		release !== undefined && update.version !== undefined && (release.tag === update.version || release.tag === `v${update.version}`);
-	return {
-		from: commitPage(repo, current.commit),
-		to: commitPage(repo, update.commit) ?? (isVersionTag ? release.page : undefined),
-		compare: comparePage(repo, current.commit, update.commit),
-		release: isVersionTag ? undefined : release,
-	};
+export const updateLinks = (url: string, current: SourceInfo, update: SourceInfo): UpdateLinks => {
+	const { git, releaseTag } = pluginUpdateSource(url, current, update);
+	return linksBetween(side(current), side(update), git, releaseTag);
 };

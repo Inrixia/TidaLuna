@@ -3,6 +3,7 @@ export * from "./Artist";
 export * from "./AudioCache";
 export * from "./ContentBase";
 export * from "./ContextMenu";
+export * from "./GitUrl";
 export * from "./ImageOverrides";
 export * from "./MediaCollection";
 export * from "./MediaItem";

@@ -470,7 +470,7 @@ export class LunaPlugin {
 	public get url(): string {
 		return this.store.url;
 	}
-	public get package(): PluginPackage | undefined {
+	public get package(): Readonly<PluginPackage> | undefined {
 		return this.store.package;
 	}
 	public get code(): string | undefined {
