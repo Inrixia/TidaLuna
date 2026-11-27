@@ -31,9 +31,10 @@ export class ReactiveStore {
 		return (this.reactiveLoading[key] ??= this.loadReactive(key, defaultValue).finally(() => delete this.reactiveLoading[key]));
 	}
 	private readonly reactiveLoading: Record<string, Promise<any>> = {};
-	/** Stops the write listener for a key, and the write it last queued, so `delete` can't be undone by it */
-	private readonly reactiveUnsubscribes: Record<string, () => void> = {};
-	private readonly reactiveWrites: Record<string, Promise<void>> = {};
+	/** Stops the write listener for a key, so a change made before `delete` cannot queue a write after it */
+	private readonly unloads: Record<string, () => void> = {};
+	/** The write a key's listener last queued, which `delete` waits for so it lands before the delete rather than after */
+	private readonly pendingWrites: Record<string, Promise<void>> = {};
 	private async loadReactive<T extends StoreReconcileable>(key: string, defaultValue: T): Promise<T> {
 		// Create the oby reactive object
 		const reactiveObj = obyStore(defaultValue);
@@ -41,8 +42,8 @@ export class ReactiveStore {
 		obyStore.reconcile(reactiveObj, (await idbGet<T>(key, this.idbStore)) ?? defaultValue);
 
 		// Set up a listener to write to the idb store when the object changes
-		this.reactiveUnsubscribes[key] = obyStore.on(reactiveObj, () => {
-			this.reactiveWrites[key] = idbSet(key, obyStore.unwrap(reactiveObj), this.idbStore).catch(
+		this.unloads[key] = obyStore.on(reactiveObj, () => {
+			this.pendingWrites[key] = idbSet(key, obyStore.unwrap(reactiveObj), this.idbStore).catch(
 				this.trace.err.withContext(`Failed to set`, key, reactiveObj),
 			);
 		});
@@ -92,12 +93,12 @@ export class ReactiveStore {
 	 * uninstalled plugin resurrecting itself), so stop the listener, let that write finish, then delete.
 	 */
 	public async delete(key: string) {
-		this.reactiveUnsubscribes[key]?.();
-		delete this.reactiveUnsubscribes[key];
-		await this.reactiveWrites[key]?.catch(() => undefined);
-		delete this.reactiveWrites[key];
+		this.unloads[key]?.();
+		delete this.unloads[key];
+		await this.pendingWrites[key]?.catch(() => undefined);
+		delete this.pendingWrites[key];
 		delete this.reactiveCache[key];
-		await idbDel(key, this.idbStore);
+		await this.del(key);
 	}
 
 	public keys(): Promise<string[]> {
