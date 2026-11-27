@@ -43,8 +43,8 @@ const writePlugin = async (files: Record<string, string>) => {
 };
 
 /**
- * Build a plugin entry the way `build/index.ts` does: paths relative to the plugin folder, `write: false`, esm.
- * `pluginEntryPoint` is the plugin entry as `pluginBuildOptions` computes it (a path, not the native file).
+ * Build a plugin entry the way `build/index.ts` does: `write: false`, esm. `pluginEntryPoint` is the plugin entry as
+ * `pluginBuildOptions` computes it (a path under the plugin folder, not the native file), given here relative to it.
  */
 const buildPlugin = async (root: string, entry: string, pluginEntryPoint: string) => {
 	const onNativeCode = vi.fn<(fileName: string, code: string) => void>();
@@ -56,7 +56,7 @@ const buildPlugin = async (root: string, entry: string, pluginEntryPoint: string
 		format: "esm",
 		platform: "node",
 		logLevel: "silent",
-		plugins: [lunaNativePlugin(pluginEntryPoint, pkgName, onNativeCode)],
+		plugins: [lunaNativePlugin(path.join(root, pluginEntryPoint), pkgName, onNativeCode)],
 	});
 	return { text: result.outputFiles![0].text, onNativeCode };
 };
@@ -78,9 +78,8 @@ describe("lunaNativePlugin", () => {
 
 		expect(onNativeCode).toHaveBeenCalledOnce();
 		const [fileName, code] = onNativeCode.mock.calls[0];
-		// The plugin folder is outside the build cwd (it is a temp dir), so the native file is reported by its own path
-		expect(fileName.endsWith("src/mod.native.ts")).toBe(true);
-		expect(fileName).not.toContain("\\");
+		// Named after the package, with its path under the plugin entry point's folder, whatever the build cwd is
+		expect(fileName).toBe(`${pkgName}/mod.native.ts`);
 		// Main process code: cjs bundle of the native file only, minified, exports intact
 		expect(code).toContain("module.exports");
 		expect(code).toContain("addTwo");
@@ -112,9 +111,8 @@ describe("lunaNativePlugin", () => {
 		const { onNativeCode } = await buildPlugin(root, "./src/index.ts", "src/index.ts");
 
 		const [fileName] = onNativeCode.mock.calls[0];
-		// The name may keep a cwd-relative prefix from the unanchored replace in the plugin (fixed separately), so assert
-		// the part that matters: it is named after the package
-		expect(fileName).toContain(pkgName);
+		// Named after the package, with the path under the entry point's folder
+		expect(fileName).toBe(`${pkgName}/mod.native.ts`);
 	});
 
 	test("a plugin entry that is itself native is registered under the package name", async () => {
@@ -124,8 +122,8 @@ describe("lunaNativePlugin", () => {
 		const { text, onNativeCode } = await buildPlugin(root, "./src/index.native.ts", "src/index.native.ts");
 
 		const [fileName] = onNativeCode.mock.calls[0];
-		expect(fileName).toContain(pkgName);
-		// Whatever it ends up called, that is the name it registers under
+		expect(fileName).toBe(pkgName);
+		// That is the name it registers under
 		expect(text).toContain(`__Luna.registerNative", ${JSON.stringify(fileName)}`);
 		expect(text).toContain('__ipcRenderer.invoke(channel, "ping", ...args)');
 		expect(text).toContain('__ipcRenderer.invoke(channel, "echo", ...args)');

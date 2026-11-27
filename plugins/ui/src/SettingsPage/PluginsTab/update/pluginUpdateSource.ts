@@ -1,4 +1,5 @@
-import { GitUrl } from "@luna/lib";
+// Relative, not `@luna/lib`: Luna core (native/core/updateLinks.ts) runs this in the main process, where that alias does not resolve
+import { GitUrl } from "../../../../../lib/src/classes/GitUrl";
 
 /**
  * The repository to link an update against, and the release its code downloads from.

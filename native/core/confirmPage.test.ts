@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	actionToRun,
 	ANSWER_IN_USE_MS,
 	buildConfirmHtml,
 	CANCEL_GAP_MS,
 	confirmGate,
+	confirmLinks,
 	confirmRequest,
 	COOL_DOWN_MS,
+	httpLink,
 	MAX_CANCELS,
 	MAX_PENDING,
+	shownWarning,
 	type TidalState,
 } from "./confirmPage";
 
@@ -149,5 +153,69 @@ describe("core confirmation page", () => {
 		expect(() => confirmRequest("", [], "Go")).toThrow();
 		expect(() => confirmRequest("T", new Array(13).fill("a"), "Go")).toThrow();
 		expect(confirmRequest("x".repeat(700), [], "Go").title.length).toBe(601);
+	});
+
+	it("takes http(s) links only, and a warning only with an action to run", () => {
+		const link = { text: "v2", href: "https://example.com/owner/repo/commit/abc1234" };
+		expect(confirmRequest("T", [["a ", link]], "Go").lines).toStrictEqual([["a ", link]]);
+		expect(() => confirmRequest("T", [[{ text: "x", href: "javascript:alert(1)" }]], "Go")).toThrow();
+		expect(() => confirmRequest("T", [[{ text: "x", href: "file:///C:/x" }]], "Go")).toThrow();
+		expect(() => confirmRequest("T", [[{ text: "x" }]], "Go")).toThrow();
+		expect(() => confirmRequest("T", [[1]], "Go")).toThrow();
+		const run = () => {};
+		expect(shownWarning(confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d", run }))?.run).toBe(run);
+		expect(() => confirmRequest("T", [], "Go", { text: "w", action: "Ask again", done: "d" })).toThrow();
+		expect(() => confirmRequest("T", [], "Go", { text: 1, action: "Ask again", done: "d", run })).toThrow();
+	});
+
+	it("numbers its links in the order main opens them, and escapes them", () => {
+		const request = confirmRequest(
+			"T",
+			["plain", ["a ", { text: "<b>one</b>", href: "https://a.example/1?x=1&y=2" }], [{ text: "two", href: "http://b.example" }]],
+			"Go",
+		);
+		// Normalized: b.example's path gets its slash
+		expect(confirmLinks(request)).toStrictEqual(["https://a.example/1?x=1&y=2", "http://b.example/"]);
+		const html = buildConfirmHtml({ ...request, warning: shownWarning(request) });
+		expect(html).toMatch(/<a href="#" data-link="0" title="https:\/\/a\.example\/1\?x=1&amp;y=2">&lt;b&gt;one&lt;\/b&gt;<\/a>/);
+		expect(html).toMatch(/<a href="#" data-link="1" title="http:\/\/b\.example\/">two<\/a>/);
+		expect(html.includes("<b>one</b>")).toBe(false);
+	});
+
+	it("shows a warning with its own button only when there is one", () => {
+		const warning = { text: "<i>Allowed</i>", action: "Ask again", done: "Asks again", run: () => {} };
+		const html = buildConfirmHtml({ title: "T", lines: [], confirmText: "Go", warning });
+		expect(html).toMatch(/<span id="warning-text">&lt;i&gt;Allowed&lt;\/i&gt;<\/span><button id="warning-action">Ask again<\/button>/);
+		expect(buildConfirmHtml({ title: "T", lines: [], confirmText: "Go" }).includes('id="warning-text"')).toBe(false);
+	});
+
+	it("takes a warning given as a function when the window shows, and checks it then", () => {
+		let state: string | undefined;
+		const request = confirmRequest("T", [], "Go", () =>
+			state === undefined ? undefined : { text: state, action: "A", done: "D", run: () => {} },
+		);
+		expect(shownWarning(request)).toBe(undefined);
+		state = "now";
+		expect(shownWarning(request)?.text).toBe("now");
+		const bad = confirmRequest("T", [], "Go", () => ({ text: "w", action: "A", done: "D" }));
+		expect(() => shownWarning(bad)).toThrow();
+	});
+
+	it("runs the warning's action only if the user chose it and then confirmed", () => {
+		const warning = { text: "w", action: "A", done: "D", run: () => {} };
+		expect(actionToRun(true, true, warning)).toBe(warning.run);
+		expect(actionToRun(true, false, warning)).toBe(undefined);
+		// Cancel, Escape, closed or never shown
+		expect(actionToRun(false, true, warning)).toBe(undefined);
+		expect(actionToRun(undefined, true, warning)).toBe(undefined);
+		expect(actionToRun(true, true, undefined)).toBe(undefined);
+	});
+
+	it("opens normalized http(s) links only", () => {
+		expect(httpLink("https://example.com/a b")).toBe("https://example.com/a%20b");
+		expect(httpLink("https:example.com")).toBe("https://example.com/");
+		expect(httpLink("javascript:alert(1)")).toBe(undefined);
+		expect(httpLink(" file:///C:/x")).toBe(undefined);
+		expect(httpLink(1)).toBe(undefined);
 	});
 });

@@ -22,6 +22,11 @@ export type NativeRecord = {
 	hashes: string[];
 	/** Modules the source named when it was answered. Shown in settings, they limit nothing */
 	modules: string[];
+	/**
+	 * Set for a native file of a plugin world (see native/worlds.ts): the hashes of its code alone, which page code may
+	 * never register (see worldNatives.ts)
+	 */
+	nativeHashes?: string[];
 };
 
 type PermissionStore = {

@@ -24,9 +24,14 @@ import type { MetaTags } from "./MediaItem.tags";
  * media) are the ones the download path has to survive.
  */
 
+/** `luna.assertDownloadPath` (native/downloadFolders.ts): only where the user picked. Allows everything unless a case says not */
+const assertDownloadPath = vi.hoisted(() => vi.fn());
+
 let dir: string;
 
 beforeEach(async () => {
+	assertDownloadPath.mockReset();
+	vi.stubGlobal("luna", { assertDownloadPath });
 	dir = await mkdtemp(join(tmpdir(), "luna-finalize-"));
 });
 afterEach(async () => {
@@ -221,6 +226,19 @@ const metaTags = (overrides: Partial<MetaTags["tags"]> = {}, cover = true): Meta
 });
 
 describe("finalizeDashDownload", () => {
+	test("leaves a file alone that is not in a folder the user picked", async () => {
+		const path = join(dir, "outside.mp4");
+		await writeFile(path, "raw fragments");
+		assertDownloadPath.mockImplementationOnce(() => {
+			throw new Error("not a download folder");
+		});
+
+		await expect(finalizeDashDownload(path, metaTags(), "asked-for.mp4")).rejects.toThrow("not a download folder");
+
+		expect(assertDownloadPath).toHaveBeenCalledWith(path, "asked-for.mp4");
+		expect(await readFile(path, "utf8")).toBe("raw fragments");
+	});
+
 	test("a fragmented DASH download becomes a progressive MP4 with the tags in it", async () => {
 		const path = join(dir, "track.m4a");
 		await writeFile(path, await cmafAac());

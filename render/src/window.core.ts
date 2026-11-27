@@ -47,4 +47,26 @@ declare global {
 		//** Dont use this! Use @luna/lib ipcRenderer */
 		once: (channel: string, listener: AnyFn) => LunaUnload;
 	};
+	// Requests to Luna core, answered in the main process (see native/core/coreWorld.ts). Use LunaPlugin instead
+	const __LunaCore: {
+		list(): Promise<import("../../native/core/registry").CorePluginInfo[]>;
+		info(url: string): Promise<import("../../native/core/registry").CorePluginInfo | undefined>;
+		needsMigration(): Promise<boolean>;
+		migrate(entries: { url: string; name?: string; enabled: boolean }[]): Promise<void>;
+		load(url: string): Promise<{
+			package: import("./LunaPlugin").PluginPackage;
+			code: string;
+			pending?: import("../../native/core/registry").PendingUpdate;
+		}>;
+		install(url: string): Promise<boolean>;
+		enable(url: string): Promise<boolean>;
+		disable(url: string): Promise<void>;
+		uninstall(url: string): Promise<void>;
+		/** A store moved: the plugin's record goes to its new url, other code there waits as an update */
+		moveUrl(from: string, to: string): Promise<boolean>;
+		acceptUpdate(url: string): Promise<boolean>;
+		/** Runs the plugin's isolated world (see native/worlds.ts). Throws without contextIsolation (tidal-hifi) */
+		loadWorld(url: string): Promise<void>;
+		unloadWorld(url: string): Promise<void>;
+	};
 }

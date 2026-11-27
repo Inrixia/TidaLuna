@@ -76,7 +76,10 @@ export const LunaSettingsTransfer = React.memo(() =>
 			setBusy(true);
 
 			//stores
-			await SettingsTransfer.restore(data);
+			// Luna core asks before installing each plugin
+			const notInstalled = await SettingsTransfer.restore(data);
+			if (notInstalled.length !== 0)
+				Messager.Warn(`Not installed: ${notInstalled.join(", ")}`);
 
 			//feature flags
 			if (data.featureFlags != null)

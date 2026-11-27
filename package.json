@@ -31,7 +31,8 @@
     "coverage:ci": "vitest run --coverage --reporter=default --reporter=json --outputFile.json=coverage/test-results.json",
     "coverage:comment": "tsx test/coverageComment.ts",
     "coverage:thresholds": "tsx test/raiseCoverageThresholds.ts",
-    "coverage:badge": "tsx test/coverageBadge.ts"
+    "coverage:badge": "tsx test/coverageBadge.ts",
+    "legacy-serial": "node scripts/legacyMinSerial.mjs"
   },
   "license": "MS-Pl",
   "devDependencies": {
