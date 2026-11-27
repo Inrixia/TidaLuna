@@ -54,6 +54,10 @@ Two projects, because the code runs in two places:
 
 The floors live in [test/coverageThresholds.ts](../test/coverageThresholds.ts), and they only go up. `pnpm run coverage:thresholds` lifts them to just under the current measurement; CI runs it on every push to `master`/`dev` and commits the result, so a PR that adds tests doesn't have to touch the file and the number can't go stale.
 
+### PR comment
+
+Every PR gets a coverage comment ([test/coverageReport.ts](../test/coverageReport.ts), posted by `.github/workflows/coverage-comment.yml`) with totals, a per-area table and, against the base branch, what changed: `+0.4%` for a gain, `-0.2% 🔻` for a drop, and a list of the files whose coverage moved, drops first. Push runs on `master`/`dev` keep their `coverage-summary.json` as an artifact for 90 days; a PR run compares with the newest one whose commit is the PR's base commit or an ancestor of it. It always compares with the base, never with an earlier run of the same PR, so a commit that wins a little back can't hide an earlier drop. With no such run (or an expired artifact) the comment says so and shows the numbers alone.
+
 ## Badges
 
 The badges at the top of the README are [shields.io endpoint](https://shields.io/badges/endpoint-badge) badges. They read JSON committed under `.github/badges/`, because shields fetches it over raw.githubusercontent.com — so the values are as fresh as the last commit to `master`/`dev`.
