@@ -241,17 +241,13 @@ export class LunaPlugin {
 	/**
 	 * Dump all plugin storage entries
 	 */
-	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>>
-	{
+	public static async dumpStorage(stripCode: boolean = true): Promise<Record<string, unknown>> {
 		const data = await this.pluginStorage.dump();
-		if (!stripCode) 
-			return data;
+		if (!stripCode) return data;
 
 		const stripped = structuredClone(data);
-		for (const value of Object.values(stripped))
-		{
-			if (value && typeof value === "object")
-				delete (value as any).package?.code;
+		for (const value of Object.values(stripped)) {
+			if (value && typeof value === "object") delete (value as any).package?.code;
 		}
 
 		return stripped;
@@ -554,7 +550,9 @@ export class LunaPlugin {
 		delete LunaPlugin.plugins[this.url];
 		await LunaPlugin.pluginStorage.del(this.name);
 		// A reinstall asks for native permissions again
-		await __ipcRenderer.invoke("__Luna.nativePermissions.forget", this.url).catch(this.trace.err.withContext("Failed to forget native permissions"));
+		await __ipcRenderer
+			.invoke("__Luna.nativePermissions.forget", this.url)
+			.catch(this.trace.err.withContext("Failed to forget native permissions"));
 		this.loading._ = false;
 		coreTrace.msg.log(`Uninstalled plugin ${this.name}${this.isDev ? " [DEV]" : ""}`);
 	}
@@ -651,7 +649,9 @@ export class LunaPlugin {
 			const code = codeToImport(this.code, this.url);
 			// Keep the hash of exactly what runs beside the code (the json `hash` only says the code changed)
 			const sha256 = await sha256Hex(code);
-			if (this.package!.codeSha256 !== sha256) this.package = { ...this.package!, codeSha256: sha256 };
+			// In place: a spread copy would carry the store's nested proxies (author, dependencies), which IndexedDB can't clone
+			const pkg = this.store.package!;
+			if (pkg.codeSha256 !== sha256) pkg.codeSha256 = sha256;
 			const blobURL = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
 			try {
 				this.exports = await import(blobURL);
