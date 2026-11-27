@@ -718,7 +718,7 @@ describe("ipc handlers", () => {
 		expect(base.plugin.exports).toBeUndefined();
 		expect(dependant.plugin.exports).toBeUndefined();
 		// `window.close` doesn't await each unload, but each plugin is only unloaded once: the dependant is reached through
-		// its dependency, and the loop skips it because its exports are already gone
+		// its dependency first, and the loop's call joins the unload already in flight instead of running it again
 		expect(log).toEqual([
 			"load:ipcA",
 			"load:ipcB",

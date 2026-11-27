@@ -1,5 +1,5 @@
 // Ensure that @triton/lib is loaded onto window for plugins to use shared memory space
-import { Semaphore, Signal } from "@inrixia/helpers";
+import { asyncDebounce, Semaphore, Signal } from "@inrixia/helpers";
 import { unloadSet, type LunaUnloads } from "./helpers/unloadSet";
 import { ReactiveStore } from "./ReactiveStore";
 import { store as obyStore } from "oby";
@@ -406,14 +406,12 @@ export class LunaPlugin {
 	/**
 	 * Are you sure you didnt mean disable() or reload()?
 	 * This will unload the plugin without disabling it!
+	 *
+	 * `window.close` unloads every plugin, while unload() also takes a plugin's dependants down, so the same plugin can be
+	 * reached twice before the first unload has finished. Its unload functions aren't required to be idempotent, so a second
+	 * call joins the unload already in flight instead of running them again.
 	 */
-	/** True while an unload is in flight, so a plugin reached twice runs its unload functions once */
-	private unloading = false;
-	private async unload(): Promise<void> {
-		// `window.close` unloads every plugin, while unload() also takes a plugin's dependants down, so the same plugin can
-		// be reached twice. Its unload functions aren't required to be idempotent, so only run them once.
-		if (this.unloading) return;
-		this.unloading = true;
+	private unload = asyncDebounce(async (): Promise<void> => {
 		const wasLoaded = this.exports !== undefined;
 		try {
 			this.loading._ = true;
@@ -425,12 +423,11 @@ export class LunaPlugin {
 			await unloadSet(this.exports?.unloads);
 		} finally {
 			this.exports = undefined;
-			this.unloading = false;
 			this.loading._ = false;
 			delete modules[this.name];
 			if (wasLoaded) this.trace.log("Unloaded");
 		}
-	}
+	});
 	/**
 	 * Load the plugin if it is enabled
 	 */
