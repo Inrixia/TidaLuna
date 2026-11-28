@@ -7,7 +7,6 @@ import { getPlaybackInfo, getVideoPlaybackInfo, listenerError, parseDate, type P
 import { brainzJson } from "../../helpers/brainzJson";
 import { libTrace, unloads } from "../../index.safe";
 import * as redux from "../../redux";
-import { InterceptTimeoutError } from "../../redux";
 import { Album } from "../Album";
 import { Artist } from "../Artist";
 import { ContentBase, type TCoverOpts } from "../ContentBase";
@@ -36,12 +35,6 @@ export class MediaItem extends ContentBase {
 	public static readonly availableTags = availableTags;
 
 	private static cache = ReactiveStore.getStore("@luna/MediaItemCache");
-
-	/**
-	 * Items whose last load timed out. A timeout says nothing about whether the item exists, so an answer built from one
-	 * must not be kept: `fromIsrc` is memoized and would otherwise remember "no track" for the rest of the session.
-	 */
-	private static readonly timedOutIds = new Set<redux.ItemId>();
 
 	private static _supportsSpatialAudio: boolean | undefined;
 	public static get supportsSpatialAudio(): boolean | undefined {
@@ -77,23 +70,9 @@ export class MediaItem extends ContentBase {
 			// Prefetch mediaItemCache while constructing
 			const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
 			const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
-				if (mediaItem === undefined) {
-					try {
-						mediaItem = await this.fetchMediaItem(itemId, contentType);
-					} catch (err) {
-						// Missing is still what the caller is told, as before: the load failed, and every caller of fromId
-						// already reads that as "no item". A timeout marks the id, because it says nothing about whether the
-						// item exists and whatever would remember this answer must not
-						if (err instanceof InterceptTimeoutError) {
-							MediaItem.timedOutIds.add(itemId);
-							MediaItem.trace.warn(`Timed out loading media item ${itemId}`);
-						}
-						return;
-					}
-				}
-				// A definitive answer clears the mark: only the timeout path above sets it
-				MediaItem.timedOutIds.delete(itemId);
-				// TIDAL answered with its FAIL action: the item is gone, so nothing is remembered either way
+				// A load that fails throws out of here, a timeout and TIDAL's FAIL action alike: whether that is worth a retry
+				// is the caller's business, and a return value cannot say it
+				mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
 				if (mediaItem === undefined) return;
 				const cache = await mediaItemCache;
 				// Prefer the type Tidal stored the item with, callers often default to "track" for videos
@@ -104,13 +83,18 @@ export class MediaItem extends ContentBase {
 			return item;
 		},
 	);
+	/** Tracks already found by isrc. Only a found track is kept: a failed lookup says nothing about whether the track exists */
+	private static readonly isrcCache = new Map<string, MediaItem>();
+
 	/**
-	 * One isrc lookup, memoized, reporting whether a track it needed timed out. Reported rather than acted on because the
-	 * memo can only be cleared from outside it: `fromIsrc` below does that once the answer is known.
+	 * A track lookup by isrc. A load that fails throws out of here and nothing is remembered, so the next call asks TIDAL
+	 * again. `memoize` would remember nothing on failure either, but it rethrows through a promise nobody holds, which is an
+	 * unhandled rejection on every failed call (Inrixia/helpers.ts#7), so the cache is kept here instead.
 	 */
-	private static readonly lookupIsrc = memoize(async (isrc: string) => {
+	public static async fromIsrc(isrc: string): Promise<MediaItem | undefined> {
+		const found = MediaItem.isrcCache.get(isrc);
+		if (found !== undefined) return found;
 		let bestMediaItem: MediaItem | undefined = undefined;
-		let timedOut = false;
 		for await (const track of TidalApi.isrc(isrc)) {
 			// If quality is higher than current best, set as best
 			const maxTrackQuality = Quality.max(...Quality.fromMetaTags((track.attributes?.mediaTags ?? []) as redux.MediaMetadataTag[]));
@@ -118,20 +102,12 @@ export class MediaItem extends ContentBase {
 			// Lowest is not above "no item yet", so it would never be picked even when it is the only result
 			if (bestMediaItem === undefined || maxTrackQuality > bestMediaItem.bestQuality) {
 				bestMediaItem = (await MediaItem.fromId(track.id)) ?? bestMediaItem;
-				// Reading the mark consumes it: it describes the load that just happened, so it cannot reach a later one
-				if (MediaItem.timedOutIds.delete(track.id)) timedOut = true;
 				if ((bestMediaItem?.bestQuality ?? Quality.Lowest) >= Quality.Max) break;
 			}
 		}
-		return { bestMediaItem, timedOut };
-	});
-	public static fromIsrc = async (isrc: string): Promise<MediaItem | undefined> => {
-		const { bestMediaItem, timedOut } = await MediaItem.lookupIsrc(isrc);
-		// A lookup that timed out is not this isrc's answer, so it is not kept: the next call asks TIDAL again rather than
-		// serving "no track", or a worse track, for the rest of the session
-		if (timedOut) MediaItem.lookupIsrc.clear(isrc);
+		if (bestMediaItem !== undefined) MediaItem.isrcCache.set(isrc, bestMediaItem);
 		return bestMediaItem;
-	};
+	}
 	public static async fromPlaybackContext(playbackContext?: redux.PlaybackContext) {
 		// This has to be here to avoid ciclic requirements breaking
 		playbackContext ??= PlayState.playbackContext;
@@ -168,7 +144,8 @@ export class MediaItem extends ContentBase {
 	public static onPreload: AddReceiver<MediaItem> = registerEmitter((emit) =>
 		redux.intercept("player/PRELOAD_ITEM", unloads, async (item) => {
 			if (item?.productId === undefined) return MediaItem.trace.warn("player/PRELOAD_ITEM intercepted without productId!", item);
-			const mediaItem = await this.fromId(item.productId, item.productType);
+			// A load that failed throws: preloading is best effort, so it is logged and skipped rather than left to reject
+			const mediaItem = await this.fromId(item.productId, item.productType).catch(MediaItem.trace.err.withContext("onPreload", item.productId));
 			if (mediaItem === undefined) return;
 			emit(mediaItem, listenerError("MediaItem.onPreload", mediaItem.trace.err.withContext("preloadItem.runListeners")));
 		}),
@@ -179,7 +156,10 @@ export class MediaItem extends ContentBase {
 			"playbackControls/MEDIA_PRODUCT_TRANSITION",
 			unloads,
 			asyncDebounce(async ({ playbackContext }: redux.InterceptPayload<"playbackControls/MEDIA_PRODUCT_TRANSITION">) => {
-				const mediaItem = await this.fromPlaybackContext(playbackContext);
+				// A load that failed throws: the transition is reported to listeners when it can be, and logged when it cannot
+				const mediaItem = await this.fromPlaybackContext(playbackContext).catch(
+					MediaItem.trace.err.withContext("onMediaTransition", playbackContext.actualProductId),
+				);
 				if (mediaItem === undefined) return;
 
 				// Detect spatial audio support based on actual playback
@@ -201,7 +181,8 @@ export class MediaItem extends ContentBase {
 			unloads,
 			asyncDebounce(
 				async ({ mediaProduct: { productId, productType } }: redux.InterceptPayload<"playbackControls/PREFILL_MEDIA_PRODUCT_TRANSITION">) => {
-					const mediaItem = await this.fromId(productId, productType);
+					// A load that failed throws: prefilling is best effort, so it is logged and skipped
+					const mediaItem = await this.fromId(productId, productType).catch(MediaItem.trace.err.withContext("onPreMediaTransition", productId));
 					if (mediaItem === undefined) return;
 					await emit(mediaItem, listenerError("MediaItem.onPreMediaTransition", mediaItem.trace.err.withContext("prefillMPT.runListeners")));
 				},
