@@ -6,7 +6,7 @@ import { verifyLunaZip } from "./releaseGate";
 import { resolveRelease, type Resolution } from "./releaseResolver";
 import { findTidalInstalls, injectLuna, injectionState, type TidalRoot } from "./tidalInstall";
 import { planUpdate, type Observation, type UpdatePlan } from "./updatePlan";
-import { extractZipEntries } from "./zipEntries";
+import { extractZipEntries } from "./core/extractZip";
 
 import type { ReleaseInfo } from "./releaseGate";
 

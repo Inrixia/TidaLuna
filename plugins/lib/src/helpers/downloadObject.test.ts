@@ -46,14 +46,23 @@ describe("downloadObject", () => {
 		expect(clicked[0].href).toBe(url);
 	});
 
-	test("revokes the object URL straight after clicking", () => {
-		const { events, revokeObjectURL, url } = stubObjectUrls();
+	test("revokes the object URL after the click, not during it", () => {
+		vi.useFakeTimers();
+		try {
+			const { events, revokeObjectURL, url } = stubObjectUrls();
 
-		downloadObject("<h1>Luna</h1>", "luna.html", "text/html");
+			downloadObject("<h1>Luna</h1>", "luna.html", "text/html");
 
-		// The revoke is synchronous: some browsers abort a download whose object URL is revoked before it starts
-		expect(events).toEqual(["create", "click", "revoke"]);
-		expect(revokeObjectURL).toHaveBeenCalledWith(url);
+			// Still alive when the click is handled: revoking here can abort the download in Chromium
+			expect(events).toEqual(["create", "click"]);
+			expect(revokeObjectURL).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(40_000);
+
+			expect(revokeObjectURL).toHaveBeenCalledWith(url);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	test("clicks an anchor that is not in the document", () => {

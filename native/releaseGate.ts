@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import path from "path";
 import JSZip from "jszip";
 
-import { validateZipEntries } from "./zipEntries";
+import { validateZipEntries } from "./core/validateZipEntries";
 
 /**
  * What Luna may install unattended.

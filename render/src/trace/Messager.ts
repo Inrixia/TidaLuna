@@ -3,6 +3,8 @@ import { sanitizeData } from "./sanitizeData";
 
 export class Messager {
 	private static async dispatch(action: any) {
+		// TIDAL hasn't built this action yet: nothing to show (dispatching undefined would reject)
+		if (action === undefined) return;
 		// Disgusting hack to avoid cyclic dependencies on init
 		// TODO: Remove this monstrosity
 		return (await import("../modules")).reduxStore.dispatch(action);
@@ -11,7 +13,7 @@ export class Messager {
 		Messager.dispatch(buildActions["message/MESSAGE_INFO"]?.({ message: sanitizeData(...data), category: "OTHER", severity: "INFO" }));
 	}
 	public static Warn(...data: any[]) {
-		Messager.dispatch(buildActions["message/MESSAGE_WARN"]?.({ message: sanitizeData(...data), category: "OTHER", severity: "MESSAGE_WARN" }));
+		Messager.dispatch(buildActions["message/MESSAGE_WARN"]?.({ message: sanitizeData(...data), category: "OTHER", severity: "WARN" }));
 	}
 	public static Error(...data: any[]) {
 		Messager.dispatch(buildActions["message/MESSAGE_ERROR"]?.({ message: sanitizeData(...data), category: "OTHER", severity: "ERROR" }));

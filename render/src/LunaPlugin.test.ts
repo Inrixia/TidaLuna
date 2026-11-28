@@ -317,6 +317,16 @@ describe("install / uninstall", () => {
 		expect(persisted?.package?.hash).toBe("hash-1");
 	});
 
+	test("a package with nested objects persists with the sha256 of its code", async () => {
+		const author = { name: "Someone", url: "https://example.com" };
+		const { plugin } = await createPlugin("nestedP", { installed: false, enabled: false, package: { author, dependencies: { a: "1" } } });
+		await plugin.install();
+		await settle();
+		const persisted = await LunaPlugin.pluginStorage.get<LunaPluginStorage>("nestedP");
+		expect(persisted?.package?.codeSha256).toMatch(/^[0-9a-f]{64}$/);
+		expect(persisted?.package?.author).toStrictEqual(author);
+	});
+
 	test("installing another version of a plugin uninstalls the one that was installed", async () => {
 		const switchedFrom = await createPlugin("switch");
 		const switchedTo = await createPlugin("switch", { installed: false, enabled: false });
@@ -350,11 +360,10 @@ describe("install / uninstall", () => {
 		expect(forgetNativePermissions).toHaveBeenCalledWith(plugin.url);
 
 		await settle();
-		// `uninstall` deletes the entry, but ReactiveStore writes changes on a later microtask, so the write that
-		// follows its delete puts a copy of the plugin back with installed:false. Reported as a bug; what must hold is
-		// that it is no longer installed.
-		const lingering = await LunaPlugin.pluginStorage.get<LunaPluginStorage>("unA");
-		expect(lingering?.installed ?? false).toBe(false);
+		// The write that follows setting installed = false must not land after the delete: the entry is gone, not a
+		// lingering copy of the plugin that would come back on the next start
+		expect(await LunaPlugin.pluginStorage.get<LunaPluginStorage>("unA")).toBeUndefined();
+		expect(await LunaPlugin.pluginStorage.keys()).not.toContain("unA");
 	});
 });
 
@@ -437,9 +446,17 @@ describe("enable / disable / reload", () => {
 		serve(url, "reload", { hash: "hash-2", code: pluginCode("reload", `globalThis.__lunaTest.log.push("v2");`) });
 		await plugin.reload();
 
+		// New code for an installed plugin waits for the user, the stored version keeps running (see acceptUpdate)
+		expect(plugin.package?.hash).toBe("hash-1");
+		expect(plugin.pendingUpdate._?.hash).toBe("hash-2");
+		// The reload ran the stored code again (the same module, so it logs no second load), nothing of v2
+		expect(log).toEqual(["load:reload", "unload:reload", "onUnload:reload"]);
+		log.length = 0;
+		await plugin.acceptUpdate();
+
 		expect(plugin.package?.hash).toBe("hash-2");
 		expect(plugin.code).toContain("v2");
-		expect(log).toEqual(["load:reload", "unload:reload", "onUnload:reload", "load:reload", "v2"]);
+		expect(log).toEqual(["onUnload:reload", "load:reload", "v2"]);
 		expect(server.codeRequests(url)).toBe(2);
 		expect(plugin.exports).toBeDefined();
 	});
@@ -673,7 +690,8 @@ describe("core plugins", () => {
 	});
 
 	test("reloadAll reports a plugin that failed and the dependants it took down", async () => {
-		const failing = await createPlugin("failA");
+		// A dev url, the only kind whose new code loads without waiting for the user
+		const failing = await createPlugin("failA", { url: `http://127.0.0.1:1/${++seq}/failA` });
 		const dependant = await createPlugin("failB");
 		failing.plugin.addDependant(dependant.plugin);
 
@@ -717,14 +735,11 @@ describe("ipc handlers", () => {
 		await settle();
 		expect(base.plugin.exports).toBeUndefined();
 		expect(dependant.plugin.exports).toBeUndefined();
-		// `window.close` doesn't await each unload, so the dependant is unloaded twice: once by the dependency it is
-		// reached through, and once by the loop itself before the first unload cleared its unloads. Real behaviour,
-		// reported as a bug (unload functions are expected to be idempotent).
+		// `window.close` doesn't await each unload, but each plugin is only unloaded once: the dependant is reached through
+		// its dependency first, and the loop's call joins the unload already in flight instead of running it again
 		expect(log).toEqual([
 			"load:ipcA",
 			"load:ipcB",
-			"unload:ipcB",
-			"onUnload:ipcB",
 			"unload:ipcB",
 			"onUnload:ipcB",
 			"unload:ipcA",

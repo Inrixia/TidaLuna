@@ -6,6 +6,7 @@ import Link, { type LinkProps } from "@mui/material/Link";
 export interface LunaLinkProps extends LinkProps {}
 export const LunaLink = React.memo((props: LunaLinkProps) => {
 	const href = props.href ?? (typeof props.children === "string" ? props.children : undefined);
+	if (!href?.startsWith("http")) return <>{props.children}</>;
 	return (
 		<Tooltip
 			title={href}
@@ -15,7 +16,7 @@ export const LunaLink = React.memo((props: LunaLinkProps) => {
 					sx={{
 						textDecoration: "none !important",
 					}}
-					href={href?.startsWith("http") ? href : ""}
+					href={href}
 					target={"_blank"}
 				/>
 			}

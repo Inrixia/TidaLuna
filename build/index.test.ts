@@ -23,12 +23,15 @@ let dir: string;
 let log: MockInstance;
 
 beforeEach(async () => {
+	// A CI run sets these and the build writes them into the json (buildSource.ts): pin them so the result doesn't depend on where the tests run
+	for (const name of ["GITHUB_SHA", "GITHUB_EVENT_NAME", "GITHUB_SERVER_URL", "GITHUB_REPOSITORY"]) vi.stubEnv(name, "");
 	dir = await mkdtemp(path.join(os.tmpdir(), "luna-build-"));
 	// The plugins log a line per output file, which tests do not need in the output
 	log = vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
 afterEach(async () => {
+	vi.unstubAllEnvs();
 	log.mockRestore();
 	await rm(dir, { recursive: true, force: true });
 });

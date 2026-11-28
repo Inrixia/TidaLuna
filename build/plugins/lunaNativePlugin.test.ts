@@ -184,15 +184,14 @@ describe("lunaNativePlugin", () => {
 		expect(result.outputFiles![0].text).toContain("__Luna.registerNative");
 	});
 
-	// Known bug (reported in the task notes, not fixed here as build source is off limits): the stub template writes
-	// `export default = (...args) => ...` for a default export, which is invalid JS, so building a native module that
-	// has a default export fails. This test flips to passing once that template is fixed.
-	test.fails("a native module with a default export gets a default stub", async () => {
+	test("a native module with a default export gets a default stub", async () => {
 		const root = await writePlugin({
 			"src/mod.native.ts": 'export default function hello() {\n\treturn "hi";\n}\nexport const other = 1;\n',
 			"src/index.ts": 'import hello from "./mod.native";\nexport { hello };\n',
 		});
 		const { text } = await buildPlugin(root, "./src/index.ts", "src/index.ts");
-		expect(text).toContain("export default");
+		// The default stub calls the "default" channel. This used to fail the whole build: the template emitted
+		// `export default = (...args) => ...`, which esbuild rejects as a syntax error
+		expect(text).toContain('__ipcRenderer.invoke(channel, "default", ...args)');
 	});
 });

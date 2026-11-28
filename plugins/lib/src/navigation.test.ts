@@ -53,6 +53,11 @@ const emitIpc = (channel: string, ...args: unknown[]) => {
 
 vi.useFakeTimers();
 
+// Preloading pages waits for an idle callback between chunks; happy-dom has no requestIdleCallback, and the preload
+// loop calls it unguarded, so it is stubbed to a timer the tests can advance
+(<{ requestIdleCallback: (callback: () => void) => ReturnType<typeof setTimeout> }>(<unknown>globalThis)).requestIdleCallback = (callback) =>
+	setTimeout(callback, 0);
+
 const { interceptors, Messager, requestCache, tidalModules } = await import("@luna/core");
 
 /** TIDAL's minified React Router `matchPath`: the helper recognises it by its source, which is faked here (see router.test.ts) */
@@ -85,10 +90,20 @@ const { unloads } = await import("./index.safe");
 // #region Router fixture
 const navigate = vi.fn(async () => {});
 const revalidate = vi.fn(async () => {});
+/** A page whose code the idle preloader loads, and one it must leave alone */
+const lazyPage = vi.fn(async () => ({ loader: vi.fn() }));
+const excludedLazy = vi.fn(async () => ({ loader: vi.fn() }));
 /** The listener `navigation.ts` learns the queries of each page path with, captured when it subscribes to the router */
 let onLocationChange: ((state: DataRouter["state"]) => void) | undefined;
 const router: DataRouter = {
-	routes: [],
+	// What the idle preloader walks: a parent whose children are visited through it, a page with no lazy code, a page
+	// that must not be imported (payment and sign in pages can pull third party scripts) and a normal lazy page
+	routes: [
+		{ id: "root", path: "/", children: [{ id: "child", path: "child" }] },
+		{ id: "plain", path: "/plain" },
+		{ id: "checkout", path: "/checkout", lazy: excludedLazy },
+		{ id: "album", path: "/album/:albumId", lazy: lazyPage },
+	],
 	branches: [],
 	state: { location: { pathname: "/", search: "" }, navigation: { state: "idle" } },
 	navigate,
@@ -206,21 +221,52 @@ describe("the request cache", () => {
 	});
 });
 
-describe("revalidating the page that is open", () => {
+describe("preloading pages while idle", () => {
+	test("loads the lazy pages and leaves the ones it must not import alone", async () => {
+		// preloadPages() runs at import, before TIDAL's router exists, so it retries on a one second timer. This advances
+		// to that retry, which walks the router fixture's routes: the route with children is visited through them, a page
+		// without lazy code is skipped, and a page matching the exclusion regex is never imported
+		await vi.advanceTimersByTimeAsync(1_000);
+		// The idle callback between chunks is a timer of its own
+		await vi.advanceTimersByTimeAsync(10);
 
+		expect(lazyPage).toHaveBeenCalledTimes(1);
+		expect(excludedLazy).not.toHaveBeenCalled();
+	});
+});
+
+describe("revalidating the page that is open", () => {
 	test("does not re-run them for another page's response", async () => {
 		setPath("/album/2001");
 		json("/v1/albums/2002", { v: 1 });
 		const url = "https://api.tidal.com/v1/albums/2002";
 		await fetch(url);
 
-		vi.advanceTimersByTime(6_000);
+		// Older than a served entry is re-fetched in the background past, so the second fetch really does revalidate
+		await vi.advanceTimersByTimeAsync(61_000);
 		json("/v1/albums/2002", { v: 2 });
 		await fetch(url);
 		await flush();
 		await vi.advanceTimersByTimeAsync(300);
 
 		expect(revalidate).not.toHaveBeenCalled();
+	});
+
+	test("re-runs them for a response about this page, once the change settles", async () => {
+		revalidate.mockClear();
+		setPath("/album/2001");
+		json("/v1/albums/2001", { v: 1 });
+		const url = "https://api.tidal.com/v1/albums/2001";
+		await fetch(url);
+
+		await vi.advanceTimersByTimeAsync(61_000);
+		json("/v1/albums/2001", { v: 2 });
+		// Served from the cache at once, re-fetched in the background: the changed response re-runs the page's loaders
+		await fetch(url);
+		await flush();
+		await vi.advanceTimersByTimeAsync(300);
+
+		expect(revalidate).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -347,7 +393,10 @@ describe("prefetching a hovered link", () => {
 		setTidalState({
 			pageApi: {
 				config: {},
-				queries: { "albumId-3008": { endpointName: "getAlbum", originalArgs: { albumId: 3008 }, startedTimeStamp: Date.now() } },
+				queries: {
+					// `sort` names no route param, so it is kept as it is and replayed unchanged
+					"albumId-3008": { endpointName: "getAlbum", originalArgs: { albumId: 3008, sort: "date" }, startedTimeStamp: Date.now() },
+				},
 			},
 		} as unknown as Partial<TidalState>);
 		expect(onLocationChange).toBeDefined();
@@ -360,7 +409,7 @@ describe("prefetching a hovered link", () => {
 		await flush();
 
 		// Prefetched with the query it would make, the id filled in from the link as the number TIDAL queried with
-		expect(prefetch).toHaveBeenCalledWith("getAlbum", { albumId: 3009 }, { ifOlderThan: 60 });
+		expect(prefetch).toHaveBeenCalledWith("getAlbum", { albumId: 3009, sort: "date" }, { ifOlderThan: 60 });
 		resetTidalState();
 	});
 });

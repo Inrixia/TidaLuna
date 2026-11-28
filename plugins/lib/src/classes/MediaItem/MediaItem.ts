@@ -54,6 +54,10 @@ export class MediaItem extends ContentBase {
 				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
 			);
 			return mediaItem;
+		} catch {
+			// TIDAL's FAIL action and the timeout reject now: an item that failed to load is what callers already handle
+			// as missing, not an error to throw at them
+			return undefined;
 		} finally {
 			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
 			clearWarnCatch();
@@ -86,7 +90,9 @@ export class MediaItem extends ContentBase {
 		for await (const track of TidalApi.isrc(isrc)) {
 			// If quality is higher than current best, set as best
 			const maxTrackQuality = Quality.max(...Quality.fromMetaTags((track.attributes?.mediaTags ?? []) as redux.MediaMetadataTag[]));
-			if (maxTrackQuality > (bestMediaItem?.bestQuality ?? Quality.Lowest)) {
+			// The first track that loads is the best so far, whatever its tags say: a track with none Luna knows is Lowest, and
+			// Lowest is not above "no item yet", so it would never be picked even when it is the only result
+			if (bestMediaItem === undefined || maxTrackQuality > bestMediaItem.bestQuality) {
 				bestMediaItem = (await MediaItem.fromId(track.id)) ?? bestMediaItem;
 				if ((bestMediaItem?.bestQuality ?? Quality.Lowest) >= Quality.Max) return bestMediaItem;
 			}
