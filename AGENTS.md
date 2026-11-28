@@ -4,16 +4,16 @@ Guidance for coding agents (and humans) in repo.
 
 Luna (TidaLuna) = client mod for TIDAL desktop app (Electron). Takes over TIDAL app entry, loads plugin system into page. pnpm workspace (`native`, `render`, `plugins/*`), TypeScript, esbuild bundling.
 
-## Shared guidance
+## Skills
 
-Vendored from [Inrixia/.claude](https://github.com/Inrixia/.claude) by `pnpm run updateSkills`, which pulls the skills listed under `agentSkills` in `package.json` and overwrites local edits. To add or drop a skill, edit that list and rerun it. To change a skill's content, open a PR to [Inrixia/.claude](https://github.com/Inrixia/.claude), then rerun it here once merged.
-Read the matching file before starting the work. This file's Code design section wins on conflict.
+`.agents/skills/` holds shared skills vendored from [Inrixia/.claude](https://github.com/Inrixia/.claude) by `pnpm run updateSkills` (list: `agentSkills` in `package.json`). Don't edit them here: change a skill by PR to Inrixia/.claude, then rerun. Read the matching `SKILL.md` before starting; this file wins on conflict.
 
-- Editing `.ts`/`.tsx`: `.agents/skills/typescript/SKILL.md`
-- Writing, reviewing, or refactoring React components/hooks (`.tsx`/`.jsx`): `.agents/skills/react/SKILL.md`
-- Writing or fixing tests: `.agents/skills/vitest/SKILL.md`
-- Reviewing, debugging or fixing a bug: `.agents/skills/review/SKILL.md`
-- Running, starting, or testing Luna or TIDAL, checking plugin loading, debugging runtime bugs, finding internals to hook, or screenshotting UI: `.agents/skills/tidal-test-instance/SKILL.md`
+- Writing or refactoring any code: `code-design`
+- Editing `.ts`/`.tsx`: `typescript`
+- React components/hooks: `react`
+- Writing or fixing tests: `vitest`
+- Reviewing, debugging or fixing a bug: `review`
+- Running, starting, or testing Luna or TIDAL, checking plugin loading, debugging runtime bugs, finding internals to hook, or screenshotting UI: `tidal-test-instance` (repo-owned)
 
 ## Commands
 
@@ -76,43 +76,13 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 - Don't hand-roll mechanics with shared owner, e.g. finding TIDAL modules/functions, DOM watching, hooking Redux/TIDAL state, timers + listeners tied to `unloads`, styles, IPC, TIDAL API, media data. Check for helper first.
 - Write generically reusable code in owning layer, exported from its barrel: renderer helpers in `lib`, main-process helpers in `lib.native`, components in `ui`, loader-level code in `render/` or `native/`. Keep only plugin-specific logic in plugin.
 
-## Code design
+## Luna smells
 
-How code here is reviewed. Apply to new code and to code you touch.
+On top of the `code-design` skill:
 
-- Construct through `static from(...)` with a private constructor. Cache instances by identity (url, path, id) in a static map named for what it holds (`Apple.apples`): same key, same instance.
-- Statics are fine where useful (`MediaItem`, `LunaPlugin`). A function that uses a class's state lives on that class.
-- Cache a derived value only when the cost is real: a field plus a `get`, or `memoize`/`asyncDebounce`. Don't pre-optimize.
-- Validate on construction: the constructor throws on state that should not exist.
-- A function that fails throws; one whose value is known to be absent returns `undefined`. Never `{ ok, error }`: errors propagate until something can handle them.
-- Inline a method called once, unless that bloats the file. Break code out only when it is large or generic enough to reuse (a `sha256` helper, not caller-specific logic): `Class.stepName.ts` beside the class for a class helper, `stepName.ts` for a standalone one.
-- One class per file, named for its role: `LunaTheme` beside `LunaPlugin`, not `Theme`. A class spanning several files gets a folder with a barrel (`LunaTheme/index.ts`, `LunaTheme.types.ts`), like `MediaItem/`.
-- Public state beats accessor ceremony: a public record beats a private registry plus getters.
-- Pass a value once. If the callee already holds it, read it from the instance.
-- A file over 200 lines holding more than one function is worth splitting.
-
-### Practice
-
-- Await what you start: a dropped promise's rejection is a no-op nobody sees.
-- Object-oriented design: a class owns its state and inheritance carries shared behaviour. Each value has one owner; other layers ask it rather than keep a copy that can disagree.
-- Platform APIs may be missing: `window.requestIdleCallback?.()`, `if (electron.app.dock !== undefined)`. Feature-detect.
-
-### Smells to fix rather than add
-
-- A third copy of the same logic. Extract it into the owning layer and call it from every site.
-- A file with one export nobody imports, a wrapper that only forwards arguments.
 - A raw platform API where a Luna helper exists (see Reuse before writing): `observe`, not `new MutationObserver`.
-- `any`, an `as` cast covering a mismatch, `typeof` on a declared type, unused parameters, dead or commented-out code, a `TODO` with no issue behind it.
-- A `catch` that loses an error by accident. Turning an error into `undefined` on purpose is fine.
 - Anything registered without `unloads`: listeners, observers, timers, style tags, redux intercepts.
 - `console.log` where a `Tracer` is available.
-- Comments that narrate the code. Say why.
-
-### Names and tests
-
-- Names describe what a function or variable is for: `stringNotEmpty`, not an obscure predicate.
-- Uncertain input is `unknown`, then narrowed. Check `x === undefined`, or `!!x` for existence.
-- A test name is the bug it prevents.
 
 ## Style
 
@@ -120,7 +90,7 @@ How code here is reviewed. Apply to new code and to code you touch.
 
 ## Tests
 
-- Fixes + features come with a test: vitest, in `<file>.test.ts` beside the code it tests. Layout, the `@luna/core` harness and the coverage rules are in [docs/testing.md](docs/testing.md).
+- Tests: vitest, in `<file>.test.ts` beside the code it tests. Layout, the `@luna/core` harness and the coverage rules are in [docs/testing.md](docs/testing.md).
 - Run `pnpm test` before PR; CI runs it on every PR (`.github/workflows/test.yml`).
 - Coverage floors live in `test/coverageThresholds.ts` and only ever go up. When your PR raises coverage, `pnpm run coverage:thresholds` lifts them to just under what the suite now measures; CI runs the same thing on every push to `master`/`dev` and commits the result, so the file stays current without anyone remembering to bump it. Never lower a floor to make a build pass — add the test instead.
 
