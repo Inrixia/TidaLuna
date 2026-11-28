@@ -1,12 +1,15 @@
-import { mkdir, writeFile } from "fs/promises";
+import { createWriteStream } from "fs";
+import { mkdir, unlink } from "fs/promises";
 import path from "path";
+import { Transform } from "stream";
+import { pipeline } from "stream/promises";
 import JSZip from "jszip";
 
 import { isInside } from "../isInside";
 import { validateZipEntries } from "./validateZipEntries";
 
 /** Bytes a Luna archive may unpack to. A dist is tens of MB, so this is generous and still bounded */
-const maxExtractedBytes = 512 * 1024 * 1024;
+export const maxExtractedBytes = 512 * 1024 * 1024;
 
 /**
  * Writes the entries of a zip that `validateZipEntries` has already checked into `destFolder`.
@@ -14,10 +17,11 @@ const maxExtractedBytes = 512 * 1024 * 1024;
  * The path check is repeated per entry rather than trusted to have happened: unpacking is the step that writes to disk, so
  * it is where the guarantee has to hold.
  *
- * The archive comes from a url, so what it unpacks to is not trusted either: one entry can expand to any size and the
- * entry count cannot say how much disk that is, so the bytes written are counted here.
+ * The archive comes from a url, so what it unpacks to is not trusted either. Entries are streamed and counted as they
+ * decompress, because one entry can expand to any size: buffering it first would meet the ceiling as an allocation, which
+ * is a crash rather than a refusal.
  */
-export const extractZip = async (zip: JSZip, destFolder: string) => {
+export const extractZip = async (zip: JSZip, destFolder: string, limitBytes = maxExtractedBytes) => {
 	await mkdir(destFolder, { recursive: true });
 	let written = 0;
 	for (const [filename, file] of Object.entries(zip.files)) {
@@ -27,12 +31,22 @@ export const extractZip = async (zip: JSZip, destFolder: string) => {
 			await mkdir(destPath, { recursive: true });
 			continue;
 		}
-		const contents = await file.async("nodebuffer");
-		written += contents.byteLength;
-		if (written > maxExtractedBytes) throw new Error(`[UPDATER] Archive unpacks to over ${maxExtractedBytes} bytes`);
 		// Entries are not always sorted, so the parent may not exist yet
 		await mkdir(path.dirname(destPath), { recursive: true });
-		await writeFile(destPath, contents);
+		const counted = new Transform({
+			transform(chunk: Buffer, _encoding, callback) {
+				written += chunk.byteLength;
+				if (written > limitBytes) return callback(new Error(`[UPDATER] Archive unpacks to over ${limitBytes} bytes`));
+				callback(null, chunk);
+			},
+		});
+		try {
+			await pipeline(file.nodeStream(), counted, createWriteStream(destPath));
+		} catch (err) {
+			// Half an entry is not an install: the caller keeps the folder for its own cleanup, so this file goes now
+			await unlink(destPath).catch(() => {});
+			throw err;
+		}
 	}
 };
 

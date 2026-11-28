@@ -28,26 +28,25 @@ const zipOf = async (files: Record<string, string>) => {
 	return zip.generateAsync({ type: "nodebuffer" });
 };
 
-/** A zip whose entries report what the test needs: nothing is written until an entry passes the guards */
-const stubZip = (files: Record<string, { dir: boolean; async: () => Promise<{ byteLength: number }> }>) => ({ files }) as unknown as JSZip;
-
 describe("extractZip", () => {
 	it("writes the entries a checked archive holds", async () => {
 		await extractZipEntries(await zipOf({ "injector.mjs": "console.log(1)", "app/package.json": "{}" }), dest);
 		expect(await readFile(path.join(dest, "injector.mjs"), "utf8")).toBe("console.log(1)");
+		expect(await readFile(path.join(dest, "app", "package.json"), "utf8")).toBe("{}");
 	});
 
-	it("refuses an entry that would land outside the folder, before writing anything", async () => {
-		const entry = { dir: false, async: async () => Buffer.from("x") };
-		await expect(extractZip(stubZip({ "../escape.txt": entry }), dest)).rejects.toThrow("Zip Slip blocked");
-		// Nothing reached the disk, in the folder or above it
+	it("refuses an entry that would land outside the folder", async () => {
+		// The name is checked before the entry is opened, so this needs no readable contents to be refused
+		const zip = { files: { "../escape.txt": { dir: false } } } as unknown as JSZip;
+		await expect(extractZip(zip, dest)).rejects.toThrow("Zip Slip blocked");
 		expect(await readdir(dest)).toEqual([]);
 		expect(await readdir(path.dirname(dest))).not.toContain("escape.txt");
 	});
 
-	it("stops when the archive unpacks to more than it may, before writing the entry that crossed the limit", async () => {
-		// The entry reports a size the cap cannot allow; the guard reads the size, so nothing has to be allocated
-		const huge = { dir: false, async: async () => ({ byteLength: 600 * 1024 * 1024 }) };
-		await expect(extractZip(stubZip({ "huge.bin": huge }), dest)).rejects.toThrow("unpacks to over 536870912 bytes");
+	it("stops partway through an archive that unpacks to more than it may, and leaves no half written file", async () => {
+		// A real archive with a small limit: the cap is what it has to be here, not something the test has to allocate
+		const zip = await JSZip.loadAsync(await zipOf({ "big.bin": "x".repeat(4096) }));
+		await expect(extractZip(zip, dest, 32)).rejects.toThrow("unpacks to over 32 bytes");
+		expect(await readdir(dest)).toEqual([]);
 	});
 });
