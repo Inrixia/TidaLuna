@@ -11,7 +11,7 @@ const electron = vi.hoisted(() => ({
 		on: vi.fn(),
 		once: vi.fn(),
 		removeListener: vi.fn(),
-		invoke: vi.fn(async () => undefined),
+		invoke: vi.fn(async (..._args: unknown[]) => undefined),
 		send: vi.fn(),
 	},
 	contextBridge: { exposeInMainWorld: vi.fn() },
@@ -164,5 +164,53 @@ describe("preload", () => {
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});
 		(forward as (...args: unknown[]) => void)({}, "nope", ["x"]);
 		expect(error).toHaveBeenCalledWith("[Luna.native]", "Failed to forward console to renderer", expect.any(Error), ["x"]);
+	});
+
+	describe("luna.js load failure", () => {
+		const preloadErrCalls = () => electron.ipcRenderer.invoke.mock.calls.filter(([channel]) => channel === "__Luna.preloadErr");
+
+		const flushAsync = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		it("reports __Luna.preloadErr once without an unhandled rejection when executeJavaScript fails", async () => {
+			const err = new Error("boom");
+			electron.webFrame.executeJavaScript.mockRejectedValueOnce(err);
+			const log = vi.spyOn(console, "log").mockImplementation(() => {});
+			const unhandled: unknown[] = [];
+			const onUnhandled = (reason: unknown) => unhandled.push(reason);
+			process.on("unhandledRejection", onUnhandled);
+			try {
+				await loadPreload("https://listen.tidal.com/");
+				await flushAsync();
+			} finally {
+				process.off("unhandledRejection", onUnhandled);
+			}
+
+			expect(preloadErrCalls()).toEqual([["__Luna.preloadErr", err]]);
+			expect(log).not.toHaveBeenCalledWith("[Luna.preload] luna.js loaded!");
+			expect(unhandled).toEqual([]);
+		});
+
+		it("logs and handles a failing __Luna.preloadErr invoke without an unhandled rejection", async () => {
+			const loadErr = new Error("load failed");
+			const reportErr = new Error("not cloneable");
+			electron.webFrame.executeJavaScript.mockRejectedValueOnce(loadErr);
+			electron.ipcRenderer.invoke.mockRejectedValueOnce(reportErr);
+			const log = vi.spyOn(console, "log").mockImplementation(() => {});
+			const error = vi.spyOn(console, "error").mockImplementation(() => {});
+			const unhandled: unknown[] = [];
+			const onUnhandled = (reason: unknown) => unhandled.push(reason);
+			process.on("unhandledRejection", onUnhandled);
+			try {
+				await loadPreload("https://listen.tidal.com/");
+				await flushAsync();
+			} finally {
+				process.off("unhandledRejection", onUnhandled);
+			}
+
+			expect(preloadErrCalls()).toEqual([["__Luna.preloadErr", loadErr]]);
+			expect(error).toHaveBeenCalledWith(expect.any(String), reportErr, loadErr);
+			expect(log).not.toHaveBeenCalledWith("[Luna.preload] luna.js loaded!");
+			expect(unhandled).toEqual([]);
+		});
 	});
 });
