@@ -6,7 +6,7 @@ Luna (TidaLuna) = client mod for TIDAL desktop app (Electron). Takes over TIDAL 
 
 ## Shared guidance
 
-Vendored from Inrixia/.claude. Don't edit these files here; change the list in `package.json` and run `pnpm run updateSkills`.
+Vendored from [Inrixia/.claude](https://github.com/Inrixia/.claude) by `pnpm run updateSkills`, which pulls the skills listed under `agentSkills` in `package.json` and overwrites local edits. To add or drop a skill, edit that list and rerun it. To change a skill's content, open a PR to [Inrixia/.claude](https://github.com/Inrixia/.claude), then rerun it here once merged.
 Read the matching file before starting the work. This file's Code design section wins on conflict.
 
 - Editing `.ts`/`.tsx`: `.agents/skills/typescript/SKILL.md`
@@ -79,40 +79,38 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 
 How code here is reviewed. Apply to new code, and to the code you are already touching.
 
-- One constructor, `static from(...)`, private constructor. Key it on identity (url, path, id) in a `private static readonly instances = new Map<string, Class>()` and return the existing instance: two `.from` calls with one key are one object. Never `.of`.
-- Statics are that factory and construction-time validation, nothing else. A static that reads instance state is an instance method hiding as a static. A static that takes another class's data to do that class's job belongs on the class that owns the state.
-- A derived value that costs anything is a private field plus a `get`, not recomputed per call.
-- Validate on construction: the constructor throws on state that should not exist. Not a later `validate()`, not inside `install()`.
-- Errors throw. No `{ ok, error }` threaded through helpers: it kills short-circuiting and makes every caller parse. Catch at the boundary, where something can be done about it.
-- A method called exactly once gets inlined. Past ~200 lines, split to `Class.stepName.ts` beside the class.
-- One class per file, named for the class, and the class named for its role: `LunaTheme` beside `LunaPlugin`, not `Theme`.
+- Construct through `static from(...)` with a private constructor. Cache instances by identity (url, path, id) in a static map named for the class (`Apple.apples`): same key, same instance.
+- Other statics are fine where useful (see `MediaItem`, `LunaPlugin`). Code that uses a class's state lives on that class, not in a static elsewhere that takes its data.
+- Cache a derived value only when the cost is real: a private field plus a `get`, or `memoize`/`asyncDebounce` from `@inrixia/helpers`. Premature optimization is bloat.
+- Validate on construction: the constructor throws on state that should not exist.
+- A function that fails throws. A function whose value is known to be absent returns `undefined`. Never return `{ ok, error }`: errors propagate up until handled where something can be done about it.
+- A method called exactly once gets inlined. Past ~200 lines, split to `Class.stepName.ts` beside the class if a class helper, or `stepName.ts` if its own helper.
+- One class per file, named for the class, and the class named for its role: `LunaTheme` beside `LunaPlugin`, not `Theme`. A class split over several files (`LunaTheme.helper.ts`, `LunaTheme.types.ts`) lives in a `LunaTheme/` folder with a barrel `index.ts`, like `MediaItem/`.
 - Public state beats accessor ceremony. A public record beats a private registry plus getters, and destructuring that only guards against mutation that cannot happen is noise.
 - Pass a value once. If the callee already holds it, read it from the instance instead of taking a second parameter.
-- Files stay under 400 lines.
+- A file over 200 lines holding more than one function is a candidate for splitting.
 
 ### Practice
 
-- Await what you start. A promise dropped in an event handler cannot be caught by the caller, so a rejection becomes a no-op nobody sees: handle it where it lands, or let a later read show the failure instead.
-- A plugin imports `index.safe.ts`, never `index.ts`. A cycle here is a runtime `undefined`, not a compile error.
-- Untrusted input decides how much work you do: bound the entries, bytes, retries and recursion before you act on them, not after.
-- State has one owner. A value read from two layers belongs to one of them and the other asks, rather than both keeping a copy that can disagree.
+- Await what you start: a dropped promise's rejection is a no-op nobody sees.
+- Follow object-oriented design (encapsulation, inheritance): state has one owner. A value read from two layers belongs to one of them and the other asks, rather than both keeping a copy that can disagree.
 - Platform APIs are optional or missing. `window.requestIdleCallback?.()`, `if (electron.app.dock !== undefined)`: feature-detect, don't assume the runtime.
 
 ### Smells to fix rather than add
 
 - A third copy of the same logic. Extract it into the owning layer before the third exists, then call it from every site.
-- A helper with one caller, a file with one export nobody imports, a wrapper that forwards its arguments and does nothing else.
-- Hand-rolled mechanics that have a shared owner: DOM watching, module finding, redux hooking, timers, styles, IPC, TIDAL API, path parsing, git urls, file names.
+- A helper with one caller, a file with one export nobody imports, a wrapper that forwards its arguments and does nothing else. Break a block out only when inlining would bloat its file, or when it is generic enough to reuse (a `sha256` helper, not logic specific to its caller).
+- A raw platform API where a Luna helper exists: `observe`, not `new MutationObserver`.
 - `any`, an `as` cast covering a mismatch, `typeof` on a declared type, unused parameters, dead or commented-out code, a `TODO` with no issue behind it.
-- A `catch` that swallows, or one that only logs. Silent failure is how a bug survives a release.
+- A `catch` that swallows silently or only logs. Turning an error into `undefined` on purpose is fine.
 - Anything registered without `unloads`: listeners, observers, timers, style tags, redux intercepts.
-- `console.log` where `Tracer` belongs. CLI tools under `scripts/` print on purpose and are the exception.
-- A comment restating the code. Say why, in one line.
+- `console.log` where a `Tracer` is available.
+- A comment that repeats what the code does. Comments explain why.
 
 ### Names and tests
 
-- Names say what they check: `stringNotEmpty`, not an obscure predicate.
-- Uncertain input is `unknown`, then narrowed. An undefined check is `if (x === undefined)`.
+- Descriptive function and variable names: `stringNotEmpty`, not an obscure predicate.
+- Uncertain input is `unknown`, then narrowed. Check undefined with `x === undefined`, or `!!x` where any falsy value means absent.
 - A test name is the bug it prevents.
 
 ## Style
