@@ -65,6 +65,44 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 - Don't hand-roll mechanics with shared owner, e.g. finding TIDAL modules/functions, DOM watching, hooking Redux/TIDAL state, timers + listeners tied to `unloads`, styles, IPC, TIDAL API, media data. Check for helper first.
 - Write generically reusable code in owning layer, exported from its barrel: renderer helpers in `lib`, main-process helpers in `lib.native`, components in `ui`, loader-level code in `render/` or `native/`. Keep only plugin-specific logic in plugin.
 
+## Code design
+
+How code here is reviewed. Apply to new code, and to code you are already touching.
+
+- One constructor, `static from(...)`, private constructor. Key it on identity (url, path, id) in a private static map named for what it holds (`Apple.apples`) and return the existing instance: two `.from` calls with one key are one object.
+- Statics are fine where they are genuinely useful; `MediaItem` and `LunaPlugin` are good examples. What matters is that a function using instance state lives inside the class that owns that state.
+- A derived value worth caching is a field plus a `get`. Reach for `memoize` or `asyncDebounce` before writing your own, and don't pre-optimize what nobody measured.
+- Validate on construction: the constructor throws on state that should not exist.
+- A function that fails throws. A function with a known undefined value returns `undefined`. Never `{ ok, error }`: errors propagate until something can handle them.
+- A method called once gets inlined, unless inlining bloats the file. Break one out only when it is justifiably large or generic enough to reuse, as `LunaTheme.helper.ts` for a class helper or `stepName.ts` when it is its own helper.
+- One class per file, named for its role: `LunaTheme` beside `LunaPlugin`, not `Theme`. A class that outgrows one file becomes a folder named for it with a barrel: `LunaTheme/index.ts` beside `LunaTheme.helper.ts` and `LunaTheme.types.ts`. `MediaItem/` is the reference.
+- Public state beats accessor ceremony: a public record beats a private registry plus getters.
+- Pass a value once. If the callee already holds it, read it from the instance instead of taking a second parameter.
+- Files over 200 lines holding more than one function are worth splitting.
+
+### Practice
+
+- Await what you start. A promise dropped in an event handler cannot be caught by its caller, so a rejection becomes a no-op nobody sees.
+- State has one owner, which is just object-oriented design: a class owns its state, inheritance carries behaviour, and a value read from two layers belongs to one of them while the other asks.
+- Platform APIs are optional or missing: `window.requestIdleCallback?.()`, `if (electron.app.dock !== undefined)`. Feature-detect.
+
+### Smells to fix rather than add
+
+- A third copy of the same logic. Extract it into the owning layer before the third exists, then call it from every site.
+- A helper with one caller, a file with one export nobody imports, a wrapper that only forwards arguments.
+- Hand-rolled mechanics that have a shared owner: `observe` rather than `new MutationObserver`, and the same for module finding, redux hooking, timers, styles, IPC, TIDAL API, path parsing, git urls, file names.
+- `any`, an `as` cast covering a mismatch, `typeof` on a declared type, unused parameters, dead or commented-out code, a `TODO` with no issue behind it.
+- A `catch` that swallows. Turning an error into `undefined` deliberately is fine and should say so; losing one by accident is not.
+- Anything registered without `unloads`: listeners, observers, timers, style tags, redux intercepts.
+- `console.log` where `Tracer` is available and sensible.
+- Comments that narrate the code. Say why it is the way it is.
+
+### Names and tests
+
+- Names describe concretely what a function or variable is for: `stringNotEmpty`, not an obscure predicate.
+- Uncertain input is `unknown`, then narrowed. Undefined checks are `if (x === undefined)`, and `!!x` is fine for an existence check.
+- A test name is the bug it prevents.
+
 ## Style
 
 - Prettier: tabs, `printWidth` 145, semicolons. Many files not Prettier-clean; match surrounding code, don't reformat files you only edit.
