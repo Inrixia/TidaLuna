@@ -95,7 +95,7 @@ export class MediaItem extends ContentBase {
 		MediaItem.loads.set(key, load);
 		// Cleaned up on either outcome: a success resolves, and a failure is dropped here rather than left as a rejection
 		// nobody holds
-		load.then(
+		void load.then(
 			() => MediaItem.loads.delete(key),
 			() => MediaItem.loads.delete(key),
 		);
