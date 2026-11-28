@@ -5,7 +5,7 @@ import { interceptors, ReactiveStore } from "@luna/core";
 // By path: `test/*` is a vitest alias only, so `tsc` would not resolve these imports
 import { resetTidalState, setTidalState, type TidalState } from "../../../../test/harness/tidalStore";
 
-import { AudioCache } from "./AudioCache";
+import { AudioCache, cacheFileName } from "./AudioCache";
 import { MediaItem } from "./MediaItem";
 
 /**
@@ -434,5 +434,25 @@ describe("the stored limit at startup", () => {
 			expect(await ReactiveStore.getStore("@luna/pluginStorage").get("@luna/lib.AudioCache")).toEqual({ limitBytes: 4321 });
 		});
 		storage.limitBytes = 0;
+	});
+});
+
+describe("cacheFileName", () => {
+	test("a cached track's name is one path segment", () => {
+		// A track by AC/DC was stored as `AC/DC - Through the Mists of Time.flac`, which made a folder called AC inside
+		// the cache folder. The next start's scan met a directory where it expects files, failed to remove it, and
+		// reported `Failed to read the cache folder` every launch from then on.
+		expect(cacheFileName("AC/DC", "Through the Mists of Time", 123, "flac")).toBe("AC-DC - Through the Mists of Time [123].flac");
+		// Backslash too: Windows accepts either, and the name is passed to join
+		expect(cacheFileName("a\\b", "t", 1, "flac")).toBe("a-b - t [1].flac");
+		// The id and extension are what keep two tracks with the same artist and title apart, so they survive
+		expect(cacheFileName("a/b", "t", 42, "m4a")).toContain("[42].m4a");
+	});
+
+	test("a name Windows refuses is not the download's problem", () => {
+		// A title holds these: `Chapter 1: Intro`, `Why?`, `"Heroes"`. Windows rejects each in a name, so the download
+		// failed rather than the cache holding it
+		expect(cacheFileName("a", 'Chapter 1: "Intro"?', 7, "flac")).toBe("a - Chapter 1- -Intro-- [7].flac");
+		expect(cacheFileName("a|b", "t*c<d>e", 8, "flac")).toBe("a-b - t-c-d-e [8].flac");
 	});
 });

@@ -35,6 +35,20 @@ const fitBytes = (text: string, maxBytes: number): string => {
 };
 
 /**
+ * The name a cached track is stored under: one path segment a filesystem will take, on both platforms.
+ *
+ * A name is an `Artist - Title [id].ext`, and the cache folder is flat: `MediaItem.download` joins the folder with this
+ * name, so a `/` in either part used to make a folder inside the cache. The startup scan then met a directory where it
+ * expects files, failed to remove it, and gave up on the whole folder: every cached track stopped playing until it was
+ * deleted by hand (see native/audioCache.ts).
+ *
+ * Windows also refuses `: * ? " < > |` in a name, and titles hold them: `Chapter 1: Intro`, `Why?`, `"Heroes"`. A track
+ * whose name the filesystem rejects fails its download, so they are replaced here rather than at each write.
+ */
+export const cacheFileName = (artist: string, title: string, trackId: redux.ItemId, ext: string) =>
+	`${fitBytes(`${artist} - ${title}`, 200).replace(/[\\/:*?"<>|]/g, "-")} [${trackId}].${ext}`;
+
+/**
  * The cache TIDAL's native player plays audio from, see native/audioCache.ts. It holds the audio of tracks played, hovered, next and previous
  * in the queue, and of every `MediaItem` read (downloads, formats). Only tracks the native player plays (BTS manifests), DASH plays in the page.
  */
@@ -75,7 +89,7 @@ export class AudioCache {
 				// The track id keeps names unique: download skips a path that already exists,
 				// so two tracks with the same artist and title would share one file.
 				// File names are cut to 255 bytes from the end, so the name is shortened first to keep the id and extension
-				filePath = await mediaItem.download([dir, `${fitBytes(`${artist} - ${title}`, 200)} [${trackId}].${ext}`], quality);
+				filePath = await mediaItem.download([dir, cacheFileName(artist, title, trackId, ext)], quality);
 			} finally {
 				await audioCachePersist(url, filePath);
 			}
