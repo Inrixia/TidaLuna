@@ -10,8 +10,7 @@
 	"dependencies": {
 		"@tidal-music/api": "0.57.0",
 		"mediabunny": "^1.66.2",
-		"music-metadata": "^12.7.0",
-		"node-taglib-sharp": "^6.0.3",
+		"music-metadata": "^13.0.1",
 		"sanitize-filename": "^1.6.5"
 	},
 	"devDependencies": {

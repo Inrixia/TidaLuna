@@ -123,6 +123,10 @@ export class Album extends ContentBase implements MediaCollection {
 	public get numberOfTracks(): number {
 		return this.tidalAlbum.numberOfTracks;
 	}
+
+	public get numberOfVolumes(): number {
+		return this.tidalAlbum.numberOfVolumes;
+	}
 	public get releaseDate(): string | undefined {
 		return this.tidalAlbum.releaseDate ?? this.tidalAlbum.streamStartDate;
 	}

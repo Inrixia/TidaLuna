@@ -1,4 +1,4 @@
-import { parseStream, type IAudioMetadata } from "music-metadata";
+import { parseStream, type IAudioMetadata } from "music-metadata/node";
 
 import { fetchMediaItemStream, type FetchProgress } from "../../../../lib.native/src/index.native";
 

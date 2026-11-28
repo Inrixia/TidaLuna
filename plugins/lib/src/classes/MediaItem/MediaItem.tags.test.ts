@@ -97,6 +97,7 @@ const fullMediaItem = () => {
 				genre: "Rock",
 				recordLabel: "Label Records",
 				numberOfTracks: 12,
+				numberOfVolumes: 3,
 				releaseDate: "1999-12-31",
 				releaseYear: "1999",
 				artists: [artistInline(albumArtistId)],
@@ -163,6 +164,7 @@ describe("makeTags", () => {
 			genres: "Rock",
 			organization: "Label Records",
 			totalTracks: "12",
+			totalDiscs: "3",
 			lyrics: "[00:01.00] Real Title",
 			// MusicBrainz isn't reachable in these tests, so neither id is known
 			musicbrainz_trackid: undefined,
@@ -201,6 +203,7 @@ describe("makeTags", () => {
 		expect(tags.genres).toBeUndefined();
 		expect(tags.organization).toBeUndefined();
 		expect(tags.totalTracks).toBeUndefined();
+		expect(tags.totalDiscs).toBeUndefined();
 		expect(tags.musicbrainz_albumid).toBeUndefined();
 	});
 
