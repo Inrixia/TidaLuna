@@ -13,18 +13,20 @@ concurrency:
 jobs:
  Test:
   runs-on: ubuntu-latest
+  timeout-minutes: 25
   permissions:
    # To find the base branch's run and download its coverage summary
    actions: read
+   # To commit the badges and the raised floors on a push
    contents: write
-   pull-requests: write
   steps:
    - uses: actions/checkout@v7
 
    - name: Install pnpm 📥
      uses: pnpm/action-setup@v6
      with:
-      version: latest
+      # A major, not `latest`: a pnpm release should not be able to change how CI resolves dependencies unannounced
+      version: 10
 
    - name: Install Node.js 📥
      uses: actions/setup-node@v7
@@ -33,7 +35,8 @@ jobs:
       node-version: lts/*
 
    - name: Install dependencies 📥
-     run: pnpm install
+     # Fails when the lockfile and package.json disagree, instead of silently resolving a tree CI never tested
+     run: pnpm install --frozen-lockfile
 
    - name: Test
      run: pnpm run coverage:ci
@@ -116,18 +119,11 @@ jobs:
    # raw.githubusercontent.com: shields fetches the JSON on every render and raw rate-limits it, which shows up as a
    # broken badge. It caches for up to 12h, so a badge can trail the file by that much.
    # Commits made with GITHUB_TOKEN don't start another workflow run, so this can't loop.
-   - name: Commit coverage badges
+   # One commit for both files: the badges and the floors change together, and two commits per push was churn.
+   - name: Commit the badges and the raised floors
      if: github.event_name == 'push'
      continue-on-error: true
      uses: stefanzweifel/git-auto-commit-action@v7
      with:
-      commit_message: "ci: update coverage badges"
-      file_pattern: .github/badges/*.json
-
-   - name: Commit the raised floors
-     if: github.event_name == 'push'
-     continue-on-error: true
-     uses: stefanzweifel/git-auto-commit-action@v7
-     with:
-      commit_message: "ci: raise the coverage floors"
-      file_pattern: test/coverageThresholds.ts
+      commit_message: "ci: update coverage badges and floors"
+      file_pattern: .github/badges/*.json test/coverageThresholds.ts

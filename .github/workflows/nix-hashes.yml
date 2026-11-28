@@ -15,6 +15,9 @@ on:
 
 concurrency:
  group: ${{ github.workflow }}-${{ github.ref }}
+ # Two pushes that touch the lockfile in quick succession would otherwise both run, and the second either fails to commit
+ # or commits a hash computed against a head that has already moved.
+ cancel-in-progress: true
 
 permissions:
  contents: write
@@ -23,6 +26,7 @@ jobs:
  Linux:
   name: Update Linux pnpmDeps hash
   runs-on: ubuntu-latest
+  timeout-minutes: 30
   steps:
    - uses: actions/checkout@v7
 
@@ -44,11 +48,14 @@ jobs:
   name: Update Darwin pnpmDeps hash
   needs: Linux
   runs-on: macos-latest
+  timeout-minutes: 30
   steps:
    - uses: actions/checkout@v7
 
    - name: Pull Linux hash commit
-     run: git pull --rebase
+     # --autostash for the same reason test.yml uses it: another workflow also commits to this branch, so the head can
+     # move under a run. A real conflict still fails here, which is right: hashes should not be committed on a stale tree.
+     run: git pull --rebase --autostash
 
    - uses: cachix/install-nix-action@v32
      with:

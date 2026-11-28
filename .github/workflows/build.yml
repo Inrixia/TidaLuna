@@ -18,6 +18,7 @@ concurrency:
 jobs:
  Build:
   runs-on: ubuntu-latest
+  timeout-minutes: 20
   permissions:
    contents: read
   steps:
@@ -26,7 +27,8 @@ jobs:
    - name: Install pnpm 📥
      uses: pnpm/action-setup@v6
      with:
-      version: latest
+      # A major, not `latest`: a pnpm release should not be able to change how CI resolves dependencies unannounced
+      version: 10
 
    - name: Install Node.js 📥
      uses: actions/setup-node@v7
@@ -35,7 +37,8 @@ jobs:
       node-version: lts/*
 
    - name: Install dependencies 📥
-     run: pnpm install
+     # Fails when the lockfile and package.json disagree, instead of silently resolving a tree CI never tested
+     run: pnpm install --frozen-lockfile
 
    # Nothing downstream runs unless the tests pass: this step failing stops the build, the zip and the release
    - name: Test
@@ -60,6 +63,7 @@ jobs:
   needs: Build
   if: github.event_name == 'push'
   runs-on: ubuntu-latest
+  timeout-minutes: 10
   permissions:
    contents: write
   steps:
