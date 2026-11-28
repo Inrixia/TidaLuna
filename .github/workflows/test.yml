@@ -45,4 +45,5 @@ jobs:
      if: always()
      uses: Inrixia/helpers.ts/.github/actions/coverage@master
      with:
-      areas: plugins
+      extra-areas: |
+       - plugins/*
