@@ -1,6 +1,6 @@
 // Drives TIDAL test instances for Luna development: a TIDAL install shared by the instances of this worktree, each instance with its own profile, running this repo's dist/ as Luna.
 // Everything lives in <repo>/.tidal-test/ (gitignored): .app/ is the install, <name>/ an instance. Node 22+, no dependencies. Windows and Linux (tidal-hifi).
-//   node tidal.mjs setup [installDir] | list | start [--instance <name>] | --instance <name> stop | reload | eval "<expression>" | native "<expression>" | wait "<expression>" [seconds]
+//   node tidal.mjs setup [installDir] | list | start [--instance <name>] [--no-login] | stop --instance <name> | stop --all | remove --instance <name> | --instance <name> reload | eval "<expression>" | native "<expression>" | wait "<expression>" [seconds]
 //     | logs [seconds] [--since <n>] | dump [dir] | screenshot <out.png> | repl [--native] | cdp [--native] <method> ['<params json>'] [<method> ['<params json>']...]
 // `start` without --instance creates an instance with a random name and prints it: give that name to every later command.
 // Each running instance has a host process (`__host`) that owns TIDAL, so TIDAL outlives the command that started it, and buffers the page console for `logs`.
@@ -8,7 +8,7 @@
 // SKILL.md must not link TEST.md or the tests: agents using the skill don't need them, so they stay out of its context.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, rmSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { lstat, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
+	copyTree,
 	createInstance,
 	createLogBuffer,
 	cut,
@@ -24,15 +25,21 @@ import {
 	escapeRegex,
 	formatResult,
 	hostHandler,
-	linkTree,
 	parseArgs,
 	parseCdpCalls,
 	parseCdpLine,
 	parseReplLine,
 	parseWait,
+	lockHeld,
 	poll,
 	quoteCommandLine,
+	removeHostFile,
 	sleep,
+	removeTree,
+	requestStop,
+	stopRequested,
+	unlockOwn,
+	withLock,
 	writeFiles,
 } from "./lib.mjs";
 
@@ -41,8 +48,8 @@ if (typeof WebSocket !== "function") {
 	process.exit(2);
 }
 const usage =
-	'Usage: node tidal.mjs setup [installDir] | list | start [--instance <name>] | --instance <name> stop | reload | eval "<expression>" | native "<expression>" | wait "<expression>" [seconds] | logs [seconds] [--since <n>] | dump [dir] | screenshot <out.png> | repl [--native] | cdp [--native] <method> [\'<params json>\'] [<method> [\'<params json>\']...]';
-const { valid, since, native, command, arg, args, ...parsed } = parseArgs(process.argv.slice(2));
+	'Usage: node tidal.mjs setup [installDir] | list | start [--instance <name>] [--no-login] | stop --instance <name> | stop --all | remove --instance <name> | --instance <name> reload | eval "<expression>" | native "<expression>" | wait "<expression>" [seconds] | logs [seconds] [--since <n>] | dump [dir] | screenshot <out.png> | repl [--native] | cdp [--native] <method> [\'<params json>\'] [<method> [\'<params json>\']...]';
+const { valid, since, native, noLogin, all, command, arg, args, ...parsed } = parseArgs(process.argv.slice(2));
 let { instance } = parsed;
 // The message is what an agent needs, the stack only costs tokens
 if (command !== "__host")
@@ -91,7 +98,7 @@ const exists = (path) =>
 		() => false,
 	);
 const instances = async () => (await readdir(root).catch(() => [])).filter((name) => !name.startsWith("."));
-if (instance === undefined && !["setup", "list", "start"].includes(command)) {
+if (instance === undefined && !["setup", "list", "start"].includes(command) && !(command === "stop" && all)) {
 	const names = await instances();
 	console.error(`${command} needs --instance <name>, the one \`start\` printed. Instances here: ${names.join(", ") || "none"}`);
 	process.exit(2);
@@ -99,12 +106,23 @@ if (instance === undefined && !["setup", "list", "start"].includes(command)) {
 
 let created = false;
 if (command === "start" && (instance === undefined || !(await exists(join(root, instance))))) {
-	instance = await createInstance(root, instance);
+	// A given name may be created by another start meanwhile: that start's instance is used, as when it existed before
+	const name = instance;
 	created = true;
+	instance = await createInstance(root, name).catch((err) => {
+		if (err.code !== "EEXIST" || name === undefined) throw err;
+		created = false;
+		return name;
+	});
 }
 const instanceDir = join(root, instance ?? "");
 const profileDir = join(instanceDir, "profile");
 const hostFile = join(instanceDir, "host.json");
+// Outside the instance folder: remove deletes the folder while it holds the lock, and a waiting start must not be able to recreate the lock inside it
+// Long: a holder suspended (sleep) for longer would look dead, and the lock only guards against a reused pid. A dead holder is detected at once anyway
+const instanceLockStale = 300;
+const lockPath = (name) => join(root, `.${name}.instance.lock`);
+const lockFile = lockPath(instance ?? "");
 const mainLog = join(instanceDir, "main.log");
 // Instances set up before the install was shared have their own copy
 const appDir = (await exists(join(instanceDir, "app"))) ? join(instanceDir, "app") : sharedApp;
@@ -119,6 +137,11 @@ const hostGet = async (path, dir = instanceDir) => {
 };
 /** The running host's `devtools` and `inspector` WebSocket urls */
 const hostState = (dir) => hostGet("/state", dir);
+/** Whether the instance `name` runs, or is busy: a live lock file means a start (its TIDAL runs before host.json exists) or a remove is in progress */
+const instanceState = async (name) => {
+	if ((await hostState(join(root, name))) !== undefined) return "running";
+	return (await lockHeld(lockPath(name), { staleSeconds: instanceLockStale })) ? "busy" : "stopped";
+};
 const notRunning = () => new Error(`Instance ${instance} isn't running, run start --instance ${instance}`);
 
 const targets = (port) =>
@@ -192,29 +215,60 @@ const withMainLog = async (err) => {
 	return new Error(`${err.message}\n--- main.log (${mainLog}), last lines:\n${lines}`);
 };
 
-/** Sets up the install all instances of this worktree run, hard links so it takes no space or time */
+/** Sets up the install all instances of this worktree run: a copy of the install (several hundred MB), so what TIDAL does to its own files never touches the original */
 const setupApp = async (installDir) => {
 	const install = resolve(installDir ?? (await platform.defaultInstall()));
 	// Built under a partial name and renamed at the end, so an interrupted setup doesn't look finished. Unique, as agents starting at once in a new worktree all set up
 	const partial = `${sharedApp}.${randomBytes(3).toString("hex")}.partial`;
 	// Skip the install's own Luna (often a link to some dist), the copy gets a link to this repo's dist instead
-	await linkTree(install, partial, join(install, "resources", "app"));
-	const resources = join(partial, "resources");
-	if (!(await exists(join(resources, "original.asar")))) await rename(join(resources, "app.asar"), join(resources, "original.asar"));
-	// A junction needs no admin rights on Windows, the type is ignored elsewhere
-	await symlink(join(repo, "dist"), join(resources, "app"), "junction");
+	try {
+		await copyTree(install, partial, join(install, "resources", "app"));
+		const resources = join(partial, "resources");
+		if (!(await exists(join(resources, "original.asar")))) await rename(join(resources, "app.asar"), join(resources, "original.asar"));
+		// A junction needs no admin rights on Windows, the type is ignored elsewhere
+		await symlink(join(repo, "dist"), join(resources, "app"), "junction");
+		// Tells a copy from an install hard linked by an older setup
+		await writeFile(join(partial, ".copied"), "");
+	} catch (err) {
+		// A failed copy of the install mustn't stay behind
+		await removeTree(partial);
+		throw err;
+	}
 	await rename(partial, sharedApp).catch(async (err) => {
 		// Another agent's setup finished first: use that one
 		if (!(await exists(sharedApp))) throw err;
-		await rm(partial, { recursive: true, force: true });
+		await removeTree(partial);
 	});
 	return install;
 };
 
+/** Runs `fn` holding the lock on the shared install: one copy at a time, and the leftovers of an interrupted copy are swept first */
+const inAppLock = (fn) =>
+	mkdir(root, { recursive: true }).then(() =>
+		withLock(
+			join(root, ".app.lock"),
+			async () => {
+				for (const name of await readdir(root)) if (/^\.app\.\w+\.partial$/.test(name)) await removeTree(join(root, name));
+				return fn();
+			},
+			{ seconds: 900, staleSeconds: 1000 },
+		),
+	);
+// Whether this command started (or restarted) the host: a start that fails then stops it, one that only found the instance running leaves it
+let spawned = false;
+// Set by the timeout: a start still running then must not spawn TIDAL again while the cleanup stops it
+let aborted = false;
+// When this command began: a stop requested after that is meant for this start
+// Known limit, by design: stop is checked by file mtime at every launch (also the relaunch after the login copy) and after the spawn, not continuously, and a filesystem with coarse mtimes (FAT) can round a stop made within a moment of the start down. A stop that is missed leaves a running instance, which `stop` again ends
+const began = Date.now();
+const stopRequestFile = join(instanceDir, "stop.request");
 const launch = async () => {
 	if (!(await exists(appDir))) throw new Error(`${appDir} isn't set up, run setup first`);
+	if (aborted) throw new Error("Timed out");
+	if (await stopRequested(stopRequestFile, began)) throw new Error(`Instance ${instance} was stopped by a stop command, not launching it`);
 	if ((await hostState()) === undefined) {
 		await rm(hostFile, { force: true });
+		spawned = true;
 		if (process.platform === "win32") {
 			// A process spawned by this command dies when the agent's tool call ends (its job object closes), so WMI starts the host instead.
 			const commandLine = quoteCommandLine([process.execPath, script, "--instance", instance, "__host"]);
@@ -236,6 +290,11 @@ const launch = async () => {
 		await poll(hostState, 30, "TIDAL didn't open its debugging ports within 30s").catch(async (err) => {
 			throw await withMainLog(err);
 		});
+	}
+	// A stop that came while TIDAL was spawning found nothing to stop
+	if (spawned && (aborted || (await stopRequested(stopRequestFile, began)))) {
+		await stopInstance();
+		throw new Error(`Instance ${instance} was stopped by a stop command`);
 	}
 	await waitForLuna().catch(async (err) => {
 		throw await withMainLog(err);
@@ -292,9 +351,10 @@ const readOriginalAsar = () => {
 	return files;
 };
 
-const stopInstance = async () => {
+const stopInstance = async (name = instance) => {
+	const dir = join(root, name);
 	// Only this instance's processes, never the user's daily client or other instances: Chromium passes --user-data-dir to every process it starts
-	const profileArg = `--user-data-dir=${profileDir}`;
+	const profileArg = `--user-data-dir=${join(dir, "profile")}`;
 	if (process.platform === "win32") {
 		const kill =
 			"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:TT_PROFILE) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
@@ -308,8 +368,8 @@ const stopInstance = async () => {
 		}
 	}
 	// The host exits with TIDAL. Then let the killed processes release the profile's files
-	await poll(async () => ((await hostState()) === undefined ? true : undefined), 15, `Instance ${instance} still running 15s after killing it`);
-	await rm(hostFile, { force: true });
+	await poll(async () => ((await hostState(dir)) === undefined ? true : undefined), 15, `Instance ${name} still running 15s after killing it`);
+	await rm(join(dir, "host.json"), { force: true });
 	await sleep(1000);
 };
 
@@ -346,7 +406,11 @@ const copyDailyLogin = async () => {
 			const files = (await readdir(from, { withFileTypes: true }))
 				.filter((entry) => entry.isFile() && entry.name !== "LOCK")
 				.map((entry) => entry.name);
-			for (const name of files) await writeFile(join(to, name), await readFile(join(from, name)));
+			for (const name of files) {
+				// The timeout's cleanup deletes the copy: nothing is written after it
+				if (aborted) throw new Error("Timed out");
+				await writeFile(join(to, name), await readFile(join(from, name)));
+			}
 			// The same files afterwards means no compaction ran during the copy, which could leave it inconsistent
 			const after = (await readdir(from, { withFileTypes: true }))
 				.filter((entry) => entry.isFile() && entry.name !== "LOCK")
@@ -420,6 +484,7 @@ const host = async () => {
 	];
 	// Port 0: the OS picks free ports, so instances never collide. TIDAL prints the urls it got
 	const ports = ["--remote-debugging-port=0", "--inspect=127.0.0.1:0"];
+	const token = randomBytes(16).toString("hex");
 	const tidal = spawn(join(appDir, platform.exe), [`--user-data-dir=${profileDir}`, ...ports, ...flags, ...platform.flags], {
 		cwd: instanceDir,
 		env,
@@ -431,11 +496,11 @@ const host = async () => {
 	// TIDAL didn't start (no exit event follows): nothing left to host
 	tidal.on("error", (err) => log.end(`[tidal.mjs host] Could not start TIDAL: ${err.message}\n`, () => process.exit(1)));
 	tidal.on("exit", (code) => {
-		rmSync(hostFile, { force: true });
+		// Only its own: a second host for the same instance exits on the profile lock and must leave the first one's host.json
+		removeHostFile(hostFile, token);
 		log.end(`[tidal.mjs host] TIDAL exited with ${code}\n`, () => process.exit(0));
 	});
 
-	const token = randomBytes(16).toString("hex");
 	const state = {};
 	const logs = createLogBuffer();
 	const server = createServer(hostHandler({ token, state, logs }));
@@ -522,14 +587,23 @@ const host = async () => {
 };
 
 // A blocked main process (e.g. an unanswered native "Security Warning" dialog) would otherwise hang forever. start can launch twice.
-const armTimeout = (seconds) =>
-	setTimeout(() => {
+// Known limit: a timeout in the moments between the host's creation and its spawn of TIDAL finds no process of the profile to stop, and the host then starts TIDAL (rare; `stop` ends it).
+const armTimeout = (seconds, cleanup) =>
+	setTimeout(async () => {
+		aborted = true;
 		console.error(`Timed out after ${seconds}s`);
+		// Bounded: a hung kill or delete mustn't keep a timed out command alive
+		await Promise.race([cleanup?.().catch(() => {}), sleep(40_000)]);
 		process.exit(1);
 	}, seconds * 1000).unref();
+/** Stops the instance this command launched, so a failed start leaves nothing running */
+const stopIfSpawned = async () => {
+	if (spawned) await stopInstance();
+};
 const seconds = command === "wait" ? Number(args[2] ?? 30) : Number(arg ?? 0);
 if (!["start", "repl", "__host"].includes(command))
-	armTimeout(command === "setup" ? 900 : command === "logs" || command === "wait" ? seconds + 30 : 90);
+	// setup waits up to 900s for the install lock, then copies
+	armTimeout(command === "setup" ? 1800 : command === "logs" || command === "wait" ? seconds + 30 : command === "remove" ? 1100 : all ? 600 : 90);
 
 /** The host's page console lines after `since` */
 const readLogs = async (since) => (await hostGet(`/logs?since=${since}`)) ?? Promise.reject(notRunning());
@@ -561,42 +635,171 @@ switch (command) {
 		break;
 	}
 	case "setup": {
-		if (await exists(sharedApp)) throw new Error(`${sharedApp} already exists, delete it to set it up again`);
-		const install = await setupApp(arg);
-		console.log(`Set up ${sharedApp} from ${install}`);
+		await inAppLock(async () => {
+			if (await exists(sharedApp))
+				throw new Error(
+					`${sharedApp} already exists (an old hard linked one is replaced by the next start that finds no instance running), delete it to set it up again`,
+				);
+			console.log(`Set up ${sharedApp} from ${await setupApp(arg)}`);
+		});
 		break;
 	}
 	case "list": {
-		for (const name of await instances()) console.log(`${name}: ${(await hostState(join(root, name))) === undefined ? "stopped" : "running"}`);
+		for (const name of await instances()) console.log(`${name}: ${await instanceState(name)}`);
 		break;
 	}
 	case "start": {
-		if (appDir === sharedApp && !(await exists(sharedApp))) console.log(`Set up ${sharedApp} from ${await setupApp()}`);
-		armTimeout(180);
-		await launch();
-		// loggedInSession, not session: right after a load userId is still null for a logged in instance, which would copy the login again
-		let { userId } = await loggedInSession();
-		if (userId === null && (await exists(join(platform.dailyProfile, "Local Storage")))) {
-			console.log(`Logged out, copying the login of the daily client in ${platform.dailyProfile}`);
-			await stopInstance();
-			await copyDailyLogin();
-			await launch();
-			if ((await evalInPage(`(${useCopiedLogin})()`)).value === true) {
-				await reloadPage();
-				({ userId } = await loggedInSession());
-			}
-		}
-		const login = userId === null ? "logged out" : `logged in as user ${userId}`;
-		const { devtools, inspector } = await hostState();
-		console.log(
-			`Instance ${instance} running, Luna loaded, ${login} (CDP ${new URL(devtools).port}, main process inspector ${new URL(inspector).port})`,
+		// Locked as a whole, not only the host spawn: two starts of a logged out instance would otherwise both stop it to copy the login. The second waits, then finds the instance running
+		await withLock(
+			lockFile,
+			async () => {
+				// Under the instance lock, so no other start is between its install check and its lock (it would read as stopped). Locked only when the install is missing or old, so a start doesn't wait for another's copy for nothing
+				if (appDir === sharedApp && !(await exists(join(sharedApp, ".copied")))) {
+					await inAppLock(async () => {
+						// An install hard linked by an older setup (no .copied marker) is replaced by a copy, unless instances run from it: deleting it under them would break them
+						if ((await exists(sharedApp)) && !(await exists(join(sharedApp, ".copied")))) {
+							const busy = [];
+							// Instances with their own app copy (older still) don't use it. Running and starting ones (their lock is held) count
+							// Counts every non-stopped instance, also one only waiting for a lock: not told apart, and a wrong hint only delays the migration
+							for (const name of await instances())
+								if (
+									!(await exists(join(root, name, "app"))) &&
+									(name === instance ? (await hostState()) !== undefined : (await instanceState(name)) !== "stopped")
+								)
+									busy.push(name);
+							// Known limit: while an instance runs on the old install every start says so, and only stopping it allows the migration
+							if (busy.length > 0)
+								console.log(
+									`${sharedApp} is hard linked by an older setup: stop ${busy.join(", ")}, then start again to get a copy (this start continues on the old install)`,
+								);
+							else {
+								// Renamed first: a rename fails whole when a file is in use, where deleting in place could leave a half deleted install. The renamed tree is removed next (or swept as a partial)
+								const old = `${sharedApp}.${randomBytes(3).toString("hex")}.partial`;
+								try {
+									await rename(sharedApp, old);
+								} catch (err) {
+									// Some file is in use (a leftover TIDAL, a scan): stays as it was, this start runs on it
+									console.log(
+										`${sharedApp} is hard linked by an older setup and in use (${err.code}): stop TIDAL processes of this worktree, then start again to get a copy (this start continues on the old install)`,
+									);
+									return;
+								}
+								// A failed delete leaves a partial that the next install lock sweeps
+								await removeTree(old).catch((err) => console.log(`Could not delete ${old}: ${err.message}`));
+							}
+						}
+						if (!(await exists(sharedApp))) console.log(`Set up ${sharedApp} from ${await setupApp()}`);
+					});
+				}
+				if (!(await exists(instanceDir))) throw new Error(`Instance ${instance} was removed while this start waited`);
+				// Armed once the lock is held, so waiting for another start doesn't use up the time of this one
+				let copiedLogin = false;
+				// Only graceful ends are covered (failure, timeout): a start killed hard leaves it for remove, as SKILL.md says
+				// A start that failed must not leave the daily client's refresh token in the profile: deleted once TIDAL is stopped
+				// (The IndexedDB key useCopiedLogin sets stays: harmless without the token, remove deletes the profile)
+				const dropCopiedLogin = async () => {
+					// Once: the failing flow and the timeout both end here
+					if (!copiedLogin) return;
+					copiedLogin = false;
+					await rm(join(profileDir, "Local Storage", "leveldb"), { recursive: true, force: true }).then(
+						() => console.error(`Deleted the copied login of the daily client from ${profileDir}`),
+						() => console.error(`The daily client's login is in ${profileDir}: run remove --instance ${instance} to delete it`),
+					);
+				};
+				// Not stopped: TIDAL may still hold the folder, so it is left for remove
+				const keepLoginHint = () =>
+					copiedLogin && console.error(`The daily client's login is in ${profileDir}: run remove --instance ${instance} to delete it`);
+				// One cleanup for the failing flow and the timeout: the one that comes second waits for it, not exits in the middle of it
+				let cleanup;
+				const cleanUp = () => (cleanup ??= stopIfSpawned().then(dropCopiedLogin, keepLoginHint));
+				armTimeout(180, async () => {
+					// This process holds the lock and exits without releasing it
+					await cleanUp().finally(() => unlockOwn(lockFile));
+				});
+				try {
+					await launch();
+					// loggedInSession, not session: right after a load userId is still null for a logged in instance, which would copy the login again
+					let { userId } = await loggedInSession();
+					// --no-login: stays logged out, to test what a logged out client does. A start without it asks for the login, so a running logged out instance (also one left by a start killed before the copy) is restarted with it
+					if (userId === null && !noLogin && (await exists(join(platform.dailyProfile, "Local Storage")))) {
+						console.log(`Logged out, copying the login of the daily client in ${platform.dailyProfile}`);
+						// A start that fails from here on leaves the instance stopped (it was killed for the copy), not running
+						await stopInstance();
+						// Set first: a copy that fails halfway leaves part of the login
+						copiedLogin = true;
+						await copyDailyLogin();
+						await launch();
+						if ((await evalInPage(`(${useCopiedLogin})()`)).value === true) {
+							await reloadPage();
+							({ userId } = await loggedInSession());
+						}
+					}
+					const login = userId === null ? "logged out" : `logged in as user ${userId}`;
+					const { devtools, inspector } = await hostState();
+					console.log(
+						`Instance ${instance} running, Luna loaded, ${login} (CDP ${new URL(devtools).port}, main process inspector ${new URL(inspector).port})`,
+					);
+					if (copiedLogin) console.log(`It holds a copy of the daily client's login: run remove --instance ${instance} when finished`);
+					if (created) console.log(`Pass --instance ${instance} to every later command, batch steps with repl.`);
+				} catch (err) {
+					// A start that failed after launching leaves nothing running (also when it restarted the instance itself to copy the login)
+					await cleanUp();
+					throw err;
+				}
+			},
+			{ seconds: 1000, staleSeconds: instanceLockStale, onWait: () => console.log(`Waiting for another command on instance ${instance}`) },
 		);
-		if (created) console.log(`Pass --instance ${instance} to every later command, batch steps with repl.`);
 		process.exit(0);
 	}
 	case "stop": {
+		// Not under the instance lock, deliberately: stop is how a hung start gets killed (that start then fails and cleans up). --all includes instances still starting for that reason too (documented in SKILL.md)
+		if (!all && !(await exists(instanceDir))) throw new Error(`Instance ${instance} doesn't exist`);
+		if (all) {
+			const running = [];
+			for (const name of await instances()) if ((await instanceState(name)) !== "stopped") running.push(name);
+			const failed = [];
+			// One that can't be stopped doesn't keep the others running
+			for (const name of running)
+				await requestStop(join(root, name, "stop.request"))
+					.catch(() => {})
+					.then(() => stopInstance(name))
+					.catch((err) => failed.push(`${name} (${err.message})`));
+			const stopped = running.filter((name) => !failed.some((entry) => entry.startsWith(`${name} `)));
+			if (running.length === 0) console.log("No instance running");
+			else if (stopped.length > 0) console.log(`Stopped ${stopped.join(", ")}`);
+			if (failed.length > 0) throw new Error(`Could not stop ${failed.join(", ")}`);
+			break;
+		}
+		await requestStop(stopRequestFile).catch(() => {});
 		await stopInstance();
 		console.log(`Stopped instance ${instance}`);
+		break;
+	}
+	case "remove": {
+		if (!(await exists(instanceDir))) throw new Error(`Instance ${instance} doesn't exist`);
+		// A start in progress is stopped first (it holds the lock until it is done or timed out), then waited for under the lock: not spawned into a folder being deleted
+		await requestStop(stopRequestFile).catch(() => {});
+		await stopInstance();
+		await withLock(
+			lockFile,
+			async () => {
+				await stopInstance();
+				// removeTree never enters links: an older instance's own install holds a junction to this repo's dist/. Retried: Windows may hold the profile's files a moment after their process is gone
+				for (let attempt = 1; ; attempt++) {
+					try {
+						await removeTree(instanceDir);
+						break;
+					} catch (err) {
+						if (attempt === 5)
+							throw new Error(`${err.message}
+The folder ${instanceDir} is partly deleted: run remove --instance ${instance} again before using it`);
+						await sleep(500);
+					}
+				}
+			},
+			{ seconds: 1000, staleSeconds: instanceLockStale, onWait: () => console.log(`Waiting for another command on instance ${instance}`) },
+		);
+		console.log(`Removed instance ${instance}, with its profile and login`);
 		break;
 	}
 	case "reload":
