@@ -32,12 +32,13 @@
     "coverage:comment": "tsx test/coverageComment.ts",
     "coverage:thresholds": "tsx test/raiseCoverageThresholds.ts",
     "coverage:badge": "tsx test/coverageBadge.ts",
-    "updateSkills": "node scripts/update-skills.mjs"
+    "updateSkills": "node .agents/update-skills.mjs"
   },
   "agentSkills": {
     "source": "Inrixia/.claude",
     "ref": "main",
     "skills": [
+      "code-design",
       "react",
       "review",
       "typescript",
@@ -69,4 +70,4 @@
     "html-minifier-terser": "^7.2.0",
     "semver": "7.8.6"
   }
-}
+}

@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Lives at .agents/update-skills.mjs. Vendors shared agent skills into .agents/skills/.
+// Config: `agentSkills` in package.json, else .agents/skills.json (non-Node repos).
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const { source, ref, skills } = pkg.agentSkills ?? {};
+const pkgPath = join(root, "package.json");
+const pkgConfig = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")).agentSkills : undefined;
+const { source, ref, skills } = pkgConfig ?? JSON.parse(readFileSync(join(root, ".agents", "skills.json"), "utf8"));
 
 if (typeof source !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(source)) {
 	throw new Error(`Invalid agentSkills.source: ${source}`);
@@ -23,7 +26,7 @@ mkdirSync(destRoot, { recursive: true });
 const wanted = new Set(skills);
 
 if (skills.length > 0) {
-	const tmp = mkdtempSync(join(tmpdir(), "luna-skills-"));
+	const tmp = mkdtempSync(join(tmpdir(), "agent-skills-"));
 	try {
 		execFileSync("git", ["clone", "--depth", "1", "--filter=blob:none", "--sparse", "--branch", ref, `https://github.com/${source}.git`, tmp]);
 		execFileSync("git", ["-C", tmp, "sparse-checkout", "set", ...skills.map((s) => `skills/${s}`)]);
@@ -41,6 +44,7 @@ if (skills.length > 0) {
 	}
 }
 
+// Drop vendored skills no longer listed; repo-owned skills (no .vendored marker) are never touched.
 for (const entry of readdirSync(destRoot, { withFileTypes: true })) {
 	if (!entry.isDirectory() || wanted.has(entry.name)) continue;
 	const dir = join(destRoot, entry.name);
