@@ -31,7 +31,18 @@
     "coverage:ci": "vitest run --coverage --reporter=default --reporter=json --outputFile.json=coverage/test-results.json",
     "coverage:comment": "tsx test/coverageComment.ts",
     "coverage:thresholds": "tsx test/raiseCoverageThresholds.ts",
-    "coverage:badge": "tsx test/coverageBadge.ts"
+    "coverage:badge": "tsx test/coverageBadge.ts",
+    "updateSkills": "node scripts/update-skills.mjs"
+  },
+  "agentSkills": {
+    "source": "Inrixia/.claude",
+    "ref": "main",
+    "skills": [
+      "react",
+      "review",
+      "typescript",
+      "vitest"
+    ]
   },
   "license": "MS-Pl",
   "devDependencies": {
