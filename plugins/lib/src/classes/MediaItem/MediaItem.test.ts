@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { reduxStore, resetTidalState, setTidalState } from "test/harness/tidalStore";
 
 import type * as redux from "../../redux";
+import { InterceptTimeoutError } from "../../redux";
 import { MediaItem } from "./MediaItem";
 import { Quality } from "../Quality";
 import { TidalApi } from "../TidalApi";
@@ -412,6 +413,21 @@ describe("fromId", () => {
 		expect(await MediaItem.fromId()).toBeUndefined();
 	});
 
+	test("throws when TIDAL never answers, rather than reporting the item as missing", async () => {
+		const id = nextId();
+		vi.useFakeTimers();
+		try {
+			const loaded = MediaItem.fromId(id);
+			// Attach first: this promise is meant to reject, and nothing else would handle it
+			const rejected = expect(loaded).rejects.toBeInstanceOf(InterceptTimeoutError);
+			// Nothing answers the load, so the 5s wait is what ends it
+			await vi.advanceTimersByTimeAsync(5000);
+			await rejected;
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	test("uses the media item TIDAL's store already has, without asking the api", async () => {
 		const id = nextId();
 		const tidalItem = track(id, { title: "Stored" });
@@ -539,5 +555,30 @@ describe("fromIsrc", () => {
 
 		lookup({ tags: ["MQA"], loaded: null });
 		await expect(MediaItem.fromIsrc(nextIsrc())).resolves.toBeUndefined();
+	});
+
+	test("asks TIDAL again when a lookup threw, instead of remembering no track", async () => {
+		const isrc = nextIsrc();
+		const isrcLookup = vi.spyOn(TidalApi, "isrc").mockImplementation(async function* () {
+			yield { id: nextId(), attributes: { mediaTags: [] } } as never;
+		});
+		// A load that fails throws, which is what this lookup must not remember
+		const fromId = vi.spyOn(MediaItem, "fromId").mockImplementation((async () => {
+			throw new InterceptTimeoutError(["content/LOAD_SINGLE_MEDIA_ITEM_SUCCESS"], ["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"]);
+		}) as never);
+
+		await expect(MediaItem.fromIsrc(isrc)).rejects.toBeInstanceOf(InterceptTimeoutError);
+		await expect(MediaItem.fromIsrc(isrc)).rejects.toBeInstanceOf(InterceptTimeoutError);
+		// Twice, because a failure says nothing about whether the track exists
+		expect(isrcLookup).toHaveBeenCalledTimes(2);
+
+		// A track that was found is an answer, and is kept: that is the difference this test rests on. The lookup spy is the
+		// same object, so its count is cleared rather than replaced
+		const remembered = nextIsrc();
+		isrcLookup.mockClear();
+		fromId.mockImplementation((async (id: redux.ItemId) => ({ id, bestQuality: Quality.High }) as unknown as MediaItem) as never);
+		await expect(MediaItem.fromIsrc(remembered)).resolves.toMatchObject({ bestQuality: Quality.High });
+		await expect(MediaItem.fromIsrc(remembered)).resolves.toMatchObject({ bestQuality: Quality.High });
+		expect(isrcLookup).toHaveBeenCalledTimes(1);
 	});
 });

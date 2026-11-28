@@ -54,10 +54,6 @@ export class MediaItem extends ContentBase {
 				["content/LOAD_SINGLE_MEDIA_ITEM_FAIL"],
 			);
 			return mediaItem;
-		} catch {
-			// TIDAL's FAIL action and the timeout reject now: an item that failed to load is what callers already handle
-			// as missing, not an error to throw at them
-			return undefined;
 		} finally {
 			// Also when the load fails or times out, or TIDAL's own warnings stay suppressed
 			clearWarnCatch();
@@ -74,6 +70,8 @@ export class MediaItem extends ContentBase {
 			// Prefetch mediaItemCache while constructing
 			const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
 			const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
+				// A load that fails throws out of here, a timeout and TIDAL's FAIL action alike: whether that is worth a retry
+				// is the caller's business, and a return value cannot say it
 				mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
 				if (mediaItem === undefined) return;
 				const cache = await mediaItemCache;
@@ -85,6 +83,10 @@ export class MediaItem extends ContentBase {
 			return item;
 		},
 	);
+	/**
+	 * A track lookup by isrc. A load that fails throws out of here, and `memoize` keeps only resolved promises, so a failed
+	 * lookup is not remembered: the next call asks TIDAL again rather than serving "no track" for the rest of the session.
+	 */
 	public static fromIsrc: (isrc: string) => Promise<MediaItem | undefined> = memoize(async (isrc) => {
 		let bestMediaItem: MediaItem | undefined = undefined;
 		for await (const track of TidalApi.isrc(isrc)) {
@@ -135,7 +137,8 @@ export class MediaItem extends ContentBase {
 	public static onPreload: AddReceiver<MediaItem> = registerEmitter((emit) =>
 		redux.intercept("player/PRELOAD_ITEM", unloads, async (item) => {
 			if (item?.productId === undefined) return MediaItem.trace.warn("player/PRELOAD_ITEM intercepted without productId!", item);
-			const mediaItem = await this.fromId(item.productId, item.productType);
+			// A load that failed throws: preloading is best effort, so it is logged and skipped rather than left to reject
+			const mediaItem = await this.fromId(item.productId, item.productType).catch(MediaItem.trace.err.withContext("onPreload", item.productId));
 			if (mediaItem === undefined) return;
 			emit(mediaItem, listenerError("MediaItem.onPreload", mediaItem.trace.err.withContext("preloadItem.runListeners")));
 		}),
@@ -146,7 +149,10 @@ export class MediaItem extends ContentBase {
 			"playbackControls/MEDIA_PRODUCT_TRANSITION",
 			unloads,
 			asyncDebounce(async ({ playbackContext }: redux.InterceptPayload<"playbackControls/MEDIA_PRODUCT_TRANSITION">) => {
-				const mediaItem = await this.fromPlaybackContext(playbackContext);
+				// A load that failed throws: the transition is reported to listeners when it can be, and logged when it cannot
+				const mediaItem = await this.fromPlaybackContext(playbackContext).catch(
+					MediaItem.trace.err.withContext("onMediaTransition", playbackContext.actualProductId),
+				);
 				if (mediaItem === undefined) return;
 
 				// Detect spatial audio support based on actual playback
@@ -168,7 +174,8 @@ export class MediaItem extends ContentBase {
 			unloads,
 			asyncDebounce(
 				async ({ mediaProduct: { productId, productType } }: redux.InterceptPayload<"playbackControls/PREFILL_MEDIA_PRODUCT_TRANSITION">) => {
-					const mediaItem = await this.fromId(productId, productType);
+					// A load that failed throws: prefilling is best effort, so it is logged and skipped
+					const mediaItem = await this.fromId(productId, productType).catch(MediaItem.trace.err.withContext("onPreMediaTransition", productId));
 					if (mediaItem === undefined) return;
 					await emit(mediaItem, listenerError("MediaItem.onPreMediaTransition", mediaItem.trace.err.withContext("prefillMPT.runListeners")));
 				},
