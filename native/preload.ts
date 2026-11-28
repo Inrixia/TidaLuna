@@ -130,9 +130,12 @@ ipcRenderer.on("__Luna.console", (_event, prop: ConsoleMethodName, args: any[]) 
 			})()`,
 			true,
 		);
+		console.log(`[Luna.preload] luna.js loaded!`);
 	} catch (err) {
-		ipcRenderer.invoke("__Luna.preloadErr", err);
-		throw err;
+		try {
+			await ipcRenderer.invoke("__Luna.preloadErr", err);
+		} catch (reportErr) {
+			console.error("[Luna.preload] Failed to report preload error", reportErr, err);
+		}
 	}
-	console.log(`[Luna.preload] luna.js loaded!`);
 })();
