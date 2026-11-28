@@ -79,15 +79,24 @@ export const linkTree = async (from, to, skip) => {
 	}
 };
 
-/** Writes `files` (relative path to content) under `dir`, never outside it: the paths come from TIDAL */
+/**
+ * Writes `files` (relative path to content) under `dir`, never outside it: the paths come from TIDAL.
+ *
+ * Returns how many were written, not how many were offered: a caller prints that number as the result of a dump, so it has
+ * to be the files on disk. `dir` is resolved once, because comparing a resolved path against an unresolved `dir` rejected
+ * every write whenever the caller passed one with a trailing separator, and said nothing while doing it.
+ */
 export const writeFiles = async (dir, files) => {
+	const base = resolve(dir);
+	let written = 0;
 	for (const [name, content] of Object.entries(files)) {
-		const path = resolve(dir, name.replace(/^\/+/, ""));
-		if (!path.startsWith(dir + sep)) continue;
+		const path = resolve(base, name.replace(/^\/+/, ""));
+		if (!path.startsWith(base + sep)) continue;
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, content);
+		written++;
 	}
-	return Object.keys(files).length;
+	return written;
 };
 
 /** Cuts text so a huge value doesn't flood the output */
