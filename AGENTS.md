@@ -4,6 +4,17 @@ Guidance for coding agents (and humans) in repo.
 
 Luna (TidaLuna) = client mod for TIDAL desktop app (Electron). Takes over TIDAL app entry, loads plugin system into page. pnpm workspace (`native`, `render`, `plugins/*`), TypeScript, esbuild bundling.
 
+## Shared guidance
+
+Vendored from Inrixia/.claude. Don't edit these files here; change the list in `package.json` and run `pnpm run updateSkills`.
+Read the matching file before starting the work. This file's Code design section wins on conflict.
+
+- Editing `.ts`/`.tsx`: `.agents/skills/typescript/SKILL.md`
+- Writing, reviewing, or refactoring React components/hooks (`.tsx`/`.jsx`): `.agents/skills/react/SKILL.md`
+- Writing or fixing tests: `.agents/skills/vitest/SKILL.md`
+- Reviewing, debugging or fixing a bug: `.agents/skills/review/SKILL.md`
+- Running, starting, or testing Luna or TIDAL, checking plugin loading, debugging runtime bugs, finding internals to hook, or screenshotting UI: `.agents/skills/tidal-test-instance/SKILL.md`
+
 ## Commands
 
 - `pnpm i`: install.
