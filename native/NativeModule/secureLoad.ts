@@ -122,23 +122,33 @@ export const secureLoad = (moduleInfo: NativeModuleInfo, parent?: Electron.Brows
 		setMaxListeners: () => {},
 	});
 
+	// Snapshot process metadata via JSON round-trip so no getters or live host references cross into the vm sandbox
+	const processMeta = objectify({
+		version: process.version,
+		versions: process.versions,
+		platform: process.platform,
+		arch: process.arch,
+		release: process.release,
+		features: process.features,
+	});
+
 	const mockProcess = {
 		// Safe Methods
 		nextTick: (...args: Parameters<typeof process.nextTick>) => process.nextTick(...args),
 		hrtime: (time?: [number, number]) => process.hrtime(time),
-		...objectify({
-			env: Object.freeze(Object.fromEntries(
+		env: Object.freeze(
+			Object.fromEntries(
 				["TMPDIR", "TMP", "TEMP", "XDG_RUNTIME_DIR", "HOME", "USERPROFILE", "PATH", "APPDATA"]
 					.filter((k) => k in process.env)
 					.map((k) => [k, process.env[k]]),
-			)),
-			version: process.version,
-			versions: process.versions,
-			platform: process.platform,
-			arch: process.arch,
-			release: process.release,
-			features: process.features,
-		}),
+			),
+		),
+		version: processMeta.version,
+		versions: Object.freeze(processMeta.versions),
+		platform: processMeta.platform,
+		arch: processMeta.arch,
+		release: Object.freeze(processMeta.release),
+		features: Object.freeze(processMeta.features),
 		stdin: createStreamMock(process.stdin),
 		stderr: createStreamMock(process.stderr),
 		stdout: createStreamMock(process.stdout),
