@@ -78,40 +78,40 @@ Plugin changes (native too) apply on plugin reload or live reload; `render/` + `
 
 ## Code design
 
-How code here is reviewed. Apply to new code, and to the code you are already touching.
+How code here is reviewed. Apply to new code and to code you touch.
 
-- Construct through `static from(...)` with a private constructor. Cache instances by identity (url, path, id) in a static map named for the class (`Apple.apples`): same key, same instance.
-- Other statics are fine where useful (see `MediaItem`, `LunaPlugin`). Code that uses a class's state lives on that class, not in a static elsewhere that takes its data.
-- Cache a derived value only when the cost is real: a private field plus a `get`, or `memoize`/`asyncDebounce` from `@inrixia/helpers`. Premature optimization is bloat.
+- Construct through `static from(...)` with a private constructor. Cache instances by identity (url, path, id) in a static map named for what it holds (`Apple.apples`): same key, same instance.
+- Statics are fine where useful (`MediaItem`, `LunaPlugin`). A function that uses a class's state lives on that class.
+- Cache a derived value only when the cost is real: a field plus a `get`, or `memoize`/`asyncDebounce`. Don't pre-optimize.
 - Validate on construction: the constructor throws on state that should not exist.
-- A function that fails throws. A function whose value is known to be absent returns `undefined`. Never return `{ ok, error }`: errors propagate up until handled where something can be done about it.
-- A method called exactly once gets inlined. Past ~200 lines, split to `Class.stepName.ts` beside the class if a class helper, or `stepName.ts` if its own helper.
-- One class per file, named for the class, and the class named for its role: `LunaTheme` beside `LunaPlugin`, not `Theme`. A class split over several files (`LunaTheme.helper.ts`, `LunaTheme.types.ts`) lives in a `LunaTheme/` folder with a barrel `index.ts`, like `MediaItem/`.
-- Public state beats accessor ceremony. A public record beats a private registry plus getters, and destructuring that only guards against mutation that cannot happen is noise.
-- Pass a value once. If the callee already holds it, read it from the instance instead of taking a second parameter.
-- A file over 200 lines holding more than one function is a candidate for splitting.
+- A function that fails throws; one whose value is known to be absent returns `undefined`. Never `{ ok, error }`: errors propagate until something can handle them.
+- Inline a method called once, unless that bloats the file. Break code out only when it is large or generic enough to reuse (a `sha256` helper, not caller-specific logic): `Class.stepName.ts` beside the class for a class helper, `stepName.ts` for a standalone one.
+- One class per file, named for its role: `LunaTheme` beside `LunaPlugin`, not `Theme`. A class spanning several files gets a folder with a barrel (`LunaTheme/index.ts`, `LunaTheme.types.ts`), like `MediaItem/`.
+- Public state beats accessor ceremony: a public record beats a private registry plus getters.
+- Pass a value once. If the callee already holds it, read it from the instance.
+- A file over 200 lines holding more than one function is worth splitting.
 
 ### Practice
 
 - Await what you start: a dropped promise's rejection is a no-op nobody sees.
-- Follow object-oriented design (encapsulation, inheritance): state has one owner. A value read from two layers belongs to one of them and the other asks, rather than both keeping a copy that can disagree.
-- Platform APIs are optional or missing. `window.requestIdleCallback?.()`, `if (electron.app.dock !== undefined)`: feature-detect, don't assume the runtime.
+- Object-oriented design: a class owns its state and inheritance carries shared behaviour. Each value has one owner; other layers ask it rather than keep a copy that can disagree.
+- Platform APIs may be missing: `window.requestIdleCallback?.()`, `if (electron.app.dock !== undefined)`. Feature-detect.
 
 ### Smells to fix rather than add
 
-- A third copy of the same logic. Extract it into the owning layer before the third exists, then call it from every site.
-- A helper with one caller, a file with one export nobody imports, a wrapper that forwards its arguments and does nothing else. Break a block out only when inlining would bloat its file, or when it is generic enough to reuse (a `sha256` helper, not logic specific to its caller).
-- A raw platform API where a Luna helper exists: `observe`, not `new MutationObserver`.
+- A third copy of the same logic. Extract it into the owning layer and call it from every site.
+- A file with one export nobody imports, a wrapper that only forwards arguments.
+- A raw platform API where a Luna helper exists (see Reuse before writing): `observe`, not `new MutationObserver`.
 - `any`, an `as` cast covering a mismatch, `typeof` on a declared type, unused parameters, dead or commented-out code, a `TODO` with no issue behind it.
-- A `catch` that swallows silently or only logs. Turning an error into `undefined` on purpose is fine.
+- A `catch` that loses an error by accident. Turning an error into `undefined` on purpose is fine.
 - Anything registered without `unloads`: listeners, observers, timers, style tags, redux intercepts.
 - `console.log` where a `Tracer` is available.
-- A comment that repeats what the code does. Comments explain why.
+- Comments that narrate the code. Say why.
 
 ### Names and tests
 
-- Descriptive function and variable names: `stringNotEmpty`, not an obscure predicate.
-- Uncertain input is `unknown`, then narrowed. Check undefined with `x === undefined`, or `!!x` where any falsy value means absent.
+- Names describe what a function or variable is for: `stringNotEmpty`, not an obscure predicate.
+- Uncertain input is `unknown`, then narrowed. Check `x === undefined`, or `!!x` for existence.
 - A test name is the bug it prevents.
 
 ## Style
