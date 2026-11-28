@@ -1,7 +1,7 @@
 import { fileURLToPath } from "url";
 import { defineConfig } from "vitest/config";
 
-import { coverageThresholds } from "./test/coverageThresholds";
+import thresholds from "./.github/coverage-thresholds.json" with { type: "json" };
 
 const resolvePath = (relative: string) => fileURLToPath(new URL(relative, import.meta.url));
 
@@ -99,8 +99,8 @@ export default defineConfig({
 				"plugins/ui/src/SettingsPage/PluginsTab/installedPlugins.ts",
 			],
 			exclude: untestable,
-			// Floors live in test/coverageThresholds.ts so the PR comment reports the same numbers CI enforces
-			thresholds: coverageThresholds,
+			// Floors live in .github/coverage-thresholds.json so CI and Vitest share the same numbers
+			thresholds,
 		},
 	},
 });
