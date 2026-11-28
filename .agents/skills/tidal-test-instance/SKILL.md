@@ -8,7 +8,7 @@ description: Launch a side-by-side TIDAL test instance running this repo's Luna 
 Separate TIDAL client: own install copy, own profile, this repo's `dist/` as Luna. Runs beside user's daily client, lives in `.tidal-test/<n>/` (gitignored). Drive with:
 
 ```sh
-node .claude/skills/tidal-test-instance/tidal.mjs [--instance <n>] <command>
+node .agents/skills/tidal-test-instance/tidal.mjs [--instance <n>] <command>
 ```
 
 | Command                                         | Does                                                                                                                                                                                         |
