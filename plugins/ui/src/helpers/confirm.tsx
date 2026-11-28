@@ -9,10 +9,14 @@ import { unloads } from "../index.safe";
 
 // I hate this but it works and gives use a nice usable confirm anywhere so
 let confirmImpl: (options: ConfirmOptions) => Promise<ConfirmResult>;
+let markReady: () => void;
+/** Resolves once the provider behind `confirm` has mounted, so a prompt asked for at load waits instead of racing it */
+export const whenConfirmReady = new Promise<void>((resolve) => (markReady = resolve));
 const ExfilConfirm = () => {
 	const confirm = useConfirm();
 	useEffect(() => {
 		confirmImpl = confirm;
+		markReady();
 	}, []);
 	return null;
 };

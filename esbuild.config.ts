@@ -42,6 +42,17 @@ const buildConfigs: BuildOptions[] = [
 		platform: "browser",
 		format: "esm",
 	},
+	{
+		// The unattended TIDAL update check, run by the schedule with ELECTRON_RUN_AS_NODE=1 (native/autoUpdateSchedule.ts).
+		// ESM and node, with nothing external: it must run on TIDAL's Electron binary alone
+		...defaultBuildOptions,
+		entryPoints: ["native/autoUpdateEntry.ts"],
+		outfile: "dist/autoUpdate.mjs",
+		target: TidalNodeVersion,
+		platform: "node",
+		format: "esm",
+		external: [],
+	},
 ];
 
 import "./build/buildPlugins";

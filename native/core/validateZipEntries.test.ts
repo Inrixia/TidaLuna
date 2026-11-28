@@ -24,4 +24,11 @@ describe("validateZipEntries", () => {
 	it("refuses a setuid file", async () => {
 		await expect(validateZipEntries(await zipOf({ suid: 0o104755 }), dest)).rejects.toThrow(/setuid\/setgid blocked: "suid"/);
 	});
+
+	it("refuses an archive holding far more entries than a dist", async () => {
+		// An archive from a url costs disk to unpack, and thousands of entries is a bomb or a mistake
+		const entries: Record<string, number> = {};
+		for (let at = 0; at < 4097; at++) entries[`f${at}.mjs`] = 0o100644;
+		await expect(validateZipEntries(await zipOf(entries), dest)).rejects.toThrow("entries, over the 4096 limit");
+	});
 });

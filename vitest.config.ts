@@ -46,6 +46,8 @@ const untestable = [
 	"native/expose.ts",
 	"native/ipc.ts",
 	"native/update.ts",
+	// A process entry point, like injector.ts: run by the schedule, nothing imports it
+	"native/autoUpdateEntry.ts",
 	"plugins/*/src/index.ts",
 	"plugins/*/src/index.tsx",
 	"plugins/*/src/index.safe.ts",

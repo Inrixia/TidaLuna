@@ -1,6 +1,8 @@
 import electron from "electron";
 
+import { spawn } from "child_process";
 import { readFileSync } from "fs";
+import os from "os";
 import { readFile } from "fs/promises";
 import mime from "mime";
 
@@ -8,11 +10,18 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { transformTidalModule } from "../render/src/tidalTransform";
+import { hookUpdater } from "./updaterHook";
 
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
+import { stateRootFor } from "./autoUpdate";
+import { updateGuardStatus } from "./autoUpdateStatus";
+import { publishRunner } from "./publishRunner";
+import { recordLunaInstalled } from "./registerSelf";
+import { applyRecordedDecision, decideUpdateRecovery, recoveryStatus } from "./updateRecovery";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
+import { pkg } from "./update";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
@@ -31,6 +40,23 @@ const readTidalHifiConfig = (): Record<string, unknown> | undefined => {
 
 // #region Bundle
 const bundleDir = process.env.TIDALUNA_DIST_PATH ?? path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Starts the detached repair for an update that `quitAndInstall` is about to apply.
+ *
+ * TIDAL closes as soon as that returns, so nothing here may be waited on: start the process and let the app go. The
+ * version it is coming from is the `app-<version>` folder this Luna sits in, which is how the repair knows which install
+ * is the new one.
+ */
+const spawnAfterUpdateRepair = (lunaVersion: string) => {
+	const fromVersion = /^app-(\d[\d.]*)/.exec(path.basename(path.dirname(process.resourcesPath)))?.[1];
+	const runner = path.join(bundleDir, "autoUpdate.mjs");
+	spawn(process.execPath, [runner, "--after-update", fromVersion ?? "", lunaVersion], {
+		detached: true,
+		stdio: "ignore",
+		env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+	}).unref();
+};
 const tidalAppPath = path.join(process.resourcesPath, "original.asar");
 const tidalPackagePromise = readFile(path.join(tidalAppPath, "package.json"), "utf8").then(JSON.parse);
 // #endregion
@@ -136,6 +162,28 @@ ipcHandle("__Luna.renderJs", () => {
 const lunaPages = new Set<string>();
 ipcHandle("__Luna.isLunaPage", async (_, href: string) => lunaPages.has(new URL(href).origin + new URL(href).pathname));
 
+// Luna's own folder, outside TIDAL's tree: the state, and the run kept for repairs
+const lunaStateRoot = () => stateRootFor({ platform: process.platform, env: process.env, home: os.homedir() });
+
+// Read-only, and deliberately so: the settings page can see what the unattended run did and why, but cannot start one.
+// An install asked for by page code is what #292 puts behind a confirmation window, so a channel here would be a way
+// around it. When that window lands, a repair action goes behind it rather than here.
+ipcHandle("__Luna.getUpdateGuardStatus", async () => updateGuardStatus(lunaStateRoot()));
+
+// Whether Luna may keep itself installed after TIDAL updates: asked once in the page, answered here. Registering a logon
+// task is a persistent change to the machine, so the answer is recorded and only an `enabled` one registers anything.
+ipcHandle("__Luna.getUpdateRecovery", async () => recoveryStatus(lunaStateRoot()));
+ipcHandle("__Luna.setUpdateRecovery", async (_event, decision: unknown) => {
+	if (decision !== "enabled" && decision !== "declined") throw new Error(`[Luna] Not an answer to the recovery question: ${String(decision)}`);
+	return decideUpdateRecovery({
+		stateRoot: lunaStateRoot(),
+		decision,
+		platform: process.platform,
+		home: os.homedir(),
+		electron: process.execPath,
+	});
+});
+
 const httpsHandler = async (req: Request): Promise<Response> => {
 	if (req.url.startsWith("https://luna/")) {
 		try {
@@ -213,7 +261,9 @@ const tidalModuleHandler = async (req: Request): Promise<Response> => {
 	const url = new URL(req.url);
 	if (!tidalMainHosts.has(url.host)) return new Response(null, { status: 403 });
 	const origin = `https://${url.host}`;
-	const res = await staleIfError(origin + url.pathname + url.search, () => electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }));
+	const res = await staleIfError(origin + url.pathname + url.search, () =>
+		electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }),
+	);
 	// shortcut: every .js is taken for a module, TIDAL's workers are inline blobs, check if a classic script ever loads from here
 	if (!res.ok || !url.pathname.endsWith(".js")) {
 		const headers = new Headers(res.headers);
@@ -246,6 +296,43 @@ const unregisterHttpsHandler = () => {
 
 // Ensure app is ready
 electron.app.whenReady().then(async () => {
+	// Recording that Luna is installed here, publishing the run that puts it back, and registering that run with the
+	// platform's schedule: in that order, since each needs what the one before wrote. Not awaited: a machine that cannot
+	// do any of it should still start TIDAL
+	void pkg()
+		.then(async ({ version }) => {
+			const stateRoot = lunaStateRoot();
+			await recordLunaInstalled({
+				stateRoot,
+				resourcesDir: process.resourcesPath,
+				lunaVersion: typeof version === "string" ? version : "unknown",
+			}).catch((err) => console.error("[Luna] Could not record this install:", err));
+			// One path a TIDAL update cannot replace, kept in step with the Luna that is running
+			await publishRunner({ stateRoot, resourcesDir: process.resourcesPath }).catch((err) =>
+				console.error("[Luna] Could not publish the update check:", err),
+			);
+
+			// TIDAL updates by calling electron.autoUpdater.quitAndInstall(), which applies the new version and relaunches
+			// into it. Wrapping it keeps this Luna in the new version before that relaunch, which is the same session, so
+			// the logon schedule is only the backstop (see updaterHook.ts)
+			hookUpdater({
+				updater: electron.autoUpdater,
+				spawnRepair: () => spawnAfterUpdateRepair(typeof version === "string" ? version : "unknown"),
+				log: (message) => console.log(`[Luna] ${message}`),
+			});
+
+			// Registered once and recorded, so a user who removes the schedule is not fought by every later start.
+			// Opt-in: only an answer the user gave registers anything, so a machine nobody asked is left alone
+			const applied = await applyRecordedDecision({
+				stateRoot,
+				platform: process.platform,
+				home: os.homedir(),
+				electron: process.execPath,
+			});
+			if (applied !== undefined) console.log(`[Luna] TIDAL update recovery: ${applied.reason}`);
+		})
+		.catch((err) => console.error("[Luna] Could not record this install:", err));
+
 	// Register the HTTPS handler
 	registerHttpsHandler();
 	electron.protocol.handle(moduleScheme, tidalModuleHandler);
@@ -260,7 +347,12 @@ electron.app.whenReady().then(async () => {
 // TIDAL's player message handler (native/app/main/playback/player/PlayerController.js) gets audio urls that point at the cache, see audioCache.ts
 const ipcOn = electron.ipcMain.on.bind(electron.ipcMain);
 electron.ipcMain.on = ((channel, listener) =>
-	ipcOn(channel, channel !== "player.message" ? listener : (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message))) as typeof electron.ipcMain.on;
+	ipcOn(
+		channel,
+		channel !== "player.message"
+			? listener
+			: (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message),
+	)) as typeof electron.ipcMain.on;
 // #endregion
 
 // #region Proxied BrowserWindow
