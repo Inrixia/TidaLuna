@@ -11,7 +11,45 @@ concurrency:
  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+ # A push can only publish when package.json's version changed, so decide that once, before anything expensive runs.
+ # Deliberately cheap: one checkout, no install, no build.
+ Version:
+  if: github.event_name == 'push'
+  runs-on: ubuntu-latest
+  permissions:
+   contents: read
+  outputs:
+   changed: ${{ steps.read.outputs.changed }}
+   version: ${{ steps.read.outputs.version }}
+  steps:
+   - uses: actions/checkout@v7
+
+   - id: read
+     run: |
+      # Compare against the commit the push started from, not HEAD^: a push can carry several commits, and the version
+      # bump is not necessarily the tip, so HEAD^ would miss it and publish nothing.
+      before="${{ github.event.before }}"
+      previous=""
+      if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+        git fetch --quiet --depth=1 origin "$before" || true
+        previous=$(git show "$before:package.json" 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+      fi
+      version=$(jq -r .version package.json)
+      echo "version=$version" >> "$GITHUB_OUTPUT"
+      # An unknown previous version counts as changed: publishing stays guarded by the existing-release check, and
+      # missing a release is worse than attempting one that turns out to exist.
+      if [ -n "$previous" ] && [ "$version" = "$previous" ]; then
+        echo "changed=false" >> "$GITHUB_OUTPUT"
+        echo "$version is unchanged from $before, nothing to publish"
+      else
+        echo "changed=true" >> "$GITHUB_OUTPUT"
+        echo "Version changed: ${previous:-unknown} -> $version"
+      fi
+
  Build:
+  needs: [Version]
+  # Pull requests always build: the tests and the artifact are the point of running there. Pushes only when the version moved.
+  if: always() && (github.event_name != 'push' || needs.Version.outputs.changed == 'true')
   runs-on: ubuntu-latest
   permissions:
    contents: read
@@ -51,9 +89,9 @@ jobs:
        ./package.json
 
  Release:
-  # Publishes once per version: pushes that don't bump package.json's version are skipped, existing releases are never overwritten.
-  needs: Build
-  if: github.event_name == 'push'
+  # Publishes once per version: only reached when the version changed, and an existing release is never overwritten.
+  needs: [Version, Build]
+  if: needs.Version.outputs.changed == 'true'
   runs-on: ubuntu-latest
   permissions:
    contents: write
