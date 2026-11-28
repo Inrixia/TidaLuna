@@ -1,10 +1,21 @@
 import { Semaphore } from "@inrixia/helpers";
 
-import { unloadSet, type LunaUnload, type LunaUnloads } from "@luna/core";
+import { unloadSet, type LunaUnload, type NullishLunaUnloads } from "@luna/core";
 
 import { safeTimeout } from "../helpers";
 import { interceptPromise, type InterceptPayload } from "./intercept";
 import type { ActionType } from "./types";
+
+/** Rejection of interceptActionResp when one of the rejActionTypes arrives. The action's payload is on `payload`. */
+export class ReduxActionError<P = unknown> extends Error {
+	constructor(
+		public readonly actionType: ActionType,
+		public readonly payload: P,
+	) {
+		super(`[interceptActionResp.FAIL] ${actionType}`);
+		this.name = "ReduxActionError";
+	}
+}
 
 const intercepts: Record<ActionType, Semaphore> = {} as Record<ActionType, Semaphore>;
 /**
@@ -13,11 +24,11 @@ const intercepts: Record<ActionType, Semaphore> = {} as Record<ActionType, Semap
  * @param rejActionTypes Array of action types to reject on
  * @param unloads Set of unload functions to add this to, can be null but only pass if you know
  * @param options Options allowing configuring timeoutMs (default 5s) and if the actions intercepted should be cancelled.
- * @returns A promise that resolves on resActionTypes or rejects on rejActionTypes
+ * @returns A promise that resolves on resActionTypes or rejects on rejActionTypes (with an {@link ReduxActionError} carrying the payload)
  */
 export const interceptActionResp = async <RESAT extends ActionType, REJAT extends ActionType, RES extends InterceptPayload<RESAT>>(
 	trigger: Function,
-	unloads: LunaUnloads,
+	unloads: NullishLunaUnloads,
 	resActionTypes: RESAT[],
 	rejActionTypes?: REJAT[],
 	{ timeoutMs, cancel }: { timeoutMs?: number; cancel?: true } = {},
@@ -30,12 +41,10 @@ export const interceptActionResp = async <RESAT extends ActionType, REJAT extend
 	timeoutMs ??= 5000;
 
 	const resPromises = resActionTypes.map((type) => interceptPromise(type, _unloads, cancel));
-	// interceptPromise resolves the payload of whichever action it intercepts, so a rejection action has to be turned into
-	// a rejection here: this promise rejects on rejActionTypes, as its signature and docs say
 	const rejPromises =
 		rejActionTypes?.map((type) =>
 			interceptPromise(type, _unloads, cancel).then((payload) => {
-				throw payload;
+				throw new ReduxActionError(type, payload);
 			}),
 		) ?? [];
 	const rejTimeout = new Promise<never>((_, rej) =>
