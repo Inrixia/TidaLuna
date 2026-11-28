@@ -1,6 +1,6 @@
 # Live checks for tidal.mjs
 
-`lib.test.ts` covers parsing and the host API. These cover what needs a real TIDAL. Run them after changing `tidal.mjs`, ideally by two agents at once (each step in its own instance) to also check isolation. `T` below is `node .claude/skills/tidal-test-instance/tidal.mjs`.
+`lib.test.ts` covers parsing and the host API. These cover what needs a real TIDAL. Run them after changing `tidal.mjs`, ideally by two agents at once (each step in its own instance) to also check isolation. `T` below is `node .agents/skills/tidal-test-instance/tidal.mjs`.
 
 1. `pnpm run build`, then `T start`: prints a new random instance name and its debugging urls within ~60s. No console window appears and the TIDAL window opens behind the focused one, never taking the focus.
 2. One repl batch, every line answers and an error doesn't stop the rest:

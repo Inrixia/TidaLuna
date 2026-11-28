@@ -4,7 +4,7 @@
 //     | logs [seconds] [--since <n>] | dump [dir] | screenshot <out.png> | repl [--native] | cdp [--native] <method> ['<params json>'] [<method> ['<params json>']...]
 // `start` without --instance creates an instance with a random name and prints it: give that name to every later command.
 // Each running instance has a host process (`__host`) that owns TIDAL, so TIDAL outlives the command that started it, and buffers the page console for `logs`.
-// Changing this skill: logic that needs no TIDAL goes in lib.mjs, unit tested by lib.test.ts (`pnpm exec vitest run .claude/skills`). Then run the live checks in TEST.md.
+// Changing this skill: logic that needs no TIDAL goes in lib.mjs, unit tested by lib.test.ts (`pnpm exec vitest run .agents/skills`). Then run the live checks in TEST.md.
 // SKILL.md must not link TEST.md or the tests: agents using the skill don't need them, so they stay out of its context.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";

@@ -66,7 +66,7 @@ export default defineConfig({
 				test: {
 					name: "node",
 					environment: "node",
-					include: ["native/**/*.test.ts", "build/**/*.test.ts", ".claude/skills/**/*.test.ts"],
+					include: ["native/**/*.test.ts", "build/**/*.test.ts", ".agents/skills/**/*.test.ts"],
 					setupFiles: [resolvePath("./test/setup-node.ts")],
 					// Under coverage instrumentation a file with a heavy import graph is far slower than its dry run
 					testTimeout: 30_000,

@@ -8,7 +8,7 @@ description: Launch a side-by-side TIDAL test instance running this repo's Luna 
 Separate TIDAL client: own profile, this repo's `dist/` as Luna. Runs beside user's daily client. Lives in `.tidal-test/` (gitignored): `.app/` is TIDAL install shared by this worktree's instances (hard links where possible), `<name>/` one instance (profile, `main.log`). Drive with:
 
 ```sh
-node .claude/skills/tidal-test-instance/tidal.mjs [--instance <name>] <command>
+node .agents/skills/tidal-test-instance/tidal.mjs [--instance <name>] <command>
 ```
 
 | Command                                         | Does                                                                                                                                                                                                                                                                                    |
@@ -40,7 +40,7 @@ TIDAL window opens behind other windows and never takes focus (user keeps workin
 Each command run costs a tool call plus startup. Put a whole check into one `repl` heredoc instead:
 
 ```sh
-node .claude/skills/tidal-test-instance/tidal.mjs --instance <name> repl <<'EOF'
+node .agents/skills/tidal-test-instance/tidal.mjs --instance <name> repl <<'EOF'
 Object.keys(luna.core.modules).length
 :native process.pid
 :reload
@@ -50,7 +50,7 @@ Object.keys(luna.core.modules).length
 EOF
 ```
 
-PowerShell has no heredoc: `@'` newline, lines, newline `'@ | node .claude/skills/tidal-test-instance/tidal.mjs --instance <name> repl`.
+PowerShell has no heredoc: `@'` newline, lines, newline `'@ | node .agents/skills/tidal-test-instance/tidal.mjs --instance <name> repl`.
 
 Output: each line echoed as `> line`, then its result (compact JSON, errors as one `Error: ...` line; batch continues after errors). Line = page expression (main process with `repl --native`), or:
 

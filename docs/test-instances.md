@@ -74,7 +74,7 @@ derived from the storage key, not with anything tied to the machine or profile).
 So, with the test instance stopped, copy `%APPDATA%\TIDAL\Local Storage` over the instance's
 `profile\Local Storage` (skip the `LOCK` file; the daily client can keep running), start it, set its
 `_TIDAL_clientUniqueKey` to the daily client's and reload. Don't copy `IndexedDB`: it also holds Luna's plugins and
-settings. The [test instance skill](../.claude/skills/tidal-test-instance/tidal.mjs) does all this on `start` when the
+settings. The [test instance skill](../.agents/skills/tidal-test-instance/tidal.mjs) does all this on `start` when the
 instance is logged out (`copyDailyLogin`, `useCopiedLogin`).
 
 Sharing the login is safe for the daily client: TIDAL doesn't rotate refresh tokens (a refresh returns no new
