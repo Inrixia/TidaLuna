@@ -2,7 +2,7 @@ import { lstat, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile, mkdir 
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	createInstance,
@@ -113,6 +113,16 @@ describe("writeFiles", () => {
 		await mkdir(inner);
 		await writeFiles(inner, { "../escape.js": "x", "a/../../escape2.js": "x", [resolve(dir, "abs.js")]: "x" });
 		expect(await readdir(dir)).toEqual(["inner"]);
+	});
+	it("returns what it wrote, not what it was given", async () => {
+		// The count is printed as the result of a dump, so it has to describe the disk: refusing every path must not report 3
+		expect(await writeFiles(dir, { "kept.js": "k", "../escape.js": "x", "/../escape2.js": "x" })).toBe(1);
+		expect(await readdir(dir)).toEqual(["kept.js"]);
+	});
+	it("writes when the caller passes dir with a trailing separator", async () => {
+		// Comparing a resolved path against an unresolved dir rejected every write here, and said nothing while doing it
+		expect(await writeFiles(`${dir}${sep}`, { "a.js": "a" })).toBe(1);
+		expect(await readFile(join(dir, "a.js"), "utf8")).toBe("a");
 	});
 });
 
