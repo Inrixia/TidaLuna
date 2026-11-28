@@ -23,6 +23,7 @@ import "./logoutConfirm";
 export * from "./classes";
 export * from "./components";
 export * from "./helpers";
+export * from "./react";
 
 export { MuiTheme, lunaMuiTheme, LunaMuiThemeProvider, unloads };
 
