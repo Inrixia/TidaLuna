@@ -64,25 +64,43 @@ export class MediaItem extends ContentBase {
 	// Calls for the same item share one lookup. Items that are not in the redux store are loaded through
 	// interceptActionResp, which runs one LOAD_SINGLE_MEDIA_ITEM at a time, so repeated calls (e.g. a tracklist row
 	// that is reported again while scrolling) queued up thousands of loads and kept their callers waiting for minutes.
-	public static fromId: (itemId?: redux.ItemId, contentType?: redux.ContentType) => Promise<MediaItem | undefined> = asyncDebounce(
-		async (itemId?: redux.ItemId, contentType: redux.ContentType = "track") => {
-			if (itemId === undefined) return;
-			// Prefetch mediaItemCache while constructing
-			const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
-			const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
-				// A load that fails throws out of here, a timeout and TIDAL's FAIL action alike: whether that is worth a retry
-				// is the caller's business, and a return value cannot say it
-				mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
-				if (mediaItem === undefined) return;
-				const cache = await mediaItemCache;
-				// Prefer the type Tidal stored the item with, callers often default to "track" for videos
-				return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
-			});
-			// Fetch real quality for spatial tracks
-			if (item) await item.fetchBestQuality();
-			return item;
-		},
-	);
+	//
+	// `asyncDebounce` does the same job, but it cleans up through `.finally`, whose promise re-rejects when the load fails
+	// and nobody holds it: now that a failed load propagates, that is one unhandled rejection per failure. This goes back
+	// to `asyncDebounce` once Inrixia/helpers.ts#42 is merged and released.
+	private static readonly loads = new Map<string, Promise<MediaItem | undefined>>();
+
+	/** Loads one item, from TIDAL's store when it has it. Throws when the load fails: the caller decides what that means */
+	private static async load(itemId: redux.ItemId, contentType: redux.ContentType) {
+		// Prefetch mediaItemCache while constructing
+		const mediaItemCache = MediaItem.cache.getReactive<MediaItemCache>(String(itemId), { format: {} });
+		const item = await super.fromStore(itemId, "mediaItems", async (mediaItem) => {
+			mediaItem = mediaItem ??= await this.fetchMediaItem(itemId, contentType);
+			if (mediaItem === undefined) return;
+			const cache = await mediaItemCache;
+			// Prefer the type Tidal stored the item with, callers often default to "track" for videos
+			return new MediaItem(itemId, mediaItem, mediaItem.type ?? contentType, cache);
+		});
+		// Fetch real quality for spatial tracks
+		if (item) await item.fetchBestQuality();
+		return item;
+	}
+
+	public static async fromId(itemId?: redux.ItemId, contentType: redux.ContentType = "track"): Promise<MediaItem | undefined> {
+		if (itemId === undefined) return;
+		const key = `${itemId}:${contentType}`;
+		const current = MediaItem.loads.get(key);
+		if (current !== undefined) return current;
+		const load = MediaItem.load(itemId, contentType);
+		MediaItem.loads.set(key, load);
+		// Cleaned up on either outcome: a success resolves, and a failure is dropped here rather than left as a rejection
+		// nobody holds
+		load.then(
+			() => MediaItem.loads.delete(key),
+			() => MediaItem.loads.delete(key),
+		);
+		return load;
+	}
 	/** Tracks already found by isrc. Only a found track is kept: a failed lookup says nothing about whether the track exists */
 	private static readonly isrcCache = new Map<string, MediaItem>();
 
