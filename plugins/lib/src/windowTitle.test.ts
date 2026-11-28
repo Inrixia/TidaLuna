@@ -11,8 +11,15 @@ import { setWindowTitle } from "./windowTitle";
  */
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-/** The title TIDAL is given on its title bar, which `setWindowTitle` puts back when its unload runs */
-const lunaTitle = 'TIDA<b><span style="color: #32f4ff;">Luna</span></b>\t<span style="color: red;">BETA</span>';
+/** The brand lockup is an inlined SVG, so the title is checked by what it renders rather than by its exact markup */
+const expectLunaTitle = (title: Element) => {
+	const img = title.querySelector("img");
+	expect(img).not.toBeNull();
+	expect(img!.alt).toBe("TidaLuna");
+	expect(img!.getAttribute("src")).toMatch(/^data:image\/svg\+xml;base64,/);
+	// The old title was typed out, and spelled the client "TIDALuna"
+	expect(title.textContent).toBe("");
+};
 
 /** TIDAL renders `_mainContainer > _bar > _title`, with a random suffix on each class name */
 let mountCount = 0;
@@ -41,7 +48,7 @@ describe("the Luna title", () => {
 
 		await flush();
 
-		expect(title.innerHTML).toBe(lunaTitle);
+		expectLunaTitle(title);
 	});
 
 	test("is put on the title bar TIDAL renders again after a re-render", async () => {
@@ -52,7 +59,7 @@ describe("the Luna title", () => {
 		const second = mountTitleBar();
 		await flush();
 
-		expect(second.innerHTML).toBe(lunaTitle);
+		expectLunaTitle(second);
 		// The title that was there before is not touched again
 		first.innerHTML = "left alone";
 		await flush();
@@ -90,7 +97,7 @@ describe("setWindowTitle", () => {
 
 		unload();
 
-		expect(title.innerHTML).toBe(lunaTitle);
+		expectLunaTitle(title);
 		// The unload takes itself out of the set, so running the set doesn't run it twice
 		expect(unloads.has(unload)).toBe(false);
 	});
@@ -103,7 +110,7 @@ describe("setWindowTitle", () => {
 		unload();
 		unload();
 
-		expect(title.innerHTML).toBe(lunaTitle);
+		expectLunaTitle(title);
 	});
 
 	test("only removes its own unload from unloads", async () => {
@@ -116,7 +123,7 @@ describe("setWindowTitle", () => {
 		unload();
 
 		expect(unloads.has(other)).toBe(true);
-		expect(title.innerHTML).toBe(lunaTitle);
+		expectLunaTitle(title);
 	});
 
 	test("does nothing when TIDAL has rendered no title bar", () => {
@@ -131,6 +138,6 @@ describe("setWindowTitle", () => {
 		const title = mountTitleBar();
 		await flush();
 
-		expect(title.innerHTML).toBe(lunaTitle);
+		expectLunaTitle(title);
 	});
 });

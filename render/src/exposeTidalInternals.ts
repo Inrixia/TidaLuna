@@ -3,9 +3,11 @@ import quartz, { type QuartzPlugin } from "@uwu/quartz";
 // Ensure patchAction is loaded on window!
 import "./exposeTidalInternals.patchAction";
 
+import { svgDataUrl } from "./brand";
 import { resolveAbsolutePath } from "./helpers/resolvePath";
 
-import { getOrCreateLoadingContainer } from "./loadingContainer";
+import splashScreenBase64 from "file://../../assets/brand/splash-screen.svg?base64";
+import { getOrCreateLoadingContainer, fadeOutLoadingContainer } from "./loadingContainer";
 import "./nativeScrollbars";
 import { tidalModules } from "./tidalModules";
 import { transformTidalModule } from "./tidalTransform";
@@ -69,7 +71,7 @@ Object.defineProperty(HTMLLinkElement.prototype, "href", {
 });
 
 let loading = 0;
-const { loadingContainer, messageContainer } = getOrCreateLoadingContainer();
+const { loadingContainer, messageContainer } = getOrCreateLoadingContainer(svgDataUrl(splashScreenBase64));
 
 const dynamicResolve: QuartzPlugin["dynamicResolve"] = async ({ name, moduleId, config }) => {
 	const path = resolveAbsolutePath(moduleId, name);
@@ -99,7 +101,7 @@ const dynamicResolve: QuartzPlugin["dynamicResolve"] = async ({ name, moduleId, 
 	loading--;
 
 	delete pendingModules[path];
-	setTimeout(() => (loadingContainer.style.opacity = "0"), 2000);
+	setTimeout(() => fadeOutLoadingContainer(loadingContainer), 2000);
 	return result;
 };
 

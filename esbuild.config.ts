@@ -1,5 +1,5 @@
 import { type BuildOptions, type PluginBuild } from "esbuild";
-import { defaultBuildOptions, listen, TidalNodeVersion } from "luna/build";
+import { defaultBuildOptions, fileUrlPlugin, listen, TidalNodeVersion } from "luna/build";
 
 import { mkdir, readFile, writeFile } from "fs/promises";
 
@@ -22,7 +22,7 @@ const buildConfigs: BuildOptions[] = [
 		format: "esm",
 		platform: "node",
 		external: ["electron", "module", "./app/package.json"],
-		plugins: [packageJsonPlugin],
+		plugins: [fileUrlPlugin, packageJsonPlugin],
 	},
 	{
 		...defaultBuildOptions,
@@ -32,7 +32,7 @@ const buildConfigs: BuildOptions[] = [
 		target: TidalNodeVersion,
 		format: "cjs",
 		external: ["electron"],
-		plugins: [packageJsonPlugin],
+		plugins: [fileUrlPlugin, packageJsonPlugin],
 	},
 	{
 		...defaultBuildOptions,
@@ -41,6 +41,7 @@ const buildConfigs: BuildOptions[] = [
 		target: TidalNodeVersion,
 		platform: "browser",
 		format: "esm",
+		plugins: [fileUrlPlugin],
 	},
 ];
 

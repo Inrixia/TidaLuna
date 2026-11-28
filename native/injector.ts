@@ -7,16 +7,29 @@ import mime from "mime";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { splashBackdrop } from "../render/src/brand";
 import { transformTidalModule } from "../render/src/tidalTransform";
 
 import Module, { createRequire } from "module";
 
 import { rewritePlayerMessage } from "./audioCache";
+import { createAppIcon } from "./appIcon";
 import { reportOnlyHeader, tidalMetaPolicy } from "./cspReportOnly";
 import { staleIfError } from "./offlineCache";
 import { ipcHandle } from "./ipc";
 import { isInside } from "./isInside";
 import { tidalMainHosts } from "./tidalHosts";
+
+/** Built once: every window and the dock take the same inlined PNG, and a broken asset is only worth decoding once */
+let cachedAppIcon: Electron.NativeImage | undefined;
+let appIconAttempted = false;
+const appIcon = (): Electron.NativeImage | undefined => {
+	if (!appIconAttempted) {
+		appIconAttempted = true;
+		cachedAppIcon = createAppIcon(electron.nativeImage);
+	}
+	return cachedAppIcon;
+};
 
 const fontUrlRegex = /\.(woff2?|ttf|otf|eot)(\?.*)?$/i;
 
@@ -213,7 +226,9 @@ const tidalModuleHandler = async (req: Request): Promise<Response> => {
 	const url = new URL(req.url);
 	if (!tidalMainHosts.has(url.host)) return new Response(null, { status: 403 });
 	const origin = `https://${url.host}`;
-	const res = await staleIfError(origin + url.pathname + url.search, () => electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }));
+	const res = await staleIfError(origin + url.pathname + url.search, () =>
+		electron.net.fetch(origin + url.pathname + url.search, { bypassCustomProtocolHandlers: true }),
+	);
 	// shortcut: every .js is taken for a module, TIDAL's workers are inline blobs, check if a classic script ever loads from here
 	if (!res.ok || !url.pathname.endsWith(".js")) {
 		const headers = new Headers(res.headers);
@@ -254,13 +269,24 @@ electron.app.whenReady().then(async () => {
 	electron.session.defaultSession.clearStorageData({
 		storages: ["cachestorage"],
 	});
+
+	// macOS ignores a window icon, the dock entry is the one the user sees
+	if (process.platform === "darwin") {
+		const dockIcon = appIcon();
+		if (dockIcon !== undefined) electron.app.dock?.setIcon(dockIcon);
+	}
 });
 
 // #region Audio cache
 // TIDAL's player message handler (native/app/main/playback/player/PlayerController.js) gets audio urls that point at the cache, see audioCache.ts
 const ipcOn = electron.ipcMain.on.bind(electron.ipcMain);
 electron.ipcMain.on = ((channel, listener) =>
-	ipcOn(channel, channel !== "player.message" ? listener : (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message))) as typeof electron.ipcMain.on;
+	ipcOn(
+		channel,
+		channel !== "player.message"
+			? listener
+			: (event, message) => listener(event, typeof message === "string" ? rewritePlayerMessage(message) : message),
+	)) as typeof electron.ipcMain.on;
 // #endregion
 
 // #region Proxied BrowserWindow
@@ -310,6 +336,15 @@ const ProxiedBrowserWindow = new Proxy(electron.BrowserWindow, {
 			// Sandbox isolates plugins from Node.js and system access
 			options.webPreferences.sandbox = true;
 			options.webPreferences.contextIsolation = true;
+
+			// Painted behind the page, so the flash of a window that has not painted yet is Luna's dark, not the default white
+			options.backgroundColor ??= splashBackdrop;
+
+			// Taskbar and window switcher icon. macOS ignores a window icon, its dock entry is set in whenReady
+			if (process.platform !== "darwin") {
+				const icon = appIcon();
+				if (icon !== undefined) options.icon = icon;
+			}
 		}
 
 		const window = new target(options);

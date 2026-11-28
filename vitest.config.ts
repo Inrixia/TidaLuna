@@ -2,6 +2,7 @@ import { fileURLToPath } from "url";
 import { defineConfig } from "vitest/config";
 
 import { coverageThresholds } from "./test/coverageThresholds";
+import { viteFileUrlAssets } from "./test/viteFileUrlAssets";
 
 const resolvePath = (relative: string) => fileURLToPath(new URL(relative, import.meta.url));
 
@@ -59,6 +60,8 @@ const untestable = [
 
 export default defineConfig({
 	resolve: { alias: aliases },
+	// Lets a module that inlines a brand asset be imported by a test, the way the build inlines it
+	plugins: [viteFileUrlAssets()],
 	test: {
 		projects: [
 			{
