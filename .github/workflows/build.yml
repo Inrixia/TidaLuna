@@ -3,6 +3,11 @@ name: "Build & Release"
 on:
  push:
   branches: [master, dev]
+  # Only a push that changes package.json can publish, so nothing else needs a build. Path filters are evaluated across
+  # every commit in the push, so a version bump anywhere in it counts, not just in the tip. A package.json change that
+  # didn't move the version still builds and then exits at the existing-release check, which is the acceptable overhead.
+  paths:
+   - "package.json"
  pull_request:
  workflow_dispatch:
 
