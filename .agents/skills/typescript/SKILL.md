@@ -1,11 +1,26 @@
 ---
 name: typescript
-description: TypeScript design and review beyond the house rules - type-level patterns, errors, async, modules/packaging, runtime validation, tsconfig. Use when writing or reviewing non-trivial .ts/.tsx, designing types or public APIs, handling errors/async, validating external data, or touching tsconfig/package.json exports.
+description: TypeScript house rules and design/review patterns - type-level design, errors, async, modules/packaging, runtime validation, tsconfig. Use when writing or reviewing .ts/.tsx, designing types or public APIs, handling errors/async, validating external data, or touching tsconfig/package.json exports.
 ---
 
 # TypeScript
 
-Verified against TypeScript 7.0 (2026-11). Repo's installed version, tsconfig, lint config and conventions win; check them before using newer syntax. House rules (`type` by default, no `any`/`enum`/`!`, error wrapping) live in the TypeScript rules file and always apply.
+Verified against TypeScript 7.0 (2026-11). Repo's installed version, tsconfig, lint config and conventions win; check them before using newer syntax.
+
+## House rules
+
+Repo tsconfig, lint config and existing conventions win. Depth: `typescript` skill.
+
+- `type` by default. `interface` only for `extends` hierarchies, class `implements`, or declaration merging. Published libraries: switching an exported `interface` to `type` (or back) is breaking; leave existing exports alone.
+- No `any`: `unknown` plus narrowing. No `as` on external data: validate at the boundary (schema or guard), then trust the type inward.
+- No `!` non-null assertions: narrow. No `@ts-ignore`; `@ts-expect-error <reason>` only when unavoidable, never to get a check green.
+- No `enum`, `namespace` or parameter properties: string-literal unions or `as const` objects (erasable syntax, runs under Node type stripping).
+- Errors: throw only `Error` or subclasses. Add context by wrapping: `throw new Error("load config", { cause: e })`, no `instanceof` check needed (`cause` accepts `unknown`). Narrow `e` only to read a property. Never swallow; catch only where you handle or add context.
+- Async: no floating promises (`await`, return, or `.catch(handler)` for fire-and-forget). Independent work: `Promise.all`. Cancellation: `AbortSignal`.
+- Unions: exhaustive `switch` with `default: assertNever(x)` (or `const _exhaustive: never = x`).
+- `import type` for type-only imports. `node:` prefix for builtins. No new barrel files.
+- Let inference work: no redundant annotations; annotate parameters and exported library return types.
+- `??` over `||` for defaults, `?.` over `&&` chains. `const` by default, `readonly` for data not mutated.
 
 ## Rules
 
